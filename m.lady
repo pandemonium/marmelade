@@ -1,12 +1,18 @@
-Window ::= width : u32; height: u32
+Option ::= forall A. Present A | Absent
+
+Window ::= struct
+    width  u32
+    height u32
 
 width =
-    let window = width: 427; height: 100
-    in window#width
+    let window =
+        { width 427
+          height 100 }
+    in window.width
 
 height =
-        let window = 427; 100
-        in window#1
+    let window = 427, 100
+    in window#1
 
 print-it =
     std::io::println "Hello, world #1"
@@ -16,3 +22,17 @@ print-hello :: (_ : unit) -> unit =
     println "Hello, world #2"
 
 print-hello ()
+
+identity :: forall A. A -> A = \x -> x
+
+(* is this enough? *)
+identity = \x -> x
+
+(* Multiple parameters? *)
+mk-pair = \x y -> x, y
+
+(* Tuple argument *)
+fst = \x; y -> x
+
+(* Tuple argument *)
+snd = \x, y -> y

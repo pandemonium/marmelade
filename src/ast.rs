@@ -27,6 +27,10 @@ impl TypeName {
         let Self(x) = self;
         x
     }
+
+    pub fn new(name: &str) -> Self {
+        Self(name.to_owned())
+    }
 }
 
 pub enum Declaration {
@@ -97,7 +101,7 @@ pub enum Expression {
         function: Box<Expression>,
         argument: Box<Expression>,
     },
-    Coproduct {
+    Construct {
         name: TypeName,
         constructor: Identifier,
         argument: Box<Expression>,

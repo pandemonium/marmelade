@@ -299,6 +299,13 @@ impl CoproductType {
         Self(signature)
     }
 
+    fn find_constructor(&self, name: &ast::Identifier) -> Option<&Type> {
+        let Self(constructors) = self;
+        constructors
+            .iter()
+            .find_map(|(constructor, ty)| (name.as_str() == constructor).then_some(ty))
+    }
+
     fn arity(&self) -> usize {
         let Self(constructors) = self;
         constructors.len()
@@ -362,6 +369,11 @@ pub enum TypeError {
     UnifyImpossible {
         lhs: Type,
         rhs: Type,
+    },
+    UndefinedType(ast::TypeName),
+    UndefinedCoproductConstructor {
+        coproduct: ast::TypeName,
+        constructor: ast::Identifier,
     },
 }
 
@@ -480,32 +492,44 @@ mod typer {
         }
     }
 
-    fn infer_lambda(parameter: &ast::Parameter, body: &Expression, ctx: &TypingContext) -> Typing {
-        let param_type = Type::fresh();
-
-        // Also: unify parameter.type_annotation with param_type
-        // if the former is_some.
+    // revisit this function
+    fn infer_lambda(
+        ast::Parameter {
+            name,
+            type_annotation,
+        }: &ast::Parameter,
+        body: &Expression,
+        ctx: &TypingContext,
+    ) -> Typing {
+        let expected_param_type = if let Some(param_type) = type_annotation {
+            ctx.lookup(&param_type.clone().into())
+                .cloned()
+                .ok_or_else(|| TypeError::UndefinedType(param_type.clone()))?
+        } else {
+            Type::fresh()
+        };
 
         let mut ctx = ctx.clone();
-        ctx.bind(parameter.name.clone().into(), param_type.clone());
+        ctx.bind(name.clone().into(), expected_param_type.clone());
 
         let body = infer(body, &ctx)?;
 
+        let inferred_param_type = expected_param_type.clone().apply(&body.substitutions);
+
+        let annotation_unification = expected_param_type.unify(&inferred_param_type)?;
+
         let function_type = generalize_type(
-            Type::Function(
-                Box::new(param_type.apply(&body.substitutions)),
-                Box::new(body.inferred_type),
-            ),
+            Type::Function(Box::new(inferred_param_type), Box::new(body.inferred_type)),
             &ctx,
         );
 
         Ok(TypeInference {
-            substitutions: body.substitutions,
+            substitutions: body.substitutions.compose(annotation_unification),
             inferred_type: function_type,
         })
     }
 
-    fn infer_apply(
+    fn infer_application(
         function: &ast::Expression,
         argument: &ast::Expression,
         ctx: &TypingContext,
@@ -550,13 +574,15 @@ mod typer {
             }
             ast::Expression::Literal(constant) => infer_constant_type(constant, ctx),
             ast::Expression::Lambda { parameter, body } => infer_lambda(parameter, body, ctx),
-            ast::Expression::Apply { function, argument } => infer_apply(function, argument, ctx),
+            ast::Expression::Apply { function, argument } => {
+                infer_application(function, argument, ctx)
+            }
             ast::Expression::Binding {
                 binding,
                 bound,
                 body,
             } => infer_binding(binding, bound, body, ctx),
-            ast::Expression::Coproduct {
+            ast::Expression::Construct {
                 name,
                 constructor,
                 argument,
@@ -634,9 +660,31 @@ mod typer {
         argument: &Expression,
         ctx: &TypingContext,
     ) -> Result<TypeInference, TypeError> {
-        //ctx.lookup(binding)
+        if let Some(constructed_type @ Type::Coproduct(coproduct)) = ctx
+            .lookup(&name.clone().into())
+            .map(|ty| ty.instantiate())
+            .as_ref()
+        {
+            let argument = infer(argument, ctx)?;
+            if let Some(expected_type) = coproduct.find_constructor(constructor) {
+                let substitutions = argument
+                    .substitutions
+                    .compose(argument.inferred_type.unify(expected_type)?);
 
-        todo!()
+                let inferred_type = constructed_type.clone().apply(&substitutions);
+                Ok(TypeInference {
+                    substitutions,
+                    inferred_type,
+                })
+            } else {
+                Err(TypeError::UndefinedCoproductConstructor {
+                    coproduct: name.to_owned(),
+                    constructor: constructor.to_owned(),
+                })
+            }
+        } else {
+            Err(TypeError::UndefinedType(name.to_owned()))
+        }
     }
 
     fn infer_product(product: &ast::Product, ctx: &TypingContext) -> Typing {
@@ -710,7 +758,7 @@ impl CompilationContext {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{typer, TypingContext};
+    use super::{typer, Binding, CoproductType, TypingContext};
     use crate::{
         ast,
         types::{ProductType, TrivialType, Type},
@@ -784,7 +832,7 @@ mod tests {
 
     #[test]
     fn applies() {
-        let ctx = TypingContext::default();
+        let mut ctx = TypingContext::default();
         let e = mk_apply(
             mk_identity(),
             ast::Expression::Product(ast::Product::Struct {
@@ -817,6 +865,59 @@ mod tests {
         let t = ctx.infer(&e).unwrap();
 
         assert_eq!(t.inferred_type, mk_trivial_type(TrivialType::Float));
+
+        let abs = ast::Expression::Lambda {
+            parameter: ast::Parameter {
+                name: ast::Identifier::new("x"),
+                type_annotation: Some(ast::TypeName::new("builtin::Float")),
+            },
+            body: ast::Expression::Variable(ast::Identifier::new("x")).into(),
+        };
+
+        let e = mk_apply(abs, mk_constant(ast::Constant::Float(1.0)));
+
+        ctx.bind(
+            crate::types::Binding::TypeTerm("builtin::Int".to_owned()),
+            Type::Trivial(TrivialType::Int),
+        );
+        ctx.bind(
+            crate::types::Binding::TypeTerm("builtin::Float".to_owned()),
+            Type::Trivial(TrivialType::Float),
+        );
+        let t = ctx.infer(&e).unwrap();
+        assert_eq!(t.inferred_type, mk_trivial_type(TrivialType::Float));
+    }
+
+    #[test]
+    fn coproducts() {
+        let mut ctx = TypingContext::default();
+        let t = typer::TypeParameter::fresh();
+        ctx.bind(
+            Binding::TypeTerm("Option".to_owned()),
+            Type::Forall(
+                t,
+                Type::Coproduct(CoproductType::new(vec![
+                    ("The".to_owned(), Type::Parameter(t)),
+                    ("Nil".to_owned(), Type::Trivial(TrivialType::Unit)),
+                ]))
+                .into(),
+            ),
+        );
+
+        let e = ast::Expression::Construct {
+            name: ast::TypeName::new("Option"),
+            constructor: ast::Identifier::new("The"),
+            argument: mk_constant(ast::Constant::Float(1.0)).into(),
+        };
+        let t = ctx.infer(&e).unwrap();
+
+        assert_eq!(
+            t.inferred_type,
+            Type::Coproduct(CoproductType::new(vec![
+                ("The".to_owned(), Type::Trivial(TrivialType::Float)),
+                ("Nil".to_owned(), Type::Trivial(TrivialType::Unit)),
+            ]))
+        )
     }
 
     fn mk_identity_type() -> Type {
