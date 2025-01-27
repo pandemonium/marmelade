@@ -1,35 +1,68 @@
-Option ::= forall A. Present A | Absent
+Option a ::= The a | Nil
 
-Window ::= struct
-    width  u32
-    height u32
+Result a e ::= Ok a | Err e
+
+Type_Error ::=
+    Undefined_Symbol       Text |
+    Unification_Impossible Type, Type
+
+Type ::=
+    Parameter typer::TypeVariable |
+    Trivial   TrivialType
+    Function  Type, Type
+
+List a ::= Cons a, List a | Nil
+
+# This is indistinguishable from a single constructor discriminated union
+Typing ::= alias Result Type Type_Error
+
+Gui_Window ::=
+    struct width  u32
+           height u32
+
+
+Option ::= module
+    T a ::= The a | Nil
+
+    make x = The x
+
+    map f self =
+        deconstruct self into
+        The x -> f x
+        Nil   -> Nil
+
+    bind f =
+        function The x -> f x | Nil -> Nil
+
 
 width =
     let window =
-        { width 427
+        { width  427
           height 100 }
     in window.width
 
 height =
     let window = 427, 100
-    in window#1
+    in window.1
 
-print-it =
+print_it =
     std::io::println "Hello, world #1"
 
-print-hello :: (_ : unit) -> unit =
+print_hello :: (_ : unit) -> unit =
     use std::io::println
     println "Hello, world #2"
 
-print-hello ()
+print_hello ()
 
-identity :: forall A. A -> A = \x -> x
+identity :: a -> a =
+    fun x -> x
 
 (* is this enough? *)
-identity = \x -> x
+identity =
+    fun x -> x
 
 (* Multiple parameters? *)
-mk-pair = \x y -> x, y
+mk_pair = \x y -> x, y
 
 (* Tuple argument *)
 fst = \x; y -> x
