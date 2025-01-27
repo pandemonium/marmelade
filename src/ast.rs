@@ -1,6 +1,12 @@
 use std::collections::HashMap;
 
+pub enum CompilationUnit {
+    Implicit(Module),
+    Library { modules: Vec<Module>, main: Module },
+}
+
 pub struct Module {
+    pub name: String,
     pub declarations: Vec<Declaration>,
     pub main: Expression,
 }
@@ -42,6 +48,7 @@ pub enum Declaration {
         binding: Identifier,
         declarator: TypeDeclarator,
     },
+    Module(Module),
 }
 
 pub enum TypeDeclarator {

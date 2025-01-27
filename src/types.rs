@@ -342,6 +342,7 @@ impl fmt::Display for CoproductType {
 
 pub type Typing = Result<TypeInference, TypeError>;
 
+#[derive(Debug)]
 pub struct TypeInference {
     pub substitutions: typer::Substitution,
     pub inferred_type: Type,
@@ -748,12 +749,6 @@ mod typer {
     }
 }
 
-struct CompilationContext(TypingContext);
-
-impl CompilationContext {
-    fn check_types(&self, module: &ast::Module) {}
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -918,6 +913,77 @@ mod tests {
                 ("Nil".to_owned(), Type::Trivial(TrivialType::Unit)),
             ]))
         )
+    }
+
+    #[test]
+    fn polymorphic() {
+        let mut ctx = TypingContext::default();
+
+        let t = typer::TypeParameter::fresh();
+        ctx.bind(
+            Binding::ValueTerm("id".to_owned()),
+            Type::Function(Type::Parameter(t).into(), Type::Parameter(t).into()).into(),
+            //            Type::Forall(
+            //                t,
+            //            ),
+        );
+
+        let e = mk_apply(
+            ast::Expression::Variable(ast::Identifier::new("id")),
+            ast::Expression::Product(ast::Product::Struct {
+                bindings: HashMap::from([
+                    (
+                        ast::Identifier::new("x"),
+                        mk_apply(mk_identity(), mk_constant(ast::Constant::Int(1))),
+                    ),
+                    (
+                        ast::Identifier::new("y"),
+                        mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0))),
+                    ),
+                ]),
+            }),
+        );
+        let t = ctx.infer(&e).unwrap();
+        assert_eq!(
+            t.inferred_type,
+            Type::Product(ProductType::Struct(HashMap::from([
+                (ast::Identifier::new("x"), mk_trivial_type(TrivialType::Int)),
+                (
+                    ast::Identifier::new("y"),
+                    mk_trivial_type(TrivialType::Float)
+                ),
+            ])))
+        )
+    }
+
+    #[test]
+    fn rank_n() {
+        let mut gamma = TypingContext::default();
+        gamma.bind(Binding::TypeTerm("Id".to_owned()), mk_identity_type());
+
+        let apply_to_five_expr = ast::Expression::Lambda {
+            parameter: ast::Parameter {
+                name: ast::Identifier::new("f"),                 // Parameter `f`
+                type_annotation: Some(ast::TypeName::new("Id")), // Annotate with the type alias
+            },
+            body: Box::new(ast::Expression::Apply {
+                function: ast::Expression::Variable(ast::Identifier::new("f")).into(), // Apply `f`
+                argument: ast::Expression::Literal(ast::Constant::Int(5)).into(), // Argument: 5
+            }),
+        };
+
+        let t = gamma.infer(&apply_to_five_expr).unwrap();
+        println!("t::{t:?}");
+
+        gamma.bind(Binding::ValueTerm("id".to_owned()), mk_identity_type());
+
+        let apply_to_five_to_id = ast::Expression::Apply {
+            function: apply_to_five_expr.clone().into(), // Use `applyToFive`
+            argument: ast::Expression::Variable(ast::Identifier::new("id")).into(), // Apply it to `id`
+        };
+
+        let t = gamma.infer(&apply_to_five_to_id).unwrap();
+        println!("t::{t:?}");
     }
 
     fn mk_identity_type() -> Type {
