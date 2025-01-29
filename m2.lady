@@ -1,28 +1,27 @@
-Option a ::= The a | Nil
+Option a coproduct The of a | Nil
 
-Result a e ::= Ok a | Err e
+Result a e coproduct Ok of a | Err of e
 
-Type_Error ::=
-    Undefined_Symbol       Text |
-    Unification_Impossible Type * Type
+Type_Error coproduct
+    Undefined_Symbol       of Text
+    Unification_Impossible of Type * Type
 
-Type ::=
-    Parameter typer::TypeVariable |
-    Trivial   TrivialType
-    Function  Type * Type
+Type coproduct
+    Parameter of typer::TypeVariable
+    Trivial   of TrivialType
+    Function  of Type * Type
 
-List a ::= Cons a * List a | Nil
+List a coproduct Cons of a * List a | Nil
 
-# This is indistinguishable from a single constructor discriminated union
-Typing ::= alias Result Type Type_Error
+Typing alias Result Type Type_Error
 
-Gui_Window ::=
-    struct width  u32
-           height u32
+Gui_Window struct
+    width  u32
+    height u32
 
 
-Option ::= module
-    T a ::= The a | Nil
+Option module
+    T a coproduct The of a | Nil
 
     make x = The x
 
