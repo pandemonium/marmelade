@@ -33,6 +33,8 @@ impl Default for Location {
     }
 }
 
+// Flatten this?
+// What does this hierarchy buy me?
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenType {
     Separator(Separator),
@@ -40,6 +42,7 @@ pub enum TokenType {
     Keyword(Keyword),
     Literal(Literal),
     Indentation(Indentation),
+    Operator(Operator),
     End,
 }
 
@@ -48,6 +51,24 @@ impl TokenType {
         Keyword::try_from_identifier(&id)
             .map(Self::Keyword)
             .unwrap_or_else(|| Self::Identifier(id))
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Operator {
+    Plus,
+    Minus,
+    Times,
+    Divides,
+    Modulo,
+}
+
+impl Operator {
+    pub fn precedence(&self) -> usize {
+        match self {
+            Self::Plus | Self::Minus => 1,
+            Self::Times | Self::Divides | Self::Modulo => 2,
+        }
     }
 }
 
@@ -71,12 +92,13 @@ pub enum Separator {
     SingleQuote, // '
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Keyword {
     Let,
     In,
     If,
     Struct,
+    Coproduct,
     Alias,
     Module,
     Use,
@@ -89,6 +111,7 @@ impl Keyword {
             "in" => Some(Keyword::In),
             "if" => Some(Keyword::If),
             "struct" => Some(Keyword::Struct),
+            "coproduct" => Some(Keyword::Coproduct),
             "alias" => Some(Keyword::Alias),
             "module" => Some(Keyword::Module),
             "use" => Some(Keyword::Use),
@@ -99,14 +122,21 @@ impl Keyword {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Literal {
-    Number,
+    Integer(i64),
     Text(String),
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct Token {
-    location: Location,
-    token_type: TokenType,
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Token(pub TokenType, pub Location);
+
+impl Token {
+    pub fn token_type(&self) -> &TokenType {
+        &self.0
+    }
+
+    pub fn location(&self) -> &Location {
+        &self.1
+    }
 }
 
 #[derive(Debug, Default)]
@@ -138,7 +168,14 @@ impl LexicalAnalyzer {
                 ['_', remains @ ..] => self.emit_separator(1, Separator::Underscore, remains),
                 ['|', remains @ ..] => self.emit_separator(1, Separator::Pipe, remains),
 
-                prefix @ [c, ..] if is_identifier_start(*c) => self.process_identifier(prefix),
+                ['+', remains @ ..] => self.emit_operator(1, Operator::Plus, remains),
+                ['-', remains @ ..] => self.emit_operator(1, Operator::Minus, remains),
+                ['*', remains @ ..] => self.emit_operator(1, Operator::Times, remains),
+                ['/', remains @ ..] => self.emit_operator(1, Operator::Divides, remains),
+                ['%', remains @ ..] => self.emit_operator(1, Operator::Modulo, remains),
+
+                prefix @ [c, ..] if is_number_prefix(*c) => self.process_number(prefix),
+                prefix @ [c, ..] if is_identifier_prefix(*c) => self.process_identifier(prefix),
 
                 ['"', remains @ ..] => self.process_text_literal(remains),
 
@@ -152,8 +189,8 @@ impl LexicalAnalyzer {
         }
     }
 
-    pub fn tokens(&self) -> Vec<TokenType> {
-        self.output.iter().map(|t| t.token_type.clone()).collect()
+    pub fn into_token_type_stream(&self) -> Vec<TokenType> {
+        self.output.iter().map(|t| t.token_type().clone()).collect()
     }
 
     fn process_identifier<'a>(&mut self, input: &'a [char]) -> &'a [char] {
@@ -198,11 +235,12 @@ impl LexicalAnalyzer {
         self.emit(length, TokenType::Separator(sep), remains)
     }
 
+    fn emit_operator<'a>(&mut self, length: u32, op: Operator, remains: &'a [char]) -> &'a [char] {
+        self.emit(length, TokenType::Operator(op), remains)
+    }
+
     fn emit<'a>(&mut self, length: u32, token_type: TokenType, remains: &'a [char]) -> &'a [char] {
-        self.output.push(Token {
-            location: self.location.clone(),
-            token_type,
-        });
+        self.output.push(Token(token_type, self.location.clone()));
         self.location.move_right(length);
         remains
     }
@@ -216,11 +254,6 @@ impl LexicalAnalyzer {
             };
 
         let next_location = self.compute_new_location(whitespace_prefix);
-
-        println!(
-            "process_whitepace: below {}",
-            next_location.is_below(&self.location)
-        );
 
         self.update_location(next_location);
 
@@ -259,14 +292,35 @@ impl LexicalAnalyzer {
 
     fn emit_indentation(&mut self, location: Location, indentation: Indentation) {
         // Which location does the indentation token belong to?
-        self.output.push(Token {
-            location,
-            token_type: TokenType::Indentation(indentation),
-        });
+        self.output
+            .push(Token(TokenType::Indentation(indentation), location));
+    }
+
+    fn process_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {
+        let (prefix, remains) = if let Some(end) = prefix.iter().position(|c| !c.is_ascii_digit()) {
+            (&prefix[..end], &prefix[end..])
+        } else {
+            (prefix, &prefix[..0])
+        };
+
+        // This has to be able to fail the tokenization here
+        let num = prefix.iter().collect::<String>().parse().unwrap();
+
+        self.emit(
+            prefix.len() as u32,
+            TokenType::Literal(Literal::Integer(num)),
+            remains,
+        );
+
+        remains
     }
 }
 
-fn is_identifier_start(c: char) -> bool {
+fn is_number_prefix(c: char) -> bool {
+    c.is_digit(10) // Improved
+}
+
+fn is_identifier_prefix(c: char) -> bool {
     c.is_alphabetic() || c == '_'
 }
 
@@ -300,20 +354,46 @@ mod tests {
              |",
         );
 
-        println!("{input:?}");
-
         lexer.parse(&input);
 
+        // Look at prefix
         assert_eq!(
-            &lexer.tokens(),
+            &lexer.into_token_type_stream(),
             &[
                 TT::Identifier("Option".to_owned()),
                 TT::Identifier("a".to_owned()),
                 TT::Separator(Separator::TypeAssign),
+                TT::Indentation(Indentation::Increase),
                 TT::Identifier("The".to_owned()),
                 TT::Identifier("a".to_owned()),
                 TT::Separator(Separator::Pipe),
                 TT::Identifier("Nil".to_owned()),
+                TT::Indentation(Indentation::Decrease),
+                TT::End
+            ]
+        );
+    }
+
+    #[test]
+    fn let_in() {
+        let mut lexer = LexicalAnalyzer::default();
+
+        let input = into_input("|let x = 10 in x + 1");
+
+        lexer.parse(&input);
+
+        // Look at prefix
+        assert_eq!(
+            &lexer.into_token_type_stream(),
+            &[
+                TT::Keyword(Keyword::Let),
+                TT::Identifier("x".to_owned()),
+                TT::Separator(Separator::Equals),
+                TT::Literal(Literal::Integer(10)),
+                TT::Keyword(Keyword::In),
+                TT::Identifier("x".to_owned()),
+                TT::Operator(Operator::Plus),
+                TT::Literal(Literal::Integer(1)),
                 TT::End
             ]
         );
