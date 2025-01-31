@@ -25,7 +25,7 @@ impl Identifier {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeName(String);
 
 impl TypeName {
@@ -81,7 +81,7 @@ pub enum ValueDeclarator {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parameter {
     pub name: Identifier,
     pub type_annotation: Option<TypeName>,
@@ -96,7 +96,7 @@ impl Parameter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Variable(Identifier),
     Literal(Constant),
@@ -126,7 +126,7 @@ pub enum Expression {
     ControlFlow(ControlFlow),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ControlFlow {
     If {
         predicate: Box<Expression>,
@@ -135,19 +135,19 @@ pub enum ControlFlow {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductIndex {
     Tuple(usize),
     Struct(Identifier),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Constant {
     Int(i64),
     Float(f64),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Product {
     Tuple(Vec<Expression>),
     Struct {

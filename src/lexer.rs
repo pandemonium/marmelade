@@ -73,6 +73,7 @@ pub enum Operator {
     Times,
     Divides,
     Modulo,
+    Juxtaposition,
 }
 
 impl Operator {
@@ -80,6 +81,19 @@ impl Operator {
         match self {
             Self::Plus | Self::Minus => 1,
             Self::Times | Self::Divides | Self::Modulo => 2,
+            Self::Juxtaposition => 69,
+        }
+    }
+
+    pub fn function_identifier(&self) -> String {
+        // These mappings are highly dubious
+        match self {
+            Self::Plus => "builtin::plus".to_owned(),
+            Self::Minus => "builtin::minus".to_owned(),
+            Self::Times => "builtin::times".to_owned(),
+            Self::Divides => "builtin::divides".to_owned(),
+            Self::Modulo => "builtin::modulo".to_owned(),
+            Self::Juxtaposition => "builtin::apply".to_owned(),
         }
     }
 }

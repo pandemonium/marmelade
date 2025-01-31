@@ -48,8 +48,6 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a> {
 fn parse_binding<'a>(binding: &str, prefix: &'a [Token]) -> ParseResult<'a> {
     let (bound, remains) = parse_expression(prefix, 0)?;
 
-    println!("parse_binding: remains {remains:?}");
-
     match &remains {
         &[T(TT::Keyword(In), ..), remains @ ..] => {
             let (body, remains) = parse_expression(remains, 0)?;
@@ -63,7 +61,7 @@ fn parse_binding<'a>(binding: &str, prefix: &'a [Token]) -> ParseResult<'a> {
                 remains,
             ))
         }
-        _otherwise => todo!(),
+        otherwise => panic!("{otherwise:?}"),
     }
 }
 
@@ -74,6 +72,9 @@ fn parse_expression<'a>(tokens: &'a [Token], precedence: usize) -> ParseResult<'
 
 fn parse_infix<'a>(lhs: Expression, tokens: &'a [Token], precedence: usize) -> ParseResult<'a> {
     match &tokens {
+        &[T(TT::Keyword(Keyword::In), ..), ..] => Ok((lhs, tokens)),
+        &[T(TT::End, ..), ..] => Ok((lhs, tokens)),
+
         &[T(TT::Operator(op), ..), remains @ ..] => {
             let op_precendence = op.precedence();
             if op_precendence > precedence {
@@ -84,13 +85,31 @@ fn parse_infix<'a>(lhs: Expression, tokens: &'a [Token], precedence: usize) -> P
                 Ok((lhs, tokens))
             }
         }
-        otherwise => Ok((lhs, tokens)),
+
+        &[_, ..] => parse_juxtaposition(lhs, tokens, precedence),
+        _otherwise => Ok((lhs, tokens)),
     }
+}
+
+fn parse_juxtaposition(
+    lhs: Expression,
+    tokens: &[Token],
+    precedence: usize,
+) -> Result<(Expression, &[Token]), ParseError> {
+    let (rhs, remains) = parse_prefix(tokens)?;
+    parse_infix(
+        Expression::Apply {
+            function: lhs.into(),
+            argument: rhs.into(),
+        },
+        remains,
+        precedence,
+    )
 }
 
 fn make_binary_apply_op(op: Operator, lhs: Expression, rhs: Expression) -> Expression {
     let apply_lhs = Expression::Apply {
-        function: Expression::Variable(operator_symbol(op)).into(),
+        function: Expression::Variable(Identifier::new(&op.function_identifier())).into(),
         argument: lhs.into(),
     };
     Expression::Apply {
@@ -99,19 +118,11 @@ fn make_binary_apply_op(op: Operator, lhs: Expression, rhs: Expression) -> Expre
     }
 }
 
-fn operator_symbol(op: Operator) -> Identifier {
-    match op {
-        Operator::Plus => Identifier::new("builtin::plus"),
-        Operator::Minus => Identifier::new("builtin::minus"),
-        Operator::Times => Identifier::new("builtin::times"),
-        Operator::Divides => Identifier::new("builtin::divides"),
-        Operator::Modulo => Identifier::new("builtin::modulo"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Expression as E;
+    use Identifier as Id;
 
     fn into_input(source: &str) -> Vec<char> {
         source
@@ -125,12 +136,144 @@ mod tests {
     }
 
     #[test]
-    fn let_in() {
+    fn let_in_infix() {
         let mut lexer = LexicalAnalyzer::default();
 
-        let input = into_input("|let x = 10 in x + 20");
+        let expr = parse(lexer.parse(&into_input("let x = 10 in x + 20"))).unwrap();
+        assert_eq!(
+            E::Binding {
+                binding: Id::new("x"),
+                bound: E::Literal(Constant::Int(10)).into(),
+                body: E::Apply {
+                    function: E::Apply {
+                        function: E::Variable(Id::new(&Operator::Plus.function_identifier()))
+                            .into(),
+                        argument: E::Variable(Id::new("x")).into(),
+                    }
+                    .into(),
+                    argument: E::Literal(Constant::Int(20)).into(),
+                }
+                .into(),
+            },
+            expr
+        );
+    }
 
-        let expr = super::parse(lexer.parse(&input)).unwrap();
-        println!("{expr:?}");
+    #[test]
+    fn let_in_juxtaposed() {
+        let mut lexer = LexicalAnalyzer::default();
+        let expr = parse(lexer.parse(&into_input("let x = 10 in f x 20"))).unwrap();
+        assert_eq!(
+            E::Binding {
+                binding: Id::new("x"),
+                bound: E::Literal(Constant::Int(10)).into(),
+                body: E::Apply {
+                    function: E::Apply {
+                        function: E::Variable(Id::new("f")).into(),
+                        argument: E::Variable(Id::new("x")).into(),
+                    }
+                    .into(),
+                    argument: E::Literal(Constant::Int(20)).into(),
+                }
+                .into(),
+            },
+            expr
+        );
+    }
+
+    #[test]
+    fn let_in_juxtaposed3() {
+        let mut lexer = LexicalAnalyzer::default();
+        let expr = parse(lexer.parse(&into_input("let x = 10 in f x 1 2"))).unwrap();
+        assert_eq!(
+            E::Binding {
+                binding: Id::new("x"),
+                bound: E::Literal(Constant::Int(10)).into(),
+                body: E::Apply {
+                    function: E::Apply {
+                        function: E::Apply {
+                            function: E::Variable(Id::new("f")).into(),
+                            argument: E::Variable(Id::new("x")).into(),
+                        }
+                        .into(),
+                        argument: E::Literal(Constant::Int(1)).into(),
+                    }
+                    .into(),
+                    argument: E::Literal(Constant::Int(2)).into()
+                }
+                .into(),
+            },
+            expr
+        );
+    }
+
+    #[test]
+    fn let_in_with_mixed_artithmetics() {
+        let mut lexer = LexicalAnalyzer::default();
+        let expr = parse(lexer.parse(&into_input("let x = f 1 2 in 3 * f 4 + 5"))).unwrap();
+        assert_eq!(
+            E::Binding {
+                binding: Id::new("x"),
+                bound: E::Apply {
+                    function: E::Apply {
+                        function: E::Variable(Id::new("f")).into(),
+                        argument: E::Literal(Constant::Int(1)).into()
+                    }
+                    .into(),
+                    argument: E::Literal(Constant::Int(2)).into()
+                }
+                .into(),
+                body: E::Apply {
+                    function: E::Apply {
+                        function: E::Variable(Id::new("builtin::plus")).into(),
+                        argument: E::Apply {
+                            function: E::Apply {
+                                function: E::Variable(Id::new("builtin::times")).into(),
+                                argument: E::Literal(Constant::Int(3)).into()
+                            }
+                            .into(),
+                            argument: E::Apply {
+                                function: E::Variable(Id::new("f")).into(),
+                                argument: E::Literal(Constant::Int(4)).into()
+                            }
+                            .into()
+                        }
+                        .into()
+                    }
+                    .into(),
+                    argument: E::Literal(Constant::Int(5)).into()
+                }
+                .into()
+            },
+            expr
+        );
+    }
+
+    #[test]
+    fn nested_let_in() {
+        let mut lexer = LexicalAnalyzer::default();
+        let expr = parse(lexer.parse(&into_input("let x = 10 in let y = 20 in x + y"))).unwrap();
+
+        assert_eq!(
+            E::Binding {
+                binding: Id::new("x"),
+                bound: E::Literal(Constant::Int(10)).into(),
+                body: E::Binding {
+                    binding: Id::new("y"),
+                    bound: E::Literal(Constant::Int(20)).into(),
+                    body: E::Apply {
+                        function: E::Apply {
+                            function: E::Variable(Id::new("builtin::plus")).into(),
+                            argument: E::Variable(Id::new("x")).into()
+                        }
+                        .into(),
+                        argument: E::Variable(Id::new("y")).into()
+                    }
+                    .into()
+                }
+                .into()
+            },
+            expr
+        );
     }
 }
