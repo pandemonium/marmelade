@@ -37,9 +37,21 @@ impl Default for Location {
 // What does this hierarchy buy me?
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenType {
-    Separator(Separator),
+    Equals,      // =
+    TypeAssign,  // ::=
+    DoubleColon, // ::
+    Comma,       // ,
+    LeftParen,   // (
+    RightParen,  // )
+    Underscore,  // _
+    Pipe,        // |
+    DoubleQuote, // "
+    SingleQuote, // '
+
     Identifier(String),
+
     Keyword(Keyword),
+
     Literal(Literal),
     Indentation(Indentation),
     Operator(Operator),
@@ -76,20 +88,6 @@ impl Operator {
 pub enum Indentation {
     Increase,
     Decrease,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Separator {
-    Equals,      // =
-    TypeAssign,  // ::=
-    DoubleColon, // ::
-    Comma,       // ,
-    LeftParen,   // (
-    RightParen,  // )
-    Underscore,  // _
-    Pipe,        // |
-    DoubleQuote, // "
-    SingleQuote, // '
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -157,16 +155,14 @@ impl LexicalAnalyzer {
                 {
                     self.process_whitespace(remains)
                 }
-                ['=', remains @ ..] => self.emit_separator(1, Separator::Equals, remains),
-                [':', ':', '=', remains @ ..] => {
-                    self.emit_separator(3, Separator::TypeAssign, remains)
-                }
-                [':', ':', remains @ ..] => self.emit_separator(2, Separator::DoubleColon, remains),
-                [',', remains @ ..] => self.emit_separator(1, Separator::Comma, remains),
-                ['(', remains @ ..] => self.emit_separator(1, Separator::LeftParen, remains),
-                [')', remains @ ..] => self.emit_separator(1, Separator::RightParen, remains),
-                ['_', remains @ ..] => self.emit_separator(1, Separator::Underscore, remains),
-                ['|', remains @ ..] => self.emit_separator(1, Separator::Pipe, remains),
+                ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
+                [':', ':', '=', remains @ ..] => self.emit(3, TokenType::TypeAssign, remains),
+                [':', ':', remains @ ..] => self.emit(2, TokenType::DoubleColon, remains),
+                [',', remains @ ..] => self.emit(1, TokenType::Comma, remains),
+                ['(', remains @ ..] => self.emit(1, TokenType::LeftParen, remains),
+                [')', remains @ ..] => self.emit(1, TokenType::RightParen, remains),
+                ['_', remains @ ..] => self.emit(1, TokenType::Underscore, remains),
+                ['|', remains @ ..] => self.emit(1, TokenType::Pipe, remains),
 
                 ['+', remains @ ..] => self.emit_operator(1, Operator::Plus, remains),
                 ['-', remains @ ..] => self.emit_operator(1, Operator::Minus, remains),
@@ -224,15 +220,6 @@ impl LexicalAnalyzer {
             TokenType::Literal(Literal::Text(image)),
             remains,
         )
-    }
-
-    fn emit_separator<'a>(
-        &mut self,
-        length: u32,
-        sep: Separator,
-        remains: &'a [char],
-    ) -> &'a [char] {
-        self.emit(length, TokenType::Separator(sep), remains)
     }
 
     fn emit_operator<'a>(&mut self, length: u32, op: Operator, remains: &'a [char]) -> &'a [char] {
@@ -362,11 +349,11 @@ mod tests {
             &[
                 TT::Identifier("Option".to_owned()),
                 TT::Identifier("a".to_owned()),
-                TT::Separator(Separator::TypeAssign),
+                TT::TypeAssign,
                 TT::Indentation(Indentation::Increase),
                 TT::Identifier("The".to_owned()),
                 TT::Identifier("a".to_owned()),
-                TT::Separator(Separator::Pipe),
+                TT::Pipe,
                 TT::Identifier("Nil".to_owned()),
                 TT::Indentation(Indentation::Decrease),
                 TT::End
@@ -388,7 +375,7 @@ mod tests {
             &[
                 TT::Keyword(Keyword::Let),
                 TT::Identifier("x".to_owned()),
-                TT::Separator(Separator::Equals),
+                TT::Equals,
                 TT::Literal(Literal::Integer(10)),
                 TT::Keyword(Keyword::In),
                 TT::Identifier("x".to_owned()),

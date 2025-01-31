@@ -2,7 +2,7 @@ use core::panic;
 
 use crate::{
     ast::{Constant, Expression, Identifier},
-    lexer::{Keyword, LexicalAnalyzer, Literal, Operator, Separator, Token, TokenType},
+    lexer::{Keyword, LexicalAnalyzer, Literal, Operator, Token, TokenType},
 };
 
 pub type ParseResult<'a> = Result<(Expression, &'a [Token]), ParseError>;
@@ -14,7 +14,6 @@ pub enum ParseError {
 }
 
 use Keyword::*;
-use Separator as S;
 use Token as T;
 use TokenType as TT;
 //use TT::{Identifier as Id, Keyword as Kw, Separator as Sep};
@@ -31,7 +30,7 @@ fn parse<'a>(tokens: &'a [Token]) -> Result<Expression, ParseError> {
 
 fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a> {
     match &tokens {
-        &[T(TT::Keyword(Let), ..), T(TT::Identifier(binding), ..), T(TT::Separator(S::Equals), ..), remains @ ..] => {
+        &[T(TT::Keyword(Let), ..), T(TT::Identifier(binding), ..), T(TT::Equals, ..), remains @ ..] => {
             parse_binding(binding, remains)
         }
         &[T(TT::Literal(Literal::Integer(x)), ..), remains @ ..] => {
