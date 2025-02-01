@@ -45,7 +45,7 @@ impl TypeName {
 #[derive(Debug, PartialEq)]
 pub enum Declaration {
     Value {
-        binding: Identifier,
+        binder: Identifier,
         declarator: ValueDeclarator,
     },
     Type {

@@ -11,69 +11,76 @@ pub type ParseResult<'a, A> = Result<(A, &'a [Token]), ParseError>;
 pub enum ParseError {
     UnexpectedToken(Token),
     UnexpectedRemains(Vec<Token>),
+    ExpectedTokenType(TokenType),
 }
 
 use Keyword::*;
 use Token as T;
 use TokenType as TT;
 
-pub fn parse_decl<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration> {
+pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration> {
     match input {
         [T(TT::Identifier(id), ..), T(TT::Equals, ..), remains @ ..] => {
-            parse_value_decl(id, remains)
+            let (declarator, remains) = parse_value_declarator(remains)?;
+
+            Ok((
+                Declaration::Value {
+                    binder: Identifier::new(&id),
+                    declarator,
+                },
+                remains,
+            ))
         }
         _otherwise => todo!(),
     }
 }
 
-fn parse_value_decl<'a>(id: &str, input: &'a [Token]) -> ParseResult<'a, Declaration> {
+fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclarator> {
     match input {
         [T(TT::Keyword(Keyword::Fun), ..), remains @ ..] => {
-            let (parameters, remains) = parse_params(remains)?;
+            let (parameters, remains) = parse_parameter_list(remains)?;
             if starts_with(TokenType::Arrow, remains) {
                 let (body, remains) = parse_expression(&remains[1..], 0)?;
                 Ok((
-                    Declaration::Value {
-                        binding: Identifier::new(&id),
-                        declarator: ValueDeclarator::Function {
-                            parameters,
-                            return_type_annotation: None,
-                            body,
-                        },
+                    ValueDeclarator::Function {
+                        parameters,
+                        return_type_annotation: None,
+                        body,
                     },
                     remains,
                 ))
             } else {
-                Err(todo!())
+                Err(ParseError::ExpectedTokenType(TT::Arrow))
             }
         }
         _otherwise => todo!(),
     }
 }
 
-fn parse_params<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter>> {
+// Should this function eat the -> ?
+// a | (a : ty_name) | pattern
+fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter>> {
     let (params, remains) =
+        // This pattern is quite common...
         if let Some(end) = remains.iter().position(|t| t.token_type() == &TT::Arrow) {
             (&remains[..end], &remains[end..])
         } else {
-            todo!()
+            Err(ParseError::ExpectedTokenType(TokenType::Arrow))?
         };
 
     let make_param = |t: &Token| {
         if let TT::Identifier(id) = t.token_type() {
-            Some(Parameter {
+            Ok(Parameter {
                 name: Identifier::new(id),
                 type_annotation: None,
             })
         } else {
-            None
+            Err(ParseError::UnexpectedToken(t.clone()))
         }
     };
 
-    match params.iter().map(make_param).collect::<Option<_>>() {
-        Some(params) => Ok((params, remains)),
-        _otherwise => Err(todo!()),
-    }
+    let params = params.iter().map(make_param).collect::<Result<_, _>>()?;
+    Ok((params, remains))
 }
 
 pub fn parse_expr_phrase<'a>(tokens: &'a [Token]) -> Result<Expression, ParseError> {
@@ -223,9 +230,9 @@ fn parse_operator<'a>(
     operator: &Operator,
     remains: &'a [Token],
 ) -> ParseResult<'a, Expression> {
-    let this_precedence = operator.precedence();
-    if this_precedence > context_precedence {
-        let (rhs, remains) = parse_expression(remains, this_precedence)?;
+    let operator_precedence = operator.precedence();
+    if operator_precedence > context_precedence {
+        let (rhs, remains) = parse_expression(remains, operator_precedence)?;
         parse_infix(
             apply_binary_operator(*operator, lhs, rhs),
             remains,
@@ -454,11 +461,12 @@ mod tests {
     fn function_binding() {
         let mut lexer = LexicalAnalyzer::default();
         let (decl, _) =
-            parse_decl(lexer.tokenize(&into_input(r#"|create_window = fun x -> x"#))).unwrap();
+            parse_declaration(lexer.tokenize(&into_input(r#"|create_window = fun x -> x"#)))
+                .unwrap();
 
         assert_eq!(
             Declaration::Value {
-                binding: Identifier::new("create_window"),
+                binder: Identifier::new("create_window"),
                 declarator: ValueDeclarator::Function {
                     parameters: vec![Parameter {
                         name: Identifier::new("x"),
