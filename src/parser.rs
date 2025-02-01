@@ -1,11 +1,11 @@
 use core::panic;
 
 use crate::{
-    ast::{Expression, Identifier},
+    ast::{Declaration, Expression, Identifier, Parameter, ValueDeclarator},
     lexer::{Keyword, Layout, Location, Operator, Token, TokenType},
 };
 
-pub type ParseResult<'a> = Result<(Expression, &'a [Token]), ParseError>;
+pub type ParseResult<'a, A> = Result<(A, &'a [Token]), ParseError>;
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -17,12 +17,66 @@ use Keyword::*;
 use Token as T;
 use TokenType as TT;
 
-// let <symbol> <=> [<Indent>] <expr> ( ( <;> or <newline> <expr>)* ) [<Dedent>]
-// in [<Indent>] <expr> ( ( <;> or <newline> <expr>)* )
+pub fn parse_decl<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration> {
+    match input {
+        [T(TT::Identifier(id), ..), T(TT::Equals, ..), remains @ ..] => {
+            parse_value_decl(id, remains)
+        }
+        _otherwise => todo!(),
+    }
+}
 
-// With the caveat that: If there is an Indent following <=>, then the Dedent is optionally present. If there isn't one, then there must be no Dedent before in
+fn parse_value_decl<'a>(id: &str, input: &'a [Token]) -> ParseResult<'a, Declaration> {
+    match input {
+        [T(TT::Keyword(Keyword::Fun), ..), remains @ ..] => {
+            let (parameters, remains) = parse_params(remains)?;
+            if starts_with(TokenType::Arrow, remains) {
+                let (body, remains) = parse_expression(&remains[1..], 0)?;
+                Ok((
+                    Declaration::Value {
+                        binding: Identifier::new(&id),
+                        declarator: ValueDeclarator::Function {
+                            parameters,
+                            return_type_annotation: None,
+                            body,
+                        },
+                    },
+                    remains,
+                ))
+            } else {
+                Err(todo!())
+            }
+        }
+        _otherwise => todo!(),
+    }
+}
 
-pub fn parse<'a>(tokens: &'a [Token]) -> Result<Expression, ParseError> {
+fn parse_params<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter>> {
+    let (params, remains) =
+        if let Some(end) = remains.iter().position(|t| t.token_type() == &TT::Arrow) {
+            (&remains[..end], &remains[end..])
+        } else {
+            todo!()
+        };
+
+    let make_param = |t: &Token| {
+        if let TT::Identifier(id) = t.token_type() {
+            Some(Parameter {
+                name: Identifier::new(id),
+                type_annotation: None,
+            })
+        } else {
+            None
+        }
+    };
+
+    match params.iter().map(make_param).collect::<Option<_>>() {
+        Some(params) => Ok((params, remains)),
+        _otherwise => Err(todo!()),
+    }
+}
+
+pub fn parse_expr_phrase<'a>(tokens: &'a [Token]) -> Result<Expression, ParseError> {
     let (expression, remains) = parse_expression(tokens, 0)?;
 
     if let &[T(TT::End, ..)] = remains {
@@ -32,15 +86,15 @@ pub fn parse<'a>(tokens: &'a [Token]) -> Result<Expression, ParseError> {
     }
 }
 
-fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a> {
-    match &tokens {
-        &[T(TT::Keyword(Let), position), T(TT::Identifier(binder), ..), T(TT::Equals, ..), remains @ ..] => {
+fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
+    match tokens {
+        [T(TT::Keyword(Let), position), T(TT::Identifier(binder), ..), T(TT::Equals, ..), remains @ ..] => {
             parse_binding(position.clone(), binder, remains)
         }
-        &[T(TT::Literal(literal), ..), remains @ ..] => {
+        [T(TT::Literal(literal), ..), remains @ ..] => {
             Ok((Expression::Literal(literal.clone().into()), remains))
         }
-        &[T(TT::Identifier(id), ..), remains @ ..] => {
+        [T(TT::Identifier(id), ..), remains @ ..] => {
             Ok((Expression::Variable(Identifier::new(&id)), remains))
         }
         // Newline here
@@ -70,13 +124,17 @@ fn strip_first_if<'a>(condition: bool, input: &'a [Token]) -> &'a [Token] {
     }
 }
 
-fn parse_binding<'a>(position: Location, binder: &str, input: &'a [Token]) -> ParseResult<'a> {
+fn parse_binding<'a>(
+    position: Location,
+    binder: &str,
+    input: &'a [Token],
+) -> ParseResult<'a, Expression> {
     let indented = starts_with(TokenType::Layout(Layout::Indent), input);
     let (bound, remains) = parse_expression(strip_first_if(indented, input), 0)?;
 
     let dedented = starts_with(TokenType::Layout(Layout::Dedent), remains);
-    match &strip_first_if(indented && dedented, remains) {
-        &[T(TT::Keyword(In), ..), remains @ ..] => {
+    match strip_first_if(indented && dedented, remains) {
+        [T(TT::Keyword(In), ..), remains @ ..] => {
             let (body, remains) = parse_expression(
                 strip_if_starts_with(TokenType::Layout(Layout::Indent), remains),
                 0,
@@ -98,14 +156,18 @@ fn parse_binding<'a>(position: Location, binder: &str, input: &'a [Token]) -> Pa
     }
 }
 
-fn parse_expression<'a>(tokens: &'a [Token], precedence: usize) -> ParseResult<'a> {
+fn parse_expression<'a>(tokens: &'a [Token], precedence: usize) -> ParseResult<'a, Expression> {
     let (prefix, remains) = parse_prefix(tokens)?;
     // An initial Indent could occur here, right?
     parse_infix(prefix, remains, precedence)
 }
 
 // Infixes end with End and In
-fn parse_infix<'a>(lhs: Expression, input: &'a [Token], precedence: usize) -> ParseResult<'a> {
+fn parse_infix<'a>(
+    lhs: Expression,
+    input: &'a [Token],
+    precedence: usize,
+) -> ParseResult<'a, Expression> {
     let is_done = |t: &Token| {
         matches!(
             t.token_type(),
@@ -116,21 +178,21 @@ fn parse_infix<'a>(lhs: Expression, input: &'a [Token], precedence: usize) -> Pa
     // Operators can be prefigured by Layout::Newline
     // Juxtapositions though? I would have to be able to ask the Expression
     // about where it started
-    match &input {
-        &[t, ..] if is_done(t) => Ok((lhs, input)),
+    match input {
+        [t, ..] if is_done(t) => Ok((lhs, input)),
 
-        &[T(TT::Operator(op), ..), remains @ ..] => {
+        [T(TT::Operator(op), ..), remains @ ..] => {
             parse_operator(lhs, input, precedence, op, remains)
         }
 
-        &[t, T(TT::Operator(op), ..), remains @ ..]
+        [t, T(TT::Operator(op), ..), remains @ ..]
             if t.token_type() == &TT::Layout(Layout::Newline)
                 || t.token_type() == &TT::Layout(Layout::Indent) =>
         {
             parse_operator(lhs, input, precedence, op, remains)
         }
 
-        &[t, remains @ ..]
+        [t, remains @ ..]
             if t.token_type() == &TT::Layout(Layout::Newline)
                 || t.token_type() == &TT::SemiColon =>
         {
@@ -144,11 +206,11 @@ fn parse_infix<'a>(lhs: Expression, input: &'a [Token], precedence: usize) -> Pa
             ))
         }
 
-        &[t, remains @ ..] if t.token_type() == &TT::Layout(Layout::Indent) => {
+        [t, remains @ ..] if t.token_type() == &TT::Layout(Layout::Indent) => {
             parse_juxtaposition(lhs, remains, precedence)
         }
 
-        &[_, ..] => parse_juxtaposition(lhs, input, precedence),
+        [_, ..] => parse_juxtaposition(lhs, input, precedence),
 
         _otherwise => Ok((lhs, input)),
     }
@@ -160,7 +222,7 @@ fn parse_operator<'a>(
     context_precedence: usize,
     operator: &Operator,
     remains: &'a [Token],
-) -> Result<(Expression, &'a [Token]), ParseError> {
+) -> ParseResult<'a, Expression> {
     let this_precedence = operator.precedence();
     if this_precedence > context_precedence {
         let (rhs, remains) = parse_expression(remains, this_precedence)?;
@@ -174,11 +236,11 @@ fn parse_operator<'a>(
     }
 }
 
-fn parse_juxtaposition(
+fn parse_juxtaposition<'a>(
     lhs: Expression,
-    tokens: &[Token],
+    tokens: &'a [Token],
     precedence: usize,
-) -> Result<(Expression, &[Token]), ParseError> {
+) -> ParseResult<'a, Expression> {
     let (rhs, remains) = parse_prefix(tokens)?;
     parse_infix(
         Expression::Apply {
@@ -203,7 +265,10 @@ fn apply_binary_operator(op: Operator, lhs: Expression, rhs: Expression) -> Expr
 
 #[cfg(test)]
 mod tests {
-    use crate::{ast::Constant, lexer::LexicalAnalyzer};
+    use crate::{
+        ast::{Constant, ValueDeclarator},
+        lexer::LexicalAnalyzer,
+    };
 
     use super::*;
     use Expression as E;
@@ -224,7 +289,7 @@ mod tests {
     fn let_in_infix() {
         let mut lexer = LexicalAnalyzer::default();
 
-        let expr = parse(lexer.tokenize(&into_input("let x = 10 in x + 20"))).unwrap();
+        let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in x + 20"))).unwrap();
         assert_eq!(
             E::Binding {
                 postition: Location::default(),
@@ -248,7 +313,7 @@ mod tests {
     #[test]
     fn let_in_juxtaposed() {
         let mut lexer = LexicalAnalyzer::default();
-        let expr = parse(lexer.tokenize(&into_input("let x = 10 in f x 20"))).unwrap();
+        let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 20"))).unwrap();
         assert_eq!(
             E::Binding {
                 postition: Location::default(),
@@ -271,7 +336,7 @@ mod tests {
     #[test]
     fn let_in_juxtaposed3() {
         let mut lexer = LexicalAnalyzer::default();
-        let expr = parse(lexer.tokenize(&into_input("let x = 10 in f x 1 2"))).unwrap();
+        let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 1 2"))).unwrap();
         assert_eq!(
             E::Binding {
                 postition: Location::default(),
@@ -298,7 +363,7 @@ mod tests {
     #[test]
     fn let_in_with_mixed_artithmetics() {
         let mut lexer = LexicalAnalyzer::default();
-        let expr = parse(lexer.tokenize(&into_input(
+        let expr = parse_expr_phrase(lexer.tokenize(&into_input(
             r#"|let x =
                |    print_endline "Hello, world"; f 1 2
                |in
@@ -356,7 +421,9 @@ mod tests {
     #[test]
     fn nested_let_in() {
         let mut lexer = LexicalAnalyzer::default();
-        let expr = parse(lexer.tokenize(&into_input("let x = 10 in let y = 20 in x + y"))).unwrap();
+        let expr =
+            parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in let y = 20 in x + y")))
+                .unwrap();
 
         assert_eq!(
             E::Binding {
@@ -380,6 +447,28 @@ mod tests {
                 .into()
             },
             expr
+        );
+    }
+
+    #[test]
+    fn function_binding() {
+        let mut lexer = LexicalAnalyzer::default();
+        let (decl, _) =
+            parse_decl(lexer.tokenize(&into_input(r#"|create_window = fun x -> x"#))).unwrap();
+
+        assert_eq!(
+            Declaration::Value {
+                binding: Identifier::new("create_window"),
+                declarator: ValueDeclarator::Function {
+                    parameters: vec![Parameter {
+                        name: Identifier::new("x"),
+                        type_annotation: None
+                    }],
+                    return_type_annotation: None,
+                    body: Expression::Variable(Identifier::new("x")),
+                }
+            },
+            decl
         );
     }
 }

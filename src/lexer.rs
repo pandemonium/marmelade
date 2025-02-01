@@ -44,6 +44,7 @@ pub enum TokenType {
     Equals,      // =
     TypeAssign,  // ::=
     DoubleColon, // ::
+    Arrow,       // ->
     Comma,       // ,
     LeftParen,   // (
     RightParen,  // )
@@ -56,10 +57,10 @@ pub enum TokenType {
     Identifier(String),
 
     Keyword(Keyword),
-
     Literal(Literal),
-    Layout(Layout),
     Operator(Operator),
+
+    Layout(Layout),
     End,
 }
 
@@ -120,6 +121,7 @@ pub enum Keyword {
     Alias,
     Module,
     Use,
+    Fun,
 }
 
 impl Keyword {
@@ -133,6 +135,7 @@ impl Keyword {
             "alias" => Some(Keyword::Alias),
             "module" => Some(Keyword::Module),
             "use" => Some(Keyword::Use),
+            "fun" => Some(Keyword::Fun),
             _otherwise => None,
         }
     }
@@ -172,6 +175,7 @@ impl LexicalAnalyzer {
                 remains @ [c, ..] if c.is_whitespace() => self.process_whitespace(remains),
                 [':', ':', '=', remains @ ..] => self.emit(3, TokenType::TypeAssign, remains),
                 [':', ':', remains @ ..] => self.emit(2, TokenType::DoubleColon, remains),
+                ['-', '>', remains @ ..] => self.emit(2, TokenType::Arrow, remains),
 
                 ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
                 [',', remains @ ..] => self.emit(1, TokenType::Comma, remains),

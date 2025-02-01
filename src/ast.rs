@@ -7,6 +7,7 @@ pub enum CompilationUnit {
     Library { modules: Vec<Module>, main: Module },
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Module {
     pub name: String,
     pub declarations: Vec<Declaration>,
@@ -41,6 +42,7 @@ impl TypeName {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Declaration {
     Value {
         binding: Identifier,
@@ -53,6 +55,7 @@ pub enum Declaration {
     Module(Module),
 }
 
+#[derive(Debug, PartialEq)]
 pub enum TypeDeclarator {
     Alias {
         alias: Identifier,
@@ -62,16 +65,19 @@ pub enum TypeDeclarator {
     Struct(Vec<StructField>),
 }
 
+#[derive(Debug, PartialEq)]
 pub struct StructField {
     pub name: Identifier,
     pub type_annotation: TypeName,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Constructor {
     pub name: Identifier,
     pub signature: Vec<TypeName>,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum ValueDeclarator {
     Constant {
         initializer: Expression,
@@ -80,9 +86,11 @@ pub enum ValueDeclarator {
     Function {
         parameters: Vec<Parameter>,
         return_type_annotation: Option<TypeName>,
+        body: Expression, // what is this? A Nested lambda?
     },
 }
 
+// these can be pattern matches too
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parameter {
     pub name: Identifier,
