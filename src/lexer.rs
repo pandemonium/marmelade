@@ -5,6 +5,10 @@ pub struct Location {
 }
 
 impl Location {
+    pub fn new(row: u32, column: u32) -> Self {
+        Self { row, column }
+    }
+
     fn move_right(&mut self, delta: u32) {
         self.column += delta;
     }
@@ -47,13 +51,14 @@ pub enum TokenType {
     Pipe,        // |
     DoubleQuote, // "
     SingleQuote, // '
+    SemiColon,   // ;
 
     Identifier(String),
 
     Keyword(Keyword),
 
     Literal(Literal),
-    Indentation(Indentation),
+    Layout(Layout),
     Operator(Operator),
     End,
 }
@@ -99,9 +104,10 @@ impl Operator {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Indentation {
-    Increase,
-    Decrease,
+pub enum Layout {
+    Indent,
+    Dedent,
+    Newline,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -151,7 +157,7 @@ impl Token {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LexicalAnalyzer {
     location: Location,
     indentation_level: u32,
@@ -159,24 +165,21 @@ pub struct LexicalAnalyzer {
 }
 
 impl LexicalAnalyzer {
-    pub fn parse(&mut self, input: &[char]) -> &[Token] {
+    pub fn tokenize(&mut self, input: &[char]) -> &[Token] {
         let mut input = input;
         loop {
             input = match input {
-                remains @ [c, ..] if c.is_whitespace() =>
-                // This must match all whitespace and update lexing state
-                // appropriately. For instance: emit Indent/ Dedent.
-                {
-                    self.process_whitespace(remains)
-                }
-                ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
+                remains @ [c, ..] if c.is_whitespace() => self.process_whitespace(remains),
                 [':', ':', '=', remains @ ..] => self.emit(3, TokenType::TypeAssign, remains),
                 [':', ':', remains @ ..] => self.emit(2, TokenType::DoubleColon, remains),
+
+                ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
                 [',', remains @ ..] => self.emit(1, TokenType::Comma, remains),
                 ['(', remains @ ..] => self.emit(1, TokenType::LeftParen, remains),
                 [')', remains @ ..] => self.emit(1, TokenType::RightParen, remains),
                 ['_', remains @ ..] => self.emit(1, TokenType::Underscore, remains),
                 ['|', remains @ ..] => self.emit(1, TokenType::Pipe, remains),
+                [';', remains @ ..] => self.emit(1, TokenType::SemiColon, remains),
 
                 ['+', remains @ ..] => self.emit_operator(1, Operator::Plus, remains),
                 ['-', remains @ ..] => self.emit_operator(1, Operator::Minus, remains),
@@ -222,8 +225,8 @@ impl LexicalAnalyzer {
     }
 
     fn process_text_literal<'a>(&mut self, input: &'a [char]) -> &'a [char] {
-        let (prefix, remains) = if let Some(end) = input.iter().position(|&c| c == 'c') {
-            (&input[..end], &input[end..])
+        let (prefix, remains) = if let Some(end) = input.iter().position(|&c| c == '"') {
+            (&input[..end], &input[end + 1..])
         } else {
             (input, &input[..0])
         };
@@ -281,9 +284,11 @@ impl LexicalAnalyzer {
     fn update_location(&mut self, next: Location) {
         if next.is_below(&self.location) {
             if next.is_left_of(self.indentation_level) {
-                self.emit_indentation(next, Indentation::Decrease);
+                self.emit_layout(next, Layout::Dedent);
             } else if next.is_right_of(self.indentation_level) {
-                self.emit_indentation(next, Indentation::Increase);
+                self.emit_layout(next, Layout::Indent);
+            } else {
+                self.emit_layout(next, Layout::Newline);
             }
             self.indentation_level = next.column;
         }
@@ -291,10 +296,9 @@ impl LexicalAnalyzer {
         self.location = next;
     }
 
-    fn emit_indentation(&mut self, location: Location, indentation: Indentation) {
-        // Which location does the indentation token belong to?
+    fn emit_layout(&mut self, location: Location, indentation: Layout) {
         self.output
-            .push(Token(TokenType::Indentation(indentation), location));
+            .push(Token(TokenType::Layout(indentation), location));
     }
 
     fn process_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {
@@ -329,6 +333,17 @@ fn is_identifier_continuation(c: char) -> bool {
     c.is_alphabetic() || c == '_' || c.is_numeric()
 }
 
+impl Default for LexicalAnalyzer {
+    fn default() -> Self {
+        let location = Location::default();
+        Self {
+            location,
+            indentation_level: location.column,
+            output: Vec::default(), // This could actually be something a lot bigger.
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,7 +370,7 @@ mod tests {
              |",
         );
 
-        lexer.parse(&input);
+        lexer.tokenize(&input);
 
         // Look at prefix
         assert_eq!(
@@ -364,12 +379,12 @@ mod tests {
                 TT::Identifier("Option".to_owned()),
                 TT::Identifier("a".to_owned()),
                 TT::TypeAssign,
-                TT::Indentation(Indentation::Increase),
+                TT::Layout(Layout::Indent),
                 TT::Identifier("The".to_owned()),
                 TT::Identifier("a".to_owned()),
                 TT::Pipe,
                 TT::Identifier("Nil".to_owned()),
-                TT::Indentation(Indentation::Decrease),
+                TT::Layout(Layout::Dedent),
                 TT::End
             ]
         );
@@ -381,7 +396,7 @@ mod tests {
 
         let input = into_input("|let x = 10 in x + 1");
 
-        lexer.parse(&input);
+        lexer.tokenize(&input);
 
         // Look at prefix
         assert_eq!(
@@ -395,6 +410,60 @@ mod tests {
                 TT::Identifier("x".to_owned()),
                 TT::Operator(Operator::Plus),
                 TT::Literal(Literal::Integer(1)),
+                TT::End
+            ]
+        );
+    }
+
+    #[test]
+    fn let_in_more() {
+        let mut lexer = LexicalAnalyzer::default();
+
+        let input = into_input(
+            "|let x = f 1 2
+             |in 3 * f 4 + 5",
+        );
+
+        lexer.tokenize(&input);
+
+        // Look at prefix
+        assert_eq!(
+            &lexer.into_token_type_stream(),
+            &[
+                TT::Keyword(Keyword::Let),
+                TT::Identifier("x".to_owned()),
+                TT::Equals,
+                TT::Identifier("f".to_owned()),
+                TT::Literal(Literal::Integer(1)),
+                TT::Literal(Literal::Integer(2)),
+                TT::Layout(Layout::Newline),
+                TT::Keyword(Keyword::In),
+                TT::Literal(Literal::Integer(3)),
+                TT::Operator(Operator::Times),
+                TT::Identifier("f".to_owned()),
+                TT::Literal(Literal::Integer(4)),
+                TT::Operator(Operator::Plus),
+                TT::Literal(Literal::Integer(5)),
+                TT::End,
+            ]
+        );
+    }
+
+    #[test]
+    fn literals() {
+        let mut lexer = LexicalAnalyzer::default();
+
+        let input = into_input(r#"12345 "Hi, mom" 5"#);
+
+        lexer.tokenize(&input);
+
+        // Look at prefix
+        assert_eq!(
+            &lexer.into_token_type_stream(),
+            &[
+                TT::Literal(Literal::Integer(12345)),
+                TT::Literal(Literal::Text("Hi, mom".to_owned())),
+                TT::Literal(Literal::Integer(5)),
                 TT::End
             ]
         );

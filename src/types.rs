@@ -239,6 +239,7 @@ pub enum TrivialType {
     Int,
     Bool,
     Float,
+    Text,
 }
 
 impl fmt::Display for TrivialType {
@@ -248,6 +249,7 @@ impl fmt::Display for TrivialType {
             Self::Int => write!(f, "Int"),
             Self::Bool => write!(f, "Bool"),
             Self::Float => write!(f, "Float"),
+            Self::Text => write!(f, "Text"),
         }
     }
 }
@@ -283,7 +285,7 @@ impl fmt::Display for ProductType {
                 }
                 write!(f, ")")
             }
-            Self::Struct(elements) => {
+            Self::Struct(_elements) => {
                 todo!()
             }
         }
@@ -294,7 +296,7 @@ impl fmt::Display for ProductType {
 pub struct CoproductType(Vec<(String, Type)>);
 
 impl CoproductType {
-    fn new(mut signature: Vec<(String, Type)>) -> Self {
+    pub fn new(mut signature: Vec<(String, Type)>) -> Self {
         signature.sort_by(|(p, ..), (q, ..)| p.cmp(q));
         Self(signature)
     }
@@ -579,10 +581,11 @@ mod typer {
                 infer_application(function, argument, ctx)
             }
             ast::Expression::Binding {
-                binding,
+                binder,
                 bound,
                 body,
-            } => infer_binding(binding, bound, body, ctx),
+                ..
+            } => infer_binding(binder, bound, body, ctx),
             ast::Expression::Construct {
                 name,
                 constructor,
@@ -590,7 +593,10 @@ mod typer {
             } => infer_coproduct(name, constructor, argument, ctx),
             ast::Expression::Product(product) => infer_product(product, ctx),
             ast::Expression::Project { base, index } => infer_projection(base, index, ctx),
-            ast::Expression::ControlFlow(control_flow) => todo!(),
+            ast::Expression::Sequence { .. } => {
+                todo!()
+            }
+            ast::Expression::ControlFlow(_control_flow) => todo!(),
         }
     }
 
@@ -648,10 +654,11 @@ mod typer {
         }
     }
 
-    fn infer_constant_type(c: &ast::Constant, ctx: &TypingContext) -> Typing {
+    fn infer_constant_type(c: &ast::Constant, _ctx: &TypingContext) -> Typing {
         match c {
             ast::Constant::Int(..) => infer_trivial_type(TrivialType::Int),
             ast::Constant::Float(..) => infer_trivial_type(TrivialType::Float),
+            ast::Constant::Text(..) => infer_trivial_type(TrivialType::Text),
         }
     }
 

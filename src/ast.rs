@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::lexer;
+
 pub enum CompilationUnit {
     Implicit(Module),
     Library { modules: Vec<Module>, main: Module },
@@ -61,13 +63,13 @@ pub enum TypeDeclarator {
 }
 
 pub struct StructField {
-    name: Identifier,
-    type_annotation: TypeName,
+    pub name: Identifier,
+    pub type_annotation: TypeName,
 }
 
 pub struct Constructor {
-    name: Identifier,
-    signature: Vec<TypeName>,
+    pub name: Identifier,
+    pub signature: Vec<TypeName>,
 }
 
 pub enum ValueDeclarator {
@@ -119,11 +121,26 @@ pub enum Expression {
         index: ProductIndex,
     },
     Binding {
-        binding: Identifier,
+        postition: lexer::Location,
+        binder: Identifier,
         bound: Box<Expression>,
         body: Box<Expression>,
     },
+    Sequence {
+        this: Box<Expression>,
+        and_then: Box<Expression>,
+    },
     ControlFlow(ControlFlow),
+}
+
+impl Expression {
+    pub fn position(&self) -> Option<&lexer::Location> {
+        if let Self::Binding { postition, .. } = self {
+            Some(postition)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,6 +162,16 @@ pub enum ProductIndex {
 pub enum Constant {
     Int(i64),
     Float(f64),
+    Text(String),
+}
+
+impl From<lexer::Literal> for Constant {
+    fn from(value: lexer::Literal) -> Self {
+        match value {
+            lexer::Literal::Integer(x) => Self::Int(x),
+            lexer::Literal::Text(x) => Self::Text(x),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
