@@ -18,16 +18,20 @@ impl Location {
         self.column = 1;
     }
 
-    fn is_left_of(&self, indentation_level: u32) -> bool {
+    pub fn is_left_of(&self, indentation_level: u32) -> bool {
         self.column < indentation_level
     }
 
-    fn is_right_of(&self, indentation_level: u32) -> bool {
+    pub fn is_right_of(&self, indentation_level: u32) -> bool {
         self.column > indentation_level
     }
 
-    fn is_below(&self, rhs: &Self) -> bool {
+    pub fn is_below(&self, rhs: &Self) -> bool {
         self.row > rhs.row
+    }
+
+    pub fn is_same_block(&self, rhs: &Self) -> bool {
+        self.column == rhs.column && self.is_below(rhs)
     }
 }
 
@@ -168,11 +172,17 @@ pub struct LexicalAnalyzer {
 }
 
 impl LexicalAnalyzer {
+    pub fn untokenize(&self, input: &[Token]) -> String {
+        todo!()
+    }
+
     pub fn tokenize(&mut self, input: &[char]) -> &[Token] {
         let mut input = input;
         loop {
             input = match input {
                 remains @ [c, ..] if c.is_whitespace() => self.process_whitespace(remains),
+                prefix @ [c, ..] if is_identifier_prefix(*c) => self.process_identifier(prefix),
+
                 [':', ':', '=', remains @ ..] => self.emit(3, TokenType::TypeAssign, remains),
                 [':', ':', remains @ ..] => self.emit(2, TokenType::DoubleColon, remains),
                 ['-', '>', remains @ ..] => self.emit(2, TokenType::Arrow, remains),
@@ -192,7 +202,6 @@ impl LexicalAnalyzer {
                 ['%', remains @ ..] => self.emit_operator(1, Operator::Modulo, remains),
 
                 prefix @ [c, ..] if is_number_prefix(*c) => self.process_number(prefix),
-                prefix @ [c, ..] if is_identifier_prefix(*c) => self.process_identifier(prefix),
 
                 ['"', remains @ ..] => self.process_text_literal(remains),
 
@@ -300,9 +309,10 @@ impl LexicalAnalyzer {
         self.location = next;
     }
 
+    // Which location is the location of an Indent or Dedent?
     fn emit_layout(&mut self, location: Location, indentation: Layout) {
         self.output
-            .push(Token(TokenType::Layout(indentation), location));
+            .push(Token(TokenType::Layout(indentation), self.location));
     }
 
     fn process_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {

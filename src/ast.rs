@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::lexer;
+use crate::lexer::{self, Location};
 
 pub enum CompilationUnit {
     Implicit(Module),
@@ -9,9 +9,10 @@ pub enum CompilationUnit {
 
 #[derive(Debug, PartialEq)]
 pub struct Module {
-    pub name: String,
+    pub position: Location,
+    pub name: Identifier,
     pub declarations: Vec<Declaration>,
-    pub main: Expression,
+    // pub main: Expression,// I would like this, but I have to think a little more about it
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -45,14 +46,26 @@ impl TypeName {
 #[derive(Debug, PartialEq)]
 pub enum Declaration {
     Value {
+        position: Location,
         binder: Identifier,
         declarator: ValueDeclarator,
     },
     Type {
+        position: Location,
         binding: Identifier,
         declarator: TypeDeclarator,
     },
     Module(Module),
+}
+
+impl Declaration {
+    pub fn position(&self) -> &Location {
+        match self {
+            Self::Value { position, .. }
+            | Self::Type { position, .. }
+            | Self::Module(Module { position, .. }) => position,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]

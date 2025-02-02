@@ -12,35 +12,93 @@ pub enum ParseError {
     UnexpectedToken(Token),
     UnexpectedRemains(Vec<Token>),
     ExpectedTokenType(TokenType),
+    DeclarationOffside(Location, Vec<Token>),
 }
 
 use Keyword::*;
 use Token as T;
 use TokenType as TT;
 
+pub fn parse_declarations<'a>(input: &'a [Token]) -> ParseResult<'a, Vec<Declaration>> {
+    let mut declarations = Vec::default();
+    let mut input = input;
+
+    loop {
+        let (declaration, remains) = parse_declaration(input)?;
+        let current_block = *declaration.position();
+        declarations.push(declaration);
+
+        input = find_next_in_block(current_block, remains, |token_type| {
+            matches!(token_type, TT::Identifier(..) | TT::End)
+        })?;
+
+        if matches!(input, [T(TT::Layout(Layout::Dedent) | TT::End, ..), ..]) {
+            break Ok((declarations, remains));
+        }
+    }
+}
+
+pub fn find_next_in_block<'a>(
+    current_block: Location,
+    input: &'a [Token],
+    is_next_start_token_type: fn(&TT) -> bool,
+) -> Result<&'a [Token], ParseError> {
+    let mut input = input;
+    loop {
+        match input {
+            [T(TT::Layout(Layout::Dedent | Layout::Newline), position), remains @ ..] => {
+                if position.is_same_block(&current_block) {
+                    break Ok(remains);
+                } else {
+                    input = remains
+                }
+            }
+            remains @ [t, ..] if is_next_start_token_type(t.token_type()) => {
+                // This end-check is... bad. Should I get rid of End?
+                if t.location().is_same_block(&current_block) || t.token_type() == &TT::End {
+                    break Ok(remains);
+                } else {
+                    break Err(ParseError::DeclarationOffside(
+                        *t.location(),
+                        remains.to_vec(),
+                    ));
+                }
+            }
+            otherwise => break Err(ParseError::UnexpectedRemains(otherwise.to_vec())),
+        }
+    }
+}
+
 pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration> {
     match input {
-        [T(TT::Identifier(id), ..), T(TT::Equals, ..), remains @ ..] => {
-            let (declarator, remains) = parse_value_declarator(remains)?;
+        [T(TT::Identifier(id), pos), T(TT::Equals, ..), remains @ ..] => {
+            let (declarator, remains) =
+                parse_value_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
 
             Ok((
                 Declaration::Value {
                     binder: Identifier::new(&id),
                     declarator,
+                    position: pos.clone(),
                 },
                 remains,
             ))
         }
-        _otherwise => todo!(),
+        otherwise => panic!("{otherwise:?}"),
     }
 }
 
+// These can have type annotations
+// let foo :: Int -> String -> String = fun i s -> s
 fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclarator> {
     match input {
-        [T(TT::Keyword(Keyword::Fun), ..), remains @ ..] => {
+        [T(TT::Keyword(Fun), ..), remains @ ..] => {
             let (parameters, remains) = parse_parameter_list(remains)?;
             if starts_with(TokenType::Arrow, remains) {
-                let (body, remains) = parse_expression(&remains[1..], 0)?;
+                let (body, remains) = parse_expression(
+                    strip_if_starts_with(TT::Layout(Layout::Indent), &remains[1..]),
+                    0,
+                )?;
                 Ok((
                     ValueDeclarator::Function {
                         parameters,
@@ -58,7 +116,7 @@ fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclar
 }
 
 // Should this function eat the -> ?
-// a | (a : ty_name) | pattern
+// a | pattern
 fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter>> {
     let (params, remains) =
         // This pattern is quite common...
@@ -68,7 +126,7 @@ fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Paramet
             Err(ParseError::ExpectedTokenType(TokenType::Arrow))?
         };
 
-    let make_param = |t: &Token| {
+    let parse_parameter = |t: &Token| {
         if let TT::Identifier(id) = t.token_type() {
             Ok(Parameter {
                 name: Identifier::new(id),
@@ -79,8 +137,13 @@ fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Paramet
         }
     };
 
-    let params = params.iter().map(make_param).collect::<Result<_, _>>()?;
-    Ok((params, remains))
+    Ok((
+        params
+            .iter()
+            .map(parse_parameter)
+            .collect::<Result<_, _>>()?,
+        remains,
+    ))
 }
 
 pub fn parse_expr_phrase<'a>(tokens: &'a [Token]) -> Result<Expression, ParseError> {
@@ -178,7 +241,7 @@ fn parse_infix<'a>(
     let is_done = |t: &Token| {
         matches!(
             t.token_type(),
-            TT::Keyword(Keyword::In) | TT::End | TT::Layout(Layout::Dedent)
+            TT::Keyword(In) | TT::End | TT::Layout(Layout::Dedent)
         )
     };
 
@@ -460,9 +523,12 @@ mod tests {
     #[test]
     fn function_binding() {
         let mut lexer = LexicalAnalyzer::default();
-        let (decl, _) =
-            parse_declaration(lexer.tokenize(&into_input(r#"|create_window = fun x -> x"#)))
-                .unwrap();
+        let (decl, _) = parse_declaration(lexer.tokenize(&into_input(
+            r#"|create_window =
+               |    fun x ->
+               |        1 + x"#,
+        )))
+        .unwrap();
 
         assert_eq!(
             Declaration::Value {
@@ -473,10 +539,72 @@ mod tests {
                         type_annotation: None
                     }],
                     return_type_annotation: None,
-                    body: Expression::Variable(Identifier::new("x")),
-                }
+                    body: E::Apply {
+                        function: E::Apply {
+                            function: E::Variable(Id::new("builtin::plus")).into(),
+                            argument: E::Literal(Constant::Int(1)).into()
+                        }
+                        .into(),
+                        argument: Expression::Variable(Identifier::new("x")).into()
+                    },
+                },
+                position: Location::default(),
             },
             decl
+        );
+    }
+
+    #[test]
+    fn module_function_decls() {
+        let mut lexer = LexicalAnalyzer::default();
+        let (decls, _) = parse_declarations(lexer.tokenize(&into_input(
+            r#"|create_window =
+               |    fun x ->
+               |        1 + x
+               |
+               |print_endline = fun s ->
+               |    __print s"#,
+        )))
+        .unwrap();
+
+        assert_eq!(
+            vec![
+                Declaration::Value {
+                    binder: Identifier::new("create_window"),
+                    declarator: ValueDeclarator::Function {
+                        parameters: vec![Parameter {
+                            name: Identifier::new("x"),
+                            type_annotation: None
+                        }],
+                        return_type_annotation: None,
+                        body: E::Apply {
+                            function: E::Apply {
+                                function: E::Variable(Id::new("builtin::plus")).into(),
+                                argument: E::Literal(Constant::Int(1)).into()
+                            }
+                            .into(),
+                            argument: E::Variable(Id::new("x")).into()
+                        },
+                    },
+                    position: Location::default(),
+                },
+                Declaration::Value {
+                    position: Location::new(5, 1),
+                    binder: Id::new("print_endline"),
+                    declarator: ValueDeclarator::Function {
+                        parameters: vec![Parameter {
+                            name: Identifier::new("s"),
+                            type_annotation: None
+                        }],
+                        return_type_annotation: None,
+                        body: E::Apply {
+                            function: E::Variable(Id::new("__print")).into(),
+                            argument: E::Variable(Identifier::new("s")).into()
+                        }
+                    }
+                }
+            ],
+            decls
         );
     }
 }
