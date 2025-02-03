@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use crate::{
-    ast::{Constant, Expression, Identifier, Parameter},
-    types::Type,
+    ast::{Constant, ControlFlow, Expression, Identifier, Parameter},
+    types::{TrivialType, Type},
 };
 
 #[derive(Debug, Clone)]
@@ -20,6 +20,7 @@ pub enum TrivialValue {
     Int(i64),
     Float(f64),
     Text(String),
+    Bool(bool),
 }
 
 impl From<Constant> for TrivialValue {
@@ -28,6 +29,7 @@ impl From<Constant> for TrivialValue {
             Constant::Int(x) => Self::Int(x),
             Constant::Float(x) => Self::Float(x),
             Constant::Text(x) => Self::Text(x),
+            Constant::Bool(x) => Self::Bool(x),
         }
     }
 }
@@ -56,35 +58,15 @@ pub enum RuntimeError {
     ExpectedFunction,
 }
 
-pub type InterpreterResult<A> = Result<A, RuntimeError>;
+pub type InterpreterResult<A = Value> = Result<A, RuntimeError>;
 
 impl Expression {
-    pub fn reduce(self, env: &mut Environment) -> InterpreterResult<Value> {
+    pub fn reduce(self, env: &mut Environment) -> InterpreterResult {
         match self {
             Self::Variable(id) => env.lookup(&id).cloned(),
             Self::Literal(constant) => Ok(Value::Trivial(constant.into())),
-            Self::Lambda { parameter, body } => Ok(Value::Closure {
-                parameter: parameter.name,
-                capture: env.clone(),
-                body: *body,
-            }),
-            Self::Apply { function, argument } => {
-                // How do I solve builtins and that stuff?
-                // Introduce ApplySpecial for the builtin stuff?
-                if let Value::Closure {
-                    parameter,
-                    mut capture,
-                    body,
-                } = function.reduce(env)?
-                {
-                    let binding = argument.reduce(env)?;
-                    capture.insert_binding(parameter, binding);
-                    body.reduce(&mut capture)
-                } else {
-                    /* Some typing information would be nice */
-                    Err(RuntimeError::ExpectedFunction)
-                }
-            }
+            Self::Lambda { parameter, body } => reduce_lambda(parameter.name, *body, env),
+            Self::Apply { function, argument } => reduce_apply(*function, *argument, env),
             Self::Construct {
                 name,
                 constructor,
@@ -97,17 +79,74 @@ impl Expression {
                 bound,
                 body,
                 ..
-            } => {
-                let bound = bound.reduce(env)?;
-                env.insert_binding(binder, bound);
-                body.reduce(env)
-                // remove binder here, before returning?
-            }
+            } => reduce_binding(binder, *bound, *body, env),
             Self::Sequence { this, and_then } => {
                 this.reduce(env)?;
                 and_then.reduce(env)
             }
-            Self::ControlFlow(control_flow) => todo!(),
+            Self::ControlFlow(control) => reduce_control_flow(control, env),
         }
     }
+}
+
+fn reduce_control_flow(control: ControlFlow, env: &mut Environment) -> InterpreterResult {
+    match control {
+        ControlFlow::If {
+            predicate,
+            consequent,
+            alternate,
+        } => {
+            if let Value::Trivial(TrivialValue::Bool(test)) = predicate.reduce(env)? {
+                if test {
+                    consequent.reduce(env)
+                } else {
+                    alternate.reduce(env)
+                }
+            } else {
+                Err(RuntimeError::ExpectedType(Type::Trivial(TrivialType::Bool)))
+            }
+        }
+    }
+}
+
+fn reduce_binding(
+    binder: Identifier,
+    bound: Expression,
+    body: Expression,
+    env: &mut Environment,
+) -> InterpreterResult {
+    let bound = bound.reduce(env)?;
+    env.insert_binding(binder, bound);
+    // remove binder here, before returning?
+    body.reduce(env)
+}
+
+fn reduce_apply(
+    function: Expression,
+    argument: Expression,
+    env: &mut Environment,
+) -> InterpreterResult {
+    // How do I solve builtins and that stuff?
+    // Introduce ApplySpecial for the builtin stuff?
+    if let Value::Closure {
+        parameter,
+        mut capture,
+        body,
+    } = function.reduce(env)?
+    {
+        let binding = argument.reduce(env)?;
+        capture.insert_binding(parameter, binding);
+        body.reduce(&mut capture)
+    } else {
+        // Quantify a good function type here
+        Err(RuntimeError::ExpectedFunction)
+    }
+}
+
+fn reduce_lambda(param: Identifier, body: Expression, env: &mut Environment) -> InterpreterResult {
+    Ok(Value::Closure {
+        parameter: param,
+        capture: env.clone(),
+        body,
+    })
 }

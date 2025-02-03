@@ -184,6 +184,7 @@ pub enum Constant {
     Int(i64),
     Float(f64),
     Text(String),
+    Bool(bool),
 }
 
 impl From<lexer::Literal> for Constant {
@@ -191,6 +192,7 @@ impl From<lexer::Literal> for Constant {
         match value {
             lexer::Literal::Integer(x) => Self::Int(x),
             lexer::Literal::Text(x) => Self::Text(x),
+            lexer::Literal::Bool(x) => Self::Bool(x),
         }
     }
 }

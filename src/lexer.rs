@@ -69,10 +69,10 @@ pub enum TokenType {
 }
 
 impl TokenType {
-    fn identifier_or_keyword(id: String) -> Self {
+    fn decode_identifier(id: String) -> Self {
         Keyword::try_from_identifier(&id)
             .map(Self::Keyword)
-            .unwrap_or_else(|| Self::Identifier(id))
+            .or_else(id.parse::<bool>().map(|x| Self::Literal(Literal::Bool(x))))
     }
 }
 
@@ -149,6 +149,7 @@ impl Keyword {
 pub enum Literal {
     Integer(i64),
     Text(String),
+    Bool(bool),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -227,10 +228,10 @@ impl LexicalAnalyzer {
             (input, &input[..0])
         };
 
-        let image = prefix.into_iter().collect::<String>();
+        let identifier = prefix.into_iter().collect::<String>();
         self.emit(
-            image.len() as u32,
-            TokenType::identifier_or_keyword(image),
+            identifier.len() as u32,
+            TokenType::decode_identifier(identifier),
             remains,
         )
     }

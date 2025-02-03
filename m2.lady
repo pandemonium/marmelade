@@ -1,12 +1,12 @@
-Option a coproduct The of a | Nil
+Option a ::= coproduct The of a | Nil
 
-Result a e coproduct Ok of a | Err of e
+Result a e ::= coproduct Ok of a | Err of e
 
-Type_Error coproduct
+Type_Error ::= coproduct
     Undefined_Symbol       of Text
     Unification_Impossible of Type * Type
 
-Type coproduct
+Type ::= coproduct
     Parameter of typer::TypeVariable
     Trivial   of TrivialType
     Function  of Type * Type
@@ -19,6 +19,15 @@ Gui_Window struct
     width  u32
     height u32
 
+let <symbol> <=> [<Indent>] <expr> ( ( <;> or <newline> <expr>)* ) [<Dedent>]
+in [<Indent>] <expr> ( ( <;> or <newline> <expr>)* )
+
+With the caveat that: If there is an Indent following <=>, then the Dedent is optionally present. If there isn't one, then there must be no Dedent before in
+
+let x =
+    call_some_stuff 1 2 3
+in
+    render_the_thing x y z
 
 Option module
     T a coproduct The of a | Nil
@@ -33,14 +42,13 @@ Option module
     bind f =
         function The x -> f x | Nil -> Nil
 
-
 width =
     let window =
         { width  427
           height 100 }
     in window.width
 
-height =
+height :: Int =
     let window = 427, 100
     in window.1
 
@@ -53,7 +61,7 @@ print_hello :: (_ : unit) -> unit =
 
 print_hello ()
 
-identity :: a -> a =
+identity :: forall a. a -> a =
     fun x -> x
 
 (* is this enough? *)
@@ -61,10 +69,12 @@ identity =
     fun x -> x
 
 (* Multiple parameters? *)
-mk_pair = \x y -> x, y
+mk_pair :: forall a, b. a b -> a * b =
+    fun x y -> x, y
 
 (* Tuple argument *)
-fst = \x; y -> x
+fst :: forall a, b. a * b -> a =
+    fun (x, y) -> x
 
 (* Tuple argument *)
-snd = \x, y -> y
+snd = fun (x, y) -> y
