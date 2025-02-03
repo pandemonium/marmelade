@@ -264,7 +264,7 @@ fn parse_infix<'a>(
 
         [t, remains @ ..]
             if t.token_type() == &TT::Layout(Layout::Newline)
-                || t.token_type() == &TT::SemiColon =>
+                || t.token_type() == &TT::Semicolon =>
         {
             let (and_then, remains) = parse_expression(remains, precedence)?;
             Ok((

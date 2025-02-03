@@ -47,7 +47,7 @@ impl Default for Location {
 pub enum TokenType {
     Equals,      // =
     TypeAssign,  // ::=
-    DoubleColon, // ::
+    TypeAscribe, // ::
     Arrow,       // ->
     Comma,       // ,
     LeftParen,   // (
@@ -56,7 +56,7 @@ pub enum TokenType {
     Pipe,        // |
     DoubleQuote, // "
     SingleQuote, // '
-    SemiColon,   // ;
+    Semicolon,   // ;
 
     Identifier(String),
 
@@ -180,11 +180,13 @@ impl LexicalAnalyzer {
         let mut input = input;
         loop {
             input = match input {
-                remains @ [c, ..] if c.is_whitespace() => self.process_whitespace(remains),
-                prefix @ [c, ..] if is_identifier_prefix(*c) => self.process_identifier(prefix),
+                remains @ [c, ..] if c.is_whitespace() => self.scan_whitespace(remains),
+                prefix @ [c, ..] if is_identifier_prefix(*c) => self.scan_identifier(prefix),
+                prefix @ [c, ..] if is_number_prefix(*c) => self.scan_number(prefix),
+                ['"', remains @ ..] => self.scan_text_literal(remains),
 
                 [':', ':', '=', remains @ ..] => self.emit(3, TokenType::TypeAssign, remains),
-                [':', ':', remains @ ..] => self.emit(2, TokenType::DoubleColon, remains),
+                [':', ':', remains @ ..] => self.emit(2, TokenType::TypeAscribe, remains),
                 ['-', '>', remains @ ..] => self.emit(2, TokenType::Arrow, remains),
 
                 ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
@@ -193,17 +195,13 @@ impl LexicalAnalyzer {
                 [')', remains @ ..] => self.emit(1, TokenType::RightParen, remains),
                 ['_', remains @ ..] => self.emit(1, TokenType::Underscore, remains),
                 ['|', remains @ ..] => self.emit(1, TokenType::Pipe, remains),
-                [';', remains @ ..] => self.emit(1, TokenType::SemiColon, remains),
+                [';', remains @ ..] => self.emit(1, TokenType::Semicolon, remains),
 
                 ['+', remains @ ..] => self.emit_operator(1, Operator::Plus, remains),
                 ['-', remains @ ..] => self.emit_operator(1, Operator::Minus, remains),
                 ['*', remains @ ..] => self.emit_operator(1, Operator::Times, remains),
                 ['/', remains @ ..] => self.emit_operator(1, Operator::Divides, remains),
                 ['%', remains @ ..] => self.emit_operator(1, Operator::Modulo, remains),
-
-                prefix @ [c, ..] if is_number_prefix(*c) => self.process_number(prefix),
-
-                ['"', remains @ ..] => self.process_text_literal(remains),
 
                 [c, ..] => panic!("{c}"),
 
@@ -219,7 +217,7 @@ impl LexicalAnalyzer {
         self.output.iter().map(|t| t.token_type().clone()).collect()
     }
 
-    fn process_identifier<'a>(&mut self, input: &'a [char]) -> &'a [char] {
+    fn scan_identifier<'a>(&mut self, input: &'a [char]) -> &'a [char] {
         let (prefix, remains) = if let Some(end) = input[1..]
             .iter()
             .position(|c| !is_identifier_continuation(*c))
@@ -237,7 +235,7 @@ impl LexicalAnalyzer {
         )
     }
 
-    fn process_text_literal<'a>(&mut self, input: &'a [char]) -> &'a [char] {
+    fn scan_text_literal<'a>(&mut self, input: &'a [char]) -> &'a [char] {
         let (prefix, remains) = if let Some(end) = input.iter().position(|&c| c == '"') {
             (&input[..end], &input[end + 1..])
         } else {
@@ -262,7 +260,7 @@ impl LexicalAnalyzer {
         remains
     }
 
-    fn process_whitespace<'a>(&mut self, input: &'a [char]) -> &'a [char] {
+    fn scan_whitespace<'a>(&mut self, input: &'a [char]) -> &'a [char] {
         let (whitespace_prefix, remains) =
             if let Some(end) = input.iter().position(|c| !c.is_whitespace()) {
                 (&input[..end], &input[end..])
@@ -315,7 +313,7 @@ impl LexicalAnalyzer {
             .push(Token(TokenType::Layout(indentation), self.location));
     }
 
-    fn process_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {
+    fn scan_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {
         let (prefix, remains) = if let Some(end) = prefix.iter().position(|c| !c.is_ascii_digit()) {
             (&prefix[..end], &prefix[end..])
         } else {
