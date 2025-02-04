@@ -564,7 +564,7 @@ mod typer {
 
     pub fn infer(e: &ast::Expression, ctx: &TypingContext) -> Typing {
         match e {
-            ast::Expression::Variable(binding) => {
+            ast::Expression::Variable(binding) | ast::Expression::InvokeSynthetic(binding) => {
                 // Ref-variants of Binding too?
                 if let Some(ty) = ctx.lookup(&binding.clone().into()) {
                     Ok(TypeInference {
@@ -575,7 +575,7 @@ mod typer {
                     Err(TypeError::UndefinedSymbol(binding.clone()))
                 }
             }
-            ast::Expression::Literal(constant) => infer_constant_type(constant, ctx),
+            ast::Expression::Literal(constant) => synthesize_type_of_constantg(constant, ctx),
             ast::Expression::Lambda { parameter, body } => infer_lambda(parameter, body, ctx),
             ast::Expression::Apply { function, argument } => {
                 infer_application(function, argument, ctx)
@@ -654,11 +654,12 @@ mod typer {
         }
     }
 
-    fn infer_constant_type(c: &ast::Constant, _ctx: &TypingContext) -> Typing {
+    fn synthesize_type_of_constantg(c: &ast::Constant, _ctx: &TypingContext) -> Typing {
         match c {
-            ast::Constant::Int(..) => infer_trivial_type(TrivialType::Int),
-            ast::Constant::Float(..) => infer_trivial_type(TrivialType::Float),
-            ast::Constant::Text(..) => infer_trivial_type(TrivialType::Text),
+            ast::Constant::Int(..) => synthesize_trivial(TrivialType::Int),
+            ast::Constant::Float(..) => synthesize_trivial(TrivialType::Float),
+            ast::Constant::Text(..) => synthesize_trivial(TrivialType::Text),
+            ast::Constant::Bool(..) => synthesize_trivial(TrivialType::Bool),
         }
     }
 
@@ -740,7 +741,7 @@ mod typer {
         })
     }
 
-    fn infer_trivial_type(ty: TrivialType) -> Typing {
+    fn synthesize_trivial(ty: TrivialType) -> Typing {
         Ok(TypeInference {
             substitutions: Substitution::default(),
             inferred_type: Type::Trivial(ty),

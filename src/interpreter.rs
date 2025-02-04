@@ -1,29 +1,54 @@
-use std::collections::VecDeque;
+use std::{borrow::Cow, collections::VecDeque, rc::Rc};
+
+use thiserror::Error;
 
 use crate::{
-    ast::{Constant, ControlFlow, Expression, Identifier, Parameter},
+    ast::{Constant, ControlFlow, Expression, Identifier},
+    synthetics::SyntheticStub,
     types::{TrivialType, Type},
 };
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    Trivial(TrivialValue),
+    Scalar(Scalar),
     Closure {
         parameter: Identifier,
         capture: Environment,
         body: Expression,
     },
+    SyntheticBridge {
+        stub: Rc<dyn SyntheticStub>,
+    },
 }
 
-#[derive(Debug, Clone)]
-pub enum TrivialValue {
+impl Value {
+    pub fn try_into_scalar(self) -> Option<Scalar> {
+        if let Self::Scalar(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+
+    pub fn synthetic_stub<S>(stub: S) -> Self
+    where
+        S: SyntheticStub + 'static,
+    {
+        Self::SyntheticBridge {
+            stub: Rc::new(stub),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Scalar {
     Int(i64),
     Float(f64),
     Text(String),
     Bool(bool),
 }
 
-impl From<Constant> for TrivialValue {
+impl From<Constant> for Scalar {
     fn from(value: Constant) -> Self {
         match value {
             Constant::Int(x) => Self::Int(x),
@@ -34,46 +59,54 @@ impl From<Constant> for TrivialValue {
     }
 }
 
-#[derive(Debug, Clone)]
+// Is there a Rust-blessed persistent Cons-list such that
+// I can share the tail? Will a Cow do here? Cow<VecDeque> ?
+#[derive(Debug, Clone, Default)]
 pub struct Environment {
-    state: VecDeque<(Identifier, Value)>,
+    state: Cow<'static, VecDeque<(Identifier, Value)>>,
 }
 
 impl Environment {
-    pub fn insert_binding(&mut self, binder: Identifier, value: Value) {
-        self.state.push_front((binder, value));
+    pub fn insert_binding(&mut self, binder: Identifier, bound: Value) {
+        self.state.to_mut().push_front((binder, bound));
     }
 
-    pub fn lookup(&self, id: &Identifier) -> InterpreterResult<&Value> {
+    pub fn lookup(&self, id: &Identifier) -> Interpretation<&Value> {
         self.state
             .iter()
-            .find_map(|(binder, value)| (binder == id).then_some(value))
+            .find_map(|(binder, bound)| (binder == id).then_some(bound))
             .ok_or_else(|| RuntimeError::UndefinedSymbol(id.clone()))
     }
 }
 
+#[derive(Debug, PartialEq, Error)]
 pub enum RuntimeError {
+    #[error("Undefined symbol {0}")]
     UndefinedSymbol(Identifier),
+
+    #[error("Expected type {0}")]
     ExpectedType(Type),
+
+    #[error("Expected a function type")]
     ExpectedFunction,
+
+    #[error("Expected a synthetic closure {0}")]
+    ExpectedSynthetic(Identifier),
 }
 
-pub type InterpreterResult<A = Value> = Result<A, RuntimeError>;
+pub type Interpretation<A = Value> = Result<A, RuntimeError>;
 
 impl Expression {
-    pub fn reduce(self, env: &mut Environment) -> InterpreterResult {
+    pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
             Self::Variable(id) => env.lookup(&id).cloned(),
-            Self::Literal(constant) => Ok(Value::Trivial(constant.into())),
+            Self::InvokeSynthetic(id) => reduce_synthetic(id, env),
+            Self::Literal(constant) => Ok(Value::Scalar(constant.into())),
             Self::Lambda { parameter, body } => reduce_lambda(parameter.name, *body, env),
             Self::Apply { function, argument } => reduce_apply(*function, *argument, env),
-            Self::Construct {
-                name,
-                constructor,
-                argument,
-            } => todo!(),
-            Self::Product(product) => todo!(),
-            Self::Project { base, index } => todo!(),
+            Self::Construct { .. } => todo!(),
+            Self::Product(..) => todo!(),
+            Self::Project { .. } => todo!(),
             Self::Binding {
                 binder,
                 bound,
@@ -89,14 +122,22 @@ impl Expression {
     }
 }
 
-fn reduce_control_flow(control: ControlFlow, env: &mut Environment) -> InterpreterResult {
+fn reduce_synthetic(id: Identifier, env: &mut Environment) -> Interpretation {
+    if let Value::SyntheticBridge { stub } = env.lookup(&id)? {
+        stub.clone().apply(env)
+    } else {
+        Err(RuntimeError::ExpectedSynthetic(id))
+    }
+}
+
+fn reduce_control_flow(control: ControlFlow, env: &mut Environment) -> Interpretation {
     match control {
         ControlFlow::If {
             predicate,
             consequent,
             alternate,
         } => {
-            if let Value::Trivial(TrivialValue::Bool(test)) = predicate.reduce(env)? {
+            if let Value::Scalar(Scalar::Bool(test)) = predicate.reduce(env)? {
                 if test {
                     consequent.reduce(env)
                 } else {
@@ -114,7 +155,7 @@ fn reduce_binding(
     bound: Expression,
     body: Expression,
     env: &mut Environment,
-) -> InterpreterResult {
+) -> Interpretation {
     let bound = bound.reduce(env)?;
     env.insert_binding(binder, bound);
     // remove binder here, before returning?
@@ -125,28 +166,73 @@ fn reduce_apply(
     function: Expression,
     argument: Expression,
     env: &mut Environment,
-) -> InterpreterResult {
-    // How do I solve builtins and that stuff?
-    // Introduce ApplySpecial for the builtin stuff?
-    if let Value::Closure {
-        parameter,
-        mut capture,
-        body,
-    } = function.reduce(env)?
-    {
-        let binding = argument.reduce(env)?;
-        capture.insert_binding(parameter, binding);
-        body.reduce(&mut capture)
-    } else {
-        // Quantify a good function type here
-        Err(RuntimeError::ExpectedFunction)
+) -> Interpretation {
+    match function.reduce(env)? {
+        Value::Closure {
+            parameter,
+            mut capture,
+            body,
+        } => {
+            let binding = argument.reduce(env)?;
+            capture.insert_binding(parameter, binding);
+            body.reduce(&mut capture)
+        }
+        _otherwise => Err(RuntimeError::ExpectedFunction),
     }
 }
 
-fn reduce_lambda(param: Identifier, body: Expression, env: &mut Environment) -> InterpreterResult {
+fn reduce_lambda(param: Identifier, body: Expression, env: &mut Environment) -> Interpretation {
     Ok(Value::Closure {
         parameter: param,
         capture: env.clone(),
         body,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        ast::{Constant, Expression, Identifier},
+        interpreter::{Environment, RuntimeError, Scalar, Value},
+        stdlib,
+    };
+
+    #[test]
+    fn reduce_literal() {
+        let mut env = Environment::default();
+        stdlib::install(&mut env).unwrap();
+
+        assert_eq!(
+            Scalar::Int(1),
+            Expression::Literal(Constant::Int(1))
+                .reduce(&mut env)
+                .unwrap()
+                .try_into_scalar()
+                .unwrap(),
+        );
+    }
+
+    #[test]
+    fn reduce_with_variables() {
+        let mut env = Environment::default();
+        stdlib::install(&mut env).unwrap();
+
+        env.insert_binding(Identifier::new("x"), Value::Scalar(Scalar::Int(1)));
+
+        assert_eq!(
+            Scalar::Int(1),
+            Expression::Variable(Identifier::new("x"))
+                .reduce(&mut env)
+                .unwrap()
+                .try_into_scalar()
+                .unwrap()
+        );
+
+        assert_eq!(
+            RuntimeError::UndefinedSymbol(Identifier::new("y")),
+            Expression::Variable(Identifier::new("y"))
+                .reduce(&mut env)
+                .unwrap_err()
+        )
+    }
 }

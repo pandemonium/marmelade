@@ -70,9 +70,13 @@ pub enum TokenType {
 
 impl TokenType {
     fn decode_identifier(id: String) -> Self {
-        Keyword::try_from_identifier(&id)
-            .map(Self::Keyword)
-            .or_else(id.parse::<bool>().map(|x| Self::Literal(Literal::Bool(x))))
+        match Keyword::try_from_identifier(&id) {
+            Some(keyword) => Self::Keyword(keyword),
+            None => id
+                .parse::<bool>()
+                .map(|x| Self::Literal(Literal::Bool(x)))
+                .unwrap_or_else(|_| Self::Identifier(id)),
+        }
     }
 }
 
@@ -98,12 +102,12 @@ impl Operator {
     pub fn function_identifier(&self) -> String {
         // These mappings are highly dubious
         match self {
-            Self::Plus => "builtin::plus".to_owned(),
-            Self::Minus => "builtin::minus".to_owned(),
-            Self::Times => "builtin::times".to_owned(),
-            Self::Divides => "builtin::divides".to_owned(),
-            Self::Modulo => "builtin::modulo".to_owned(),
-            Self::Juxtaposition => "builtin::apply".to_owned(),
+            Self::Plus => "+".to_owned(),
+            Self::Minus => "-".to_owned(),
+            Self::Times => "*".to_owned(),
+            Self::Divides => "/".to_owned(),
+            Self::Modulo => "%".to_owned(),
+            Self::Juxtaposition => "$".to_owned(),
         }
     }
 }
@@ -173,7 +177,7 @@ pub struct LexicalAnalyzer {
 }
 
 impl LexicalAnalyzer {
-    pub fn untokenize(&self, input: &[Token]) -> String {
+    pub fn untokenize(&self, _input: &[Token]) -> String {
         todo!()
     }
 
@@ -309,7 +313,7 @@ impl LexicalAnalyzer {
     }
 
     // Which location is the location of an Indent or Dedent?
-    fn emit_layout(&mut self, location: Location, indentation: Layout) {
+    fn emit_layout(&mut self, _location: Location, indentation: Layout) {
         self.output
             .push(Token(TokenType::Layout(indentation), self.location));
     }

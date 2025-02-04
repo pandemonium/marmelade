@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 use crate::lexer::{self, Location};
 
@@ -15,6 +15,7 @@ pub struct Module {
     // pub main: Expression,// I would like this, but I have to think a little more about it
 }
 
+// Could this be an enum?
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Identifier(String);
 
@@ -26,6 +27,18 @@ impl Identifier {
     pub fn as_str(&self) -> &str {
         let Self(x) = self;
         x
+    }
+
+    pub fn scoped_with(&self, scope: String) -> Self {
+        let Self(id) = self;
+        Self(format!("{scope}::{id}"))
+    }
+}
+
+impl fmt::Display for Identifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self(id) = self;
+        write!(f, "{id}")
     }
 }
 
@@ -122,6 +135,7 @@ impl Parameter {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Variable(Identifier),
+    InvokeSynthetic(Identifier),
     Literal(Constant),
     Lambda {
         parameter: Parameter,
