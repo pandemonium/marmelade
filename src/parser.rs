@@ -1,7 +1,10 @@
 use core::panic;
 
 use crate::{
-    ast::{Declaration, Expression, Identifier, Parameter, ValueDeclarator},
+    ast::{
+        CompilationUnit, Declaration, Expression, FunctionDeclarator, Identifier, Module,
+        Parameter, ValueDeclarator,
+    },
     lexer::{Keyword, Layout, Location, Operator, Token, TokenType},
 };
 
@@ -18,6 +21,18 @@ pub enum ParseError {
 use Keyword::*;
 use Token as T;
 use TokenType as TT;
+
+pub fn parse_compilation_unit<'a>(input: &'a [Token]) -> Result<CompilationUnit, ParseError> {
+    let (declarations, remains) = parse_declarations(input)?;
+
+    println!("parse_compilation_unit: remains {:?}", remains);
+
+    Ok(CompilationUnit::Implicit(Module {
+        position: Location::default(),
+        name: Identifier::new("main"),
+        declarations,
+    }))
+}
 
 pub fn parse_declarations<'a>(input: &'a [Token]) -> ParseResult<'a, Vec<Declaration>> {
     let mut declarations = Vec::default();
@@ -84,6 +99,7 @@ pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration>
                 remains,
             ))
         }
+        [t, ..] => Err(ParseError::UnexpectedToken(t.clone())),
         otherwise => panic!("{otherwise:?}"),
     }
 }
@@ -100,18 +116,18 @@ fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclar
                     0,
                 )?;
                 Ok((
-                    ValueDeclarator::Function {
+                    ValueDeclarator::Function(FunctionDeclarator {
                         parameters,
                         return_type_annotation: None,
                         body,
-                    },
+                    }),
                     remains,
                 ))
             } else {
                 Err(ParseError::ExpectedTokenType(TT::Arrow))
             }
         }
-        _otherwise => todo!(),
+        otherwise => panic!("{otherwise:?}"),
     }
 }
 
@@ -168,9 +184,7 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
             Ok((Expression::Variable(Identifier::new(&id)), remains))
         }
         // Newline here
-        otherwise => {
-            panic!("{otherwise:?}");
-        }
+        otherwise => panic!("{otherwise:?}"),
     }
 }
 
@@ -251,10 +265,13 @@ fn parse_infix<'a>(
     match input {
         [t, ..] if is_done(t) => Ok((lhs, input)),
 
+        // <op> <expr>
         [T(TT::Operator(op), ..), remains @ ..] => {
             parse_operator(lhs, input, precedence, op, remains)
         }
 
+        // ( <Newline> | <Indent> ) <op> <expr>
+        // -- a continuation of the infix operator sequence on the next line (possibly indented.)
         [t, T(TT::Operator(op), ..), remains @ ..]
             if t.token_type() == &TT::Layout(Layout::Newline)
                 || t.token_type() == &TT::Layout(Layout::Indent) =>
@@ -262,25 +279,37 @@ fn parse_infix<'a>(
             parse_operator(lhs, input, precedence, op, remains)
         }
 
+        // ( <Newline> | <;> ) <expr>
+        // -- an expression sequence, e.g.: <statement>* <expr>
         [t, remains @ ..]
-            if t.token_type() == &TT::Layout(Layout::Newline)
-                || t.token_type() == &TT::Semicolon =>
+            if (t.token_type() == &TT::Layout(Layout::Newline)
+                || t.token_type() == &TT::Semicolon)
+                && remains.len() > 0 =>
         {
-            let (and_then, remains) = parse_expression(remains, precedence)?;
-            Ok((
-                Expression::Sequence {
-                    this: lhs.into(),
-                    and_then: and_then.into(),
-                },
-                remains,
-            ))
+            if !starts_with(TT::End, remains) {
+                let (and_then, remains) = parse_expression(remains, precedence)?;
+                Ok((
+                    Expression::Sequence {
+                        this: lhs.into(),
+                        and_then: and_then.into(),
+                    },
+                    remains,
+                ))
+            } else {
+                Ok((lhs, input))
+            }
         }
 
+        // <expr>
+        //     <expr>
+        // -- Function application, argument indented
         [t, remains @ ..] if t.token_type() == &TT::Layout(Layout::Indent) => {
             parse_juxtaposition(lhs, remains, precedence)
         }
 
-        [_, ..] => parse_juxtaposition(lhs, input, precedence),
+        // <expr> <expr>
+        // -- Function application
+        [t, ..] if t.token_type() != &TT::End => parse_juxtaposition(lhs, input, precedence),
 
         _otherwise => Ok((lhs, input)),
     }
@@ -464,10 +493,10 @@ mod tests {
                 .into(),
                 body: E::Apply {
                     function: E::Apply {
-                        function: E::Variable(Id::new("builtin::plus")).into(),
+                        function: E::Variable(Id::new("+")).into(),
                         argument: E::Apply {
                             function: E::Apply {
-                                function: E::Variable(Id::new("builtin::times")).into(),
+                                function: E::Variable(Id::new("*")).into(),
                                 argument: E::Literal(Constant::Int(3)).into()
                             }
                             .into(),
@@ -506,7 +535,7 @@ mod tests {
                     bound: E::Literal(Constant::Int(20)).into(),
                     body: E::Apply {
                         function: E::Apply {
-                            function: E::Variable(Id::new("builtin::plus")).into(),
+                            function: E::Variable(Id::new("+")).into(),
                             argument: E::Variable(Id::new("x")).into()
                         }
                         .into(),
@@ -533,7 +562,7 @@ mod tests {
         assert_eq!(
             Declaration::Value {
                 binder: Identifier::new("create_window"),
-                declarator: ValueDeclarator::Function {
+                declarator: ValueDeclarator::Function(FunctionDeclarator {
                     parameters: vec![Parameter {
                         name: Identifier::new("x"),
                         type_annotation: None
@@ -541,13 +570,13 @@ mod tests {
                     return_type_annotation: None,
                     body: E::Apply {
                         function: E::Apply {
-                            function: E::Variable(Id::new("builtin::plus")).into(),
+                            function: E::Variable(Id::new("+")).into(),
                             argument: E::Literal(Constant::Int(1)).into()
                         }
                         .into(),
                         argument: Expression::Variable(Identifier::new("x")).into()
                     },
-                },
+                }),
                 position: Location::default(),
             },
             decl
@@ -563,7 +592,8 @@ mod tests {
                |        1 + x
                |
                |print_endline = fun s ->
-               |    __print s"#,
+               |    __print s
+               |"#,
         )))
         .unwrap();
 
@@ -571,7 +601,7 @@ mod tests {
             vec![
                 Declaration::Value {
                     binder: Identifier::new("create_window"),
-                    declarator: ValueDeclarator::Function {
+                    declarator: ValueDeclarator::Function(FunctionDeclarator {
                         parameters: vec![Parameter {
                             name: Identifier::new("x"),
                             type_annotation: None
@@ -579,19 +609,19 @@ mod tests {
                         return_type_annotation: None,
                         body: E::Apply {
                             function: E::Apply {
-                                function: E::Variable(Id::new("builtin::plus")).into(),
+                                function: E::Variable(Id::new("+")).into(),
                                 argument: E::Literal(Constant::Int(1)).into()
                             }
                             .into(),
                             argument: E::Variable(Id::new("x")).into()
                         },
-                    },
+                    }),
                     position: Location::default(),
                 },
                 Declaration::Value {
                     position: Location::new(5, 1),
                     binder: Id::new("print_endline"),
-                    declarator: ValueDeclarator::Function {
+                    declarator: ValueDeclarator::Function(FunctionDeclarator {
                         parameters: vec![Parameter {
                             name: Identifier::new("s"),
                             type_annotation: None
@@ -601,7 +631,7 @@ mod tests {
                             function: E::Variable(Id::new("__print")).into(),
                             argument: E::Variable(Identifier::new("s")).into()
                         }
-                    }
+                    })
                 }
             ],
             decls

@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn reduce_literal() {
         let mut env = Environment::default();
-        stdlib::install(&mut env).unwrap();
+        stdlib::define(&mut env).unwrap();
 
         assert_eq!(
             Scalar::Int(1),
@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn reduce_with_variables() {
         let mut env = Environment::default();
-        stdlib::install(&mut env).unwrap();
+        stdlib::define(&mut env).unwrap();
 
         env.insert_binding(Identifier::new("x"), Value::Scalar(Scalar::Int(1)));
 

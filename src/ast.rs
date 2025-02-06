@@ -1,7 +1,11 @@
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use crate::lexer::{self, Location};
 
+#[derive(Debug)]
 pub enum CompilationUnit {
     Implicit(Module),
     Library { modules: Vec<Module>, main: Module },
@@ -12,7 +16,16 @@ pub struct Module {
     pub position: Location,
     pub name: Identifier,
     pub declarations: Vec<Declaration>,
-    // pub main: Expression,// I would like this, but I have to think a little more about it
+    // pub main: Expression,
+    // I would like this, but I have to think a little more about it
+}
+
+impl Module {
+    pub fn find_value_declaration(&self, id: Identifier) -> Option<&Declaration> {
+        self.declarations
+            .iter()
+            .find(|decl| matches!(decl, Declaration::Value { binder, .. } if binder == &id))
+    }
 }
 
 // Could this be an enum?
@@ -105,15 +118,54 @@ pub struct Constructor {
 
 #[derive(Debug, PartialEq)]
 pub enum ValueDeclarator {
-    Constant {
-        initializer: Expression,
-        type_annotation: TypeName,
-    },
-    Function {
-        parameters: Vec<Parameter>,
-        return_type_annotation: Option<TypeName>,
-        body: Expression, // what is this? A Nested lambda?
-    },
+    Constant(ConstantDeclarator),
+    Function(FunctionDeclarator),
+}
+
+impl ValueDeclarator {
+    // how does it find which functions this expression depends on?
+    // or is variables enough?
+    // So all free symbols?
+    // All symbols that are neither parameters nor local variables are
+    // free symbols
+    // They are more than these really because shadowing
+    // so I would really need to "interpret" my way down the tree
+    // So starting with an empty set of symbols as closed
+    // add all parameters
+    // then add any Expr::Var as free, unless in closed
+    // add any let binder to closed
+    fn dependencies(&self) -> Vec<&Identifier> {
+        match self {
+            Self::Constant(constant_declarator) => todo!(),
+            Self::Function(function_declarator) => todo!(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ConstantDeclarator {
+    pub initializer: Expression,
+    pub type_annotation: TypeName,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct FunctionDeclarator {
+    pub parameters: Vec<Parameter>,
+    pub return_type_annotation: Option<TypeName>,
+    pub body: Expression,
+}
+
+impl FunctionDeclarator {
+    // does this function really go here?
+    fn into_lambda_tree(self) -> Expression {
+        self.parameters
+            .into_iter()
+            .rev()
+            .fold(self.body, |body, parameter| Expression::Lambda {
+                parameter,
+                body: body.into(),
+            })
+    }
 }
 
 // these can be pattern matches too
@@ -174,6 +226,73 @@ impl Expression {
             Some(postition)
         } else {
             None
+        }
+    }
+
+    pub fn free_identifiers<'a>(&'a self) -> HashSet<&'a Identifier> {
+        let mut free_identifiers = HashSet::default();
+        self.find_free_identifiers(&mut HashSet::default(), &mut free_identifiers);
+        free_identifiers
+    }
+
+    fn find_free_identifiers<'a>(
+        &'a self,
+        bound: &mut HashSet<&'a Identifier>,
+        free: &mut HashSet<&'a Identifier>,
+    ) {
+        match self {
+            Self::Variable(id) => {
+                if !bound.contains(id) {
+                    free.insert(id);
+                }
+            }
+            Self::InvokeSynthetic(id) => {
+                free.insert(id);
+            }
+            Self::Lambda { parameter, body } => {
+                bound.insert(&parameter.name);
+                body.find_free_identifiers(bound, free);
+            }
+            Self::Apply { function, argument } => {
+                function.find_free_identifiers(bound, free);
+                argument.find_free_identifiers(bound, free);
+            }
+            Self::Construct { argument, .. } => argument.find_free_identifiers(bound, free),
+            Self::Product(Product::Tuple(expressions)) => {
+                for e in expressions {
+                    e.find_free_identifiers(bound, free);
+                }
+            }
+            Self::Product(Product::Struct { bindings }) => {
+                for e in bindings.values() {
+                    e.find_free_identifiers(bound, free);
+                }
+            }
+            Self::Project { base, .. } => base.find_free_identifiers(bound, free),
+            Self::Binding {
+                binder,
+                bound: bound_expr,
+                body,
+                ..
+            } => {
+                bound_expr.find_free_identifiers(bound, free);
+                bound.insert(binder);
+                body.find_free_identifiers(bound, free);
+            }
+            Self::Sequence { this, and_then } => {
+                this.find_free_identifiers(bound, free);
+                and_then.find_free_identifiers(bound, free);
+            }
+            Self::ControlFlow(ControlFlow::If {
+                predicate,
+                consequent,
+                alternate,
+            }) => {
+                predicate.find_free_identifiers(bound, free);
+                consequent.find_free_identifiers(bound, free);
+                alternate.find_free_identifiers(bound, free);
+            }
+            _otherwise => (),
         }
     }
 }

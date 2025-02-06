@@ -45,7 +45,7 @@ pub trait Lambda2: SyntheticStub + Sized + 'static {
 
     fn apply_inner(&self, p0: Self::P0, p1: Self::P1) -> Self::R;
 
-    fn install(self, env: &mut Environment) -> Interpretation<()> {
+    fn define(self, env: &mut Environment) -> Interpretation<()> {
         let stub_binder = self.stub_binder();
         let surface_binder = self.surface_binder();
 

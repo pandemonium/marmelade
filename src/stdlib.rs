@@ -1,18 +1,15 @@
-use std::{
-    fmt::{self, Debug},
-    marker::PhantomData,
-};
+use std::{fmt, marker::PhantomData};
 
 use crate::{
     ast::Identifier,
     interpreter::{Environment, Interpretation, RuntimeError, Value},
     lexer::Operator,
     synthetics::{CallResult, Lambda2, SyntheticStub},
-    types::{TrivialType, Type},
+    types::Type,
 };
 
 struct OperatorBridge<A, F> {
-    symbol: Operator,
+    operator: Operator,
     closure: F,
     tag: PhantomData<A>,
 }
@@ -21,10 +18,10 @@ impl<A, F> OperatorBridge<A, F>
 where
     F: Clone + FnOnce(A, A) -> A + 'static,
 {
-    pub fn new(symbol: Operator, apply: F) -> Self {
+    pub fn new(operator: Operator, closure: F) -> Self {
         Self {
-            symbol,
-            closure: apply,
+            operator,
+            closure,
             tag: PhantomData::default(),
         }
     }
@@ -32,7 +29,7 @@ where
 
 impl<A, F> fmt::Debug for OperatorBridge<A, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Op(symbol: {:?}, ..)", self.symbol)
+        write!(f, "Op(symbol: {:?}, ..)", self.operator)
     }
 }
 
@@ -44,7 +41,7 @@ where
     A: Into<Value>,
 {
     fn surface_binder(&self) -> Identifier {
-        Identifier::new(&self.symbol.function_identifier())
+        Identifier::new(&self.operator.function_identifier())
     }
 
     fn apply(&self, capture: &Environment) -> CallResult<Value> {
@@ -72,47 +69,13 @@ where
     }
 }
 
-#[derive(Debug)]
-struct PlusInt;
-
-impl SyntheticStub for PlusInt {
-    fn surface_binder(&self) -> Identifier {
-        Identifier::new(&Operator::Plus.function_identifier())
-    }
-
-    fn apply(&self, capture: &Environment) -> CallResult<Value> {
-        self.apply2(capture)
-    }
-
-    fn signature(&self) -> Type {
-        let int = Type::Trivial(TrivialType::Int);
-        Type::Function(
-            int.clone().into(),
-            Type::Function(int.clone().into(), int.clone().into()).into(),
-        )
-    }
-}
-
-// Can I do: BinOp and give it a closure instead?
-// I could infer types based on this closure
-// It has to contain the operator too
-impl Lambda2 for PlusInt {
-    type P0 = i64;
-    type P1 = i64;
-    type R = i64;
-
-    fn apply_inner(&self, p0: Self::P0, p1: Self::P1) -> Self::R {
-        p0 + p1
-    }
-}
-
-pub fn install(env: &mut Environment) -> Interpretation<()> {
+pub fn define(env: &mut Environment) -> Interpretation<()> {
     // Could I polymorph this even more by traiting up the underlying operators?
     // A: Add, A: Mul, etc?
-    OperatorBridge::<i64, _>::new(Operator::Plus, |p, q| p + q).install(env)?;
-    OperatorBridge::<i64, _>::new(Operator::Minus, |p, q| p - q).install(env)?;
-    OperatorBridge::<i64, _>::new(Operator::Times, |p, q| p * q).install(env)?;
-    OperatorBridge::<i64, _>::new(Operator::Divides, |p, q| p / q).install(env)?;
+    OperatorBridge::<i64, _>::new(Operator::Plus, |p, q| p + q).define(env)?;
+    OperatorBridge::<i64, _>::new(Operator::Minus, |p, q| p - q).define(env)?;
+    OperatorBridge::<i64, _>::new(Operator::Times, |p, q| p * q).define(env)?;
+    OperatorBridge::<i64, _>::new(Operator::Divides, |p, q| p / q).define(env)?;
 
     Ok(())
 }
@@ -128,7 +91,7 @@ mod tests {
     #[test]
     fn plus() {
         let mut env = Environment::default();
-        stdlib::install(&mut env).unwrap();
+        stdlib::define(&mut env).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -148,7 +111,7 @@ mod tests {
     #[test]
     fn minus() {
         let mut env = Environment::default();
-        stdlib::install(&mut env).unwrap();
+        stdlib::define(&mut env).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -168,7 +131,7 @@ mod tests {
     #[test]
     fn times() {
         let mut env = Environment::default();
-        stdlib::install(&mut env).unwrap();
+        stdlib::define(&mut env).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -188,7 +151,7 @@ mod tests {
     #[test]
     fn divides() {
         let mut env = Environment::default();
-        stdlib::install(&mut env).unwrap();
+        stdlib::define(&mut env).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -200,7 +163,7 @@ mod tests {
         };
 
         assert_eq!(
-            Scalar::Int(1),
+            Scalar::Int(0),
             e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
         );
     }

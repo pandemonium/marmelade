@@ -6,7 +6,7 @@ use std::{
 
 use typer::{Substitution, TypeParameter};
 
-use crate::ast::{self, Expression, Identifier};
+use crate::ast::{self, CompilationUnit, Expression, Identifier};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -395,6 +395,13 @@ impl From<ast::Identifier> for Binding {
 impl From<ast::TypeName> for Binding {
     fn from(value: ast::TypeName) -> Self {
         Binding::TypeTerm(value.as_str().to_owned())
+    }
+}
+
+impl CompilationUnit {
+    pub fn typing_context(&self) -> TypingContext {
+        // When does stdlib::install come in to play?
+        todo!()
     }
 }
 
