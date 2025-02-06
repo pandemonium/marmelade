@@ -26,6 +26,39 @@ impl Module {
             .iter()
             .find(|decl| matches!(decl, Declaration::Value { binder, .. } if binder == &id))
     }
+
+    pub fn dependency_matrix(&self) -> DependencyMatrix {
+        DependencyMatrix::from_declarations(&self.declarations)
+    }
+}
+
+// Where is the stdlib stuff? Or other libraries.
+// Is a Use also a pathway to Declarations?
+
+// I want to compute where to start typing the compilation unit
+// Which is at a function which only has dependencies to symbols which
+// already have known types
+pub struct DependencyMatrix<'a>(HashMap<&'a Identifier, Vec<&'a Identifier>>);
+
+impl<'a> DependencyMatrix<'a> {
+    pub fn from_declarations(decls: &'a [Declaration]) -> Self {
+        let mut map = HashMap::default();
+
+        for decl in decls {
+            if let Declaration::Value {
+                binder, declarator, ..
+            } = decl
+            {
+                map.insert(binder, declarator.dependencies());
+            }
+        }
+
+        Self(map)
+    }
+
+    pub fn dependencies(&self, d: &Identifier) -> Option<&[&Identifier]> {
+        self.0.get(d).map(Vec::as_slice)
+    }
 }
 
 // Could this be an enum?
@@ -82,6 +115,7 @@ pub enum Declaration {
         declarator: TypeDeclarator,
     },
     Module(Module),
+    // Use()    ??
 }
 
 impl Declaration {
@@ -123,22 +157,12 @@ pub enum ValueDeclarator {
 }
 
 impl ValueDeclarator {
-    // how does it find which functions this expression depends on?
-    // or is variables enough?
-    // So all free symbols?
-    // All symbols that are neither parameters nor local variables are
-    // free symbols
-    // They are more than these really because shadowing
-    // so I would really need to "interpret" my way down the tree
-    // So starting with an empty set of symbols as closed
-    // add all parameters
-    // then add any Expr::Var as free, unless in closed
-    // add any let binder to closed
-    fn dependencies(&self) -> Vec<&Identifier> {
-        match self {
-            Self::Constant(constant_declarator) => todo!(),
-            Self::Function(function_declarator) => todo!(),
-        }
+    pub fn dependencies(&self) -> Vec<&Identifier> {
+        let mut free = match self {
+            Self::Constant(decl) => decl.free_identifiers(),
+            Self::Function(decl) => decl.free_identifiers(),
+        };
+        free.drain().collect()
     }
 }
 
@@ -146,6 +170,12 @@ impl ValueDeclarator {
 pub struct ConstantDeclarator {
     pub initializer: Expression,
     pub type_annotation: TypeName,
+}
+
+impl ConstantDeclarator {
+    pub fn free_identifiers(&self) -> HashSet<&Identifier> {
+        self.initializer.free_identifiers()
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -157,7 +187,7 @@ pub struct FunctionDeclarator {
 
 impl FunctionDeclarator {
     // does this function really go here?
-    fn into_lambda_tree(self) -> Expression {
+    pub fn into_lambda_tree(self) -> Expression {
         self.parameters
             .into_iter()
             .rev()
@@ -165,6 +195,14 @@ impl FunctionDeclarator {
                 parameter,
                 body: body.into(),
             })
+    }
+
+    pub fn free_identifiers(&self) -> HashSet<&Identifier> {
+        let mut free = self.body.free_identifiers();
+        for param in &self.parameters {
+            free.remove(&param.name);
+        }
+        free
     }
 }
 

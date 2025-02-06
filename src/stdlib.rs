@@ -8,6 +8,7 @@ use crate::{
     types::Type,
 };
 
+// Make a generic version of this
 struct OperatorBridge<A, F> {
     operator: Operator,
     closure: F,
