@@ -1,4 +1,7 @@
-use marmelade::{lexer::LexicalAnalyzer, parser};
+use marmelade::{
+    lexer::{Layout, LexicalAnalyzer, TokenType},
+    parser,
+};
 
 fn into_input(source: &str) -> Vec<char> {
     source
@@ -15,7 +18,7 @@ fn into_input(source: &str) -> Vec<char> {
 fn main1() {
     let mut lexer = LexicalAnalyzer::default();
 
-    let program = parser::parse_compilation_unit(lexer.tokenize(&into_input(
+    lexer.tokenize(&into_input(
         r#"|create_window =
            |    fun x ->
            |        1 + x
@@ -25,7 +28,21 @@ fn main1() {
            |
            |main = fun _ -> create_window 1
            |"#,
-    )))
-    .unwrap();
+    ));
+
+    for t in lexer.tokens() {
+        print!("{} ", t.token_type());
+        if let TokenType::Layout(tt) = t.token_type() {
+            match tt {
+                Layout::Indent => print!("({})", t.location()),
+                Layout::Dedent => print!("({})", t.location()),
+                Layout::Newline => print!("({})", t.location()),
+            }
+        }
+    }
+
+    println!("{}", lexer.untokenize());
+
+    let program = parser::parse_compilation_unit(lexer.tokens()).unwrap();
     println!("{program:?}");
 }

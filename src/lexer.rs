@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Location {
     pub row: u32,
@@ -38,6 +40,13 @@ impl Location {
 impl Default for Location {
     fn default() -> Self {
         Self { row: 1, column: 1 }
+    }
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { row, column } = self;
+        write!(f, "({},{})", row, column)
     }
 }
 
@@ -112,11 +121,34 @@ impl Operator {
     }
 }
 
+impl fmt::Display for Operator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Plus => write!(f, "+"),
+            Self::Minus => write!(f, "-"),
+            Self::Times => write!(f, "*"),
+            Self::Divides => write!(f, "/"),
+            Self::Modulo => write!(f, "%"),
+            Self::Juxtaposition => write!(f, "$"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Layout {
     Indent,
     Dedent,
     Newline,
+}
+
+impl fmt::Display for Layout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Indent => write!(f, "<Indent>"),
+            Self::Dedent => write!(f, "<Dedent>"),
+            Self::Newline => write!(f, "<Newline>"),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -149,11 +181,37 @@ impl Keyword {
     }
 }
 
+impl fmt::Display for Keyword {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Let => write!(f, "Let"),
+            Self::In => write!(f, "In"),
+            Self::If => write!(f, "If"),
+            Self::Struct => write!(f, "Struct"),
+            Self::Coproduct => write!(f, "Coproduct"),
+            Self::Alias => write!(f, "Alias"),
+            Self::Module => write!(f, "Module"),
+            Self::Use => write!(f, "Use"),
+            Self::Fun => write!(f, "Fun"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Literal {
     Integer(i64),
     Text(String),
     Bool(bool),
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Integer(x) => write!(f, "{x}"),
+            Self::Text(x) => write!(f, "{x}"),
+            Self::Bool(x) => write!(f, "{x}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -167,6 +225,35 @@ impl Token {
     pub fn location(&self) -> &Location {
         &self.1
     }
+
+    pub fn is_layout(&self) -> bool {
+        matches!(self, Token(TokenType::Layout(..), ..))
+    }
+}
+
+impl fmt::Display for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Equals => write!(f, "="),
+            Self::TypeAssign => write!(f, "::="),
+            Self::TypeAscribe => write!(f, "::"),
+            Self::Arrow => write!(f, "->"),
+            Self::Comma => write!(f, ","),
+            Self::LeftParen => write!(f, "("),
+            Self::RightParen => write!(f, ")"),
+            Self::Underscore => write!(f, "_"),
+            Self::Pipe => write!(f, "|"),
+            Self::DoubleQuote => write!(f, "\""),
+            Self::SingleQuote => write!(f, "'"),
+            Self::Semicolon => write!(f, ";"),
+            Self::Identifier(id) => write!(f, "{id}"),
+            Self::Keyword(keyword) => write!(f, "{keyword}"),
+            Self::Literal(literal) => write!(f, "{literal}"),
+            Self::Operator(operator) => write!(f, "{operator}"),
+            Self::Layout(layout) => write!(f, "{layout}"),
+            Self::End => write!(f, "°"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -177,8 +264,37 @@ pub struct LexicalAnalyzer {
 }
 
 impl LexicalAnalyzer {
-    pub fn untokenize(&self, _input: &[Token]) -> String {
-        todo!()
+    pub fn tokens(&self) -> &[Token] {
+        &self.output
+    }
+
+    pub fn untokenize(&self) -> String {
+        let mut buf = String::with_capacity(self.output.len() * 2);
+        let mut indentation = 1;
+        let mut spaces = " ".repeat(indentation);
+        let mut row = 0;
+        for t in &self.output {
+            if row != t.location().row {
+                row = t.location().row;
+                buf.push_str(&format!("\n{row:>3}{spaces}"));
+            }
+            if let TokenType::Layout(layout) = t.token_type() {
+                match layout {
+                    Layout::Indent => {
+                        indentation += 4;
+                        spaces = " ".repeat(indentation)
+                    }
+                    Layout::Dedent => {
+                        indentation -= 4;
+                        spaces = " ".repeat(indentation)
+                    }
+                    _otherwise => (),
+                }
+            } else {
+                buf.push_str(&format!("{} ", t.token_type()));
+            }
+        }
+        buf
     }
 
     pub fn tokenize(&mut self, input: &[char]) -> &[Token] {

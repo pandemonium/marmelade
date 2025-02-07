@@ -269,11 +269,11 @@ impl Expression {
 
     pub fn free_identifiers<'a>(&'a self) -> HashSet<&'a Identifier> {
         let mut free_identifiers = HashSet::default();
-        self.find_free_identifiers(&mut HashSet::default(), &mut free_identifiers);
+        self.find_unbound(&mut HashSet::default(), &mut free_identifiers);
         free_identifiers
     }
 
-    fn find_free_identifiers<'a>(
+    fn find_unbound<'a>(
         &'a self,
         bound: &mut HashSet<&'a Identifier>,
         free: &mut HashSet<&'a Identifier>,
@@ -288,47 +288,49 @@ impl Expression {
                 free.insert(id);
             }
             Self::Lambda { parameter, body } => {
+                // This is probably not correct
+                // I have to remove this after looking in "body
                 bound.insert(&parameter.name);
-                body.find_free_identifiers(bound, free);
+                body.find_unbound(bound, free);
             }
             Self::Apply { function, argument } => {
-                function.find_free_identifiers(bound, free);
-                argument.find_free_identifiers(bound, free);
+                function.find_unbound(bound, free);
+                argument.find_unbound(bound, free);
             }
-            Self::Construct { argument, .. } => argument.find_free_identifiers(bound, free),
+            Self::Construct { argument, .. } => argument.find_unbound(bound, free),
             Self::Product(Product::Tuple(expressions)) => {
                 for e in expressions {
-                    e.find_free_identifiers(bound, free);
+                    e.find_unbound(bound, free);
                 }
             }
             Self::Product(Product::Struct { bindings }) => {
                 for e in bindings.values() {
-                    e.find_free_identifiers(bound, free);
+                    e.find_unbound(bound, free);
                 }
             }
-            Self::Project { base, .. } => base.find_free_identifiers(bound, free),
+            Self::Project { base, .. } => base.find_unbound(bound, free),
             Self::Binding {
                 binder,
                 bound: bound_expr,
                 body,
                 ..
             } => {
-                bound_expr.find_free_identifiers(bound, free);
+                bound_expr.find_unbound(bound, free);
                 bound.insert(binder);
-                body.find_free_identifiers(bound, free);
+                body.find_unbound(bound, free);
             }
             Self::Sequence { this, and_then } => {
-                this.find_free_identifiers(bound, free);
-                and_then.find_free_identifiers(bound, free);
+                this.find_unbound(bound, free);
+                and_then.find_unbound(bound, free);
             }
             Self::ControlFlow(ControlFlow::If {
                 predicate,
                 consequent,
                 alternate,
             }) => {
-                predicate.find_free_identifiers(bound, free);
-                consequent.find_free_identifiers(bound, free);
-                alternate.find_free_identifiers(bound, free);
+                predicate.find_unbound(bound, free);
+                consequent.find_unbound(bound, free);
+                alternate.find_unbound(bound, free);
             }
             _otherwise => (),
         }
