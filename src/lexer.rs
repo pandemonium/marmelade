@@ -274,23 +274,23 @@ impl LexicalAnalyzer {
         let mut spaces = " ".repeat(indentation);
         let mut row = 0;
         for t in &self.output {
-            if row != t.location().row {
-                row = t.location().row;
-                buf.push_str(&format!("\n{row:>3}{spaces}"));
-            }
             if let TokenType::Layout(layout) = t.token_type() {
                 match layout {
                     Layout::Indent => {
-                        indentation += 4;
+                        indentation = t.location().column as usize;
                         spaces = " ".repeat(indentation)
                     }
                     Layout::Dedent => {
-                        indentation -= 4;
+                        indentation = t.location().column as usize;
                         spaces = " ".repeat(indentation)
                     }
                     _otherwise => (),
                 }
             } else {
+                if row != t.location().row {
+                    row = t.location().row;
+                    buf.push_str(&format!("\n{row:>3}{spaces}"));
+                }
                 buf.push_str(&format!("{} ", t.token_type()));
             }
         }
@@ -429,9 +429,9 @@ impl LexicalAnalyzer {
     }
 
     // Which location is the location of an Indent or Dedent?
-    fn emit_layout(&mut self, _location: Location, indentation: Layout) {
+    fn emit_layout(&mut self, location: Location, indentation: Layout) {
         self.output
-            .push(Token(TokenType::Layout(indentation), self.location));
+            .push(Token(TokenType::Layout(indentation), location));
     }
 
     fn scan_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {
