@@ -1,6 +1,7 @@
 use marmelade::{
+    interpreter::{Environment, Interpreter},
     lexer::{Layout, LexicalAnalyzer, TokenType},
-    parser,
+    parser, stdlib,
 };
 
 fn into_input(source: &str) -> Vec<char> {
@@ -23,13 +24,17 @@ fn main1() {
            |    fun x ->
            |        1 + x
            |
-           |print_endline = fun s ->
-           |    __print s
            |
-           |main = fun _ -> create_window 1
+           |main = create_window 1
            |"#,
     ));
 
     let program = parser::parse_compilation_unit(lexer.tokens()).unwrap();
-    println!("{program:?}");
+
+    let mut prelude = Environment::default();
+    stdlib::define(&mut prelude).unwrap();
+
+    let return_value = Interpreter::new(prelude).load_and_run(program).unwrap();
+
+    println!("{return_value:?}");
 }

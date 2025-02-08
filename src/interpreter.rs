@@ -1,5 +1,4 @@
 use std::{borrow::Cow, collections::VecDeque, rc::Rc};
-
 use thiserror::Error;
 
 use crate::{
@@ -11,46 +10,73 @@ use crate::{
     types::{TrivialType, Type},
 };
 
-pub struct Program {
-    environment: Environment,
-
-    // This is not right
-    entry_point: Expression,
-}
-
-pub type Loaded<A = Program> = Result<A, LoadError>;
+pub type Loaded<A> = Result<A, LoadError>;
 
 // Todo: which ones are involved in the cycle or are unresolved?
 #[derive(Debug, Error)]
 pub enum LoadError {
     #[error("Cyclic dependencies")]
-    CyclicDependencies,
+    DependencyCycle,
 
     #[error("Unsatisfied dependencies")]
     UnsatisfiedDependencies,
 
     #[error("Runtime error initialzing the module")]
     InitializationError(#[from] RuntimeError),
+
+    #[error("Dependency resolution failed")]
+    DependencyResolutionFailed,
 }
 
-struct ModuleResolver<'a> {
+pub struct Interpreter {
+    prelude: Environment,
+}
+
+impl Interpreter {
+    pub fn new(prelude: Environment) -> Self {
+        Self { prelude }
+    }
+
+    pub fn load_and_run(self, program: CompilationUnit) -> Loaded<Value> {
+        match program {
+            CompilationUnit::Implicit(module) => {
+                // Typing has to happen for this to feel nice. TBD.
+                match self.load_module(module)?.lookup(&Identifier::new("main"))? {
+                    Value::Closure {
+                        parameter,
+                        capture,
+                        body,
+                    } => todo!(),
+                    Value::SyntheticBridge { stub } => todo!(),
+                    scalar => Ok(scalar.clone()),
+                }
+            }
+            _otherwise => todo!(),
+        }
+    }
+
+    fn load_module(self, module: ModuleDeclarator) -> Loaded<Environment> {
+        ModuleLoader::try_initializing(&module, self.prelude)?.resolve_dependencies()
+    }
+}
+
+struct ModuleLoader<'a> {
     module: &'a ModuleDeclarator,
     matrix: DependencyMatrix<'a>,
     resolved: Environment,
 }
 
-impl<'a> ModuleResolver<'a> {
-    fn try_new(module: &'a ModuleDeclarator, global: Environment) -> Loaded<Self> {
+impl<'a> ModuleLoader<'a> {
+    fn try_initializing(module: &'a ModuleDeclarator, global: Environment) -> Loaded<Self> {
         let matrix = module.dependency_matrix();
 
         if !matrix.is_wellformed() {
-            // yeah yeah...
             if !matrix.is_acyclic() {
-                Err(LoadError::CyclicDependencies)
+                Err(LoadError::DependencyCycle)
             } else if !matrix.is_satisfiable() {
                 Err(LoadError::UnsatisfiedDependencies)
             } else {
-                todo!()
+                unreachable!()
             }
         } else {
             Ok(Self {
@@ -65,13 +91,15 @@ impl<'a> ModuleResolver<'a> {
         self.matrix.find(|id| {
             self.matrix
                 .dependencies(id)
-                .unwrap_or_else(|| &[])
+                .unwrap_or_default()
                 .iter()
+                // Optimize this
                 .all(|id| self.resolved.is_defined(id))
         })
     }
 
     fn is_resolved(&self) -> bool {
+        // Optimize this
         self.matrix
             .satisfies(|dependency| self.resolved.is_defined(dependency))
     }
@@ -99,42 +127,16 @@ impl<'a> ModuleResolver<'a> {
         }
     }
 
-    fn resolve_dependencies(mut self) -> Loaded<()> {
+    fn resolve_dependencies(mut self) -> Loaded<Environment> {
         while !self.is_resolved() {
             if let Some(resolvable) = self.find_resolvable().cloned() {
                 self.try_resolve(&resolvable.clone())?;
             } else {
-                // Not resolved, still no resolvable
-                panic!("Is not resolved, still no resolvable");
+                Err(LoadError::DependencyResolutionFailed)?
             }
         }
 
-        Ok(())
-    }
-}
-
-struct ProgamLoader;
-
-impl ProgamLoader {
-    pub fn load(self, program: CompilationUnit, prelude: Environment) -> Loaded {
-        match program {
-            CompilationUnit::Implicit(module) => self.load_module(module, prelude),
-            _otherwise => todo!(),
-        }
-    }
-
-    fn load_module(self, module: ModuleDeclarator, global: Environment) -> Loaded {
-        let resolver = ModuleResolver::try_new(&module, global)?;
-        resolver.resolve_dependencies()?;
-
-        // if `main` is a value, then this has already executed
-        //   the module is >>self resolved>>
-        // otherwise, main is a function - then call it
-        // how do I model this well?
-
-        //        resolver.resolved
-
-        todo!()
+        Ok(self.resolved)
     }
 }
 
