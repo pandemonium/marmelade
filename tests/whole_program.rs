@@ -30,19 +30,6 @@ fn main1() {
            |"#,
     ));
 
-    for t in lexer.tokens() {
-        print!("{} ", t.token_type());
-        if let TokenType::Layout(tt) = t.token_type() {
-            match tt {
-                Layout::Indent => print!("({})", t.location()),
-                Layout::Dedent => print!("({})", t.location()),
-                Layout::Newline => print!("({})", t.location()),
-            }
-        }
-    }
-
-    println!("{}", lexer.untokenize());
-
     let program = parser::parse_compilation_unit(lexer.tokens()).unwrap();
     println!("{program:?}");
 }

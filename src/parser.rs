@@ -2,7 +2,7 @@ use core::panic;
 
 use crate::{
     ast::{
-        CompilationUnit, Declaration, Expression, FunctionDeclarator, Identifier, Module,
+        CompilationUnit, Declaration, Expression, FunctionDeclarator, Identifier, ModuleDeclarator,
         Parameter, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Location, Operator, Token, TokenType},
@@ -27,7 +27,7 @@ pub fn parse_compilation_unit<'a>(input: &'a [Token]) -> Result<CompilationUnit,
 
     println!("parse_compilation_unit: remains {:?}", remains);
 
-    Ok(CompilationUnit::Implicit(Module {
+    Ok(CompilationUnit::Implicit(ModuleDeclarator {
         position: Location::default(),
         name: Identifier::new("main"),
         declarations,

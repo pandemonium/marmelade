@@ -3,10 +3,61 @@ use std::{borrow::Cow, collections::VecDeque, rc::Rc};
 use thiserror::Error;
 
 use crate::{
-    ast::{Constant, ControlFlow, Expression, Identifier},
+    ast::{
+        CompilationUnit, Constant, ControlFlow, Declaration, Expression, Identifier,
+        ModuleDeclarator, ValueDeclarator,
+    },
     synthetics::SyntheticStub,
     types::{TrivialType, Type},
 };
+
+pub struct Program {
+    environment: Environment,
+    entry_point: Expression,
+}
+
+struct ProgamLoader;
+
+impl ProgamLoader {
+    pub fn load(self, program: CompilationUnit, prelude: Environment) -> Program {
+        match program {
+            CompilationUnit::Implicit(module) => self.load_module(module, prelude),
+            _otherwise => todo!(),
+        }
+    }
+
+    fn load_module(self, module: ModuleDeclarator, mut env: Environment) -> Program {
+        let matrix = module.dependency_matrix();
+
+        let is_defined = |id: &Identifier| env.lookup(id).is_ok();
+
+        // process declarations starting at those whose dependencies
+        // are already in the environment
+
+        //        module.declarations
+
+        for decl in module.declarations {
+            match decl {
+                Declaration::Value {
+                    binder,
+                    declarator: ValueDeclarator::Constant(constant),
+                    ..
+                } => (),
+                Declaration::Value {
+                    binder,
+                    declarator: ValueDeclarator::Function(function),
+                    ..
+                } => (),
+                _otherwise => todo!(),
+            }
+        }
+
+        Program {
+            environment: env,
+            entry_point: todo!(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -100,10 +151,10 @@ impl Expression {
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
             Self::Variable(id) => env.lookup(&id).cloned(),
-            Self::InvokeSynthetic(id) => reduce_synthetic(id, env),
-            Self::Literal(constant) => Ok(Value::Scalar(constant.into())),
-            Self::Lambda { parameter, body } => reduce_lambda(parameter.name, *body, env),
-            Self::Apply { function, argument } => reduce_apply(*function, *argument, env),
+            Self::InvokeSynthetic(id) => evaluate_synthetic(id, env),
+            Self::Literal(constant) => immediate(constant),
+            Self::Lambda { parameter, body } => close_over_environment(parameter.name, *body, env),
+            Self::Apply { function, argument } => apply_function(*function, *argument, env),
             Self::Construct { .. } => todo!(),
             Self::Product(..) => todo!(),
             Self::Project { .. } => todo!(),
@@ -113,16 +164,26 @@ impl Expression {
                 body,
                 ..
             } => reduce_binding(binder, *bound, *body, env),
-            Self::Sequence { this, and_then } => {
-                this.reduce(env)?;
-                and_then.reduce(env)
-            }
+            Self::Sequence { this, and_then } => sequence(this, and_then, env),
             Self::ControlFlow(control) => reduce_control_flow(control, env),
         }
     }
 }
 
-fn reduce_synthetic(id: Identifier, env: &mut Environment) -> Interpretation {
+fn immediate(constant: Constant) -> Interpretation {
+    Ok(Value::Scalar(constant.into()))
+}
+
+fn sequence(
+    this: Box<Expression>,
+    and_then: Box<Expression>,
+    env: &mut Environment,
+) -> Interpretation {
+    this.reduce(env)?;
+    and_then.reduce(env)
+}
+
+fn evaluate_synthetic(id: Identifier, env: &mut Environment) -> Interpretation {
     if let Value::SyntheticBridge { stub } = env.lookup(&id)? {
         stub.clone().apply(env)
     } else {
@@ -162,7 +223,7 @@ fn reduce_binding(
     body.reduce(env)
 }
 
-fn reduce_apply(
+fn apply_function(
     function: Expression,
     argument: Expression,
     env: &mut Environment,
@@ -181,7 +242,11 @@ fn reduce_apply(
     }
 }
 
-fn reduce_lambda(param: Identifier, body: Expression, env: &mut Environment) -> Interpretation {
+fn close_over_environment(
+    param: Identifier,
+    body: Expression,
+    env: &mut Environment,
+) -> Interpretation {
     Ok(Value::Closure {
         parameter: param,
         capture: env.clone(),

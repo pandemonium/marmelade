@@ -7,12 +7,15 @@ use crate::lexer::{self, Location};
 
 #[derive(Debug)]
 pub enum CompilationUnit {
-    Implicit(Module),
-    Library { modules: Vec<Module>, main: Module },
+    Implicit(ModuleDeclarator),
+    Library {
+        modules: Vec<ModuleDeclarator>,
+        main: ModuleDeclarator,
+    },
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Module {
+pub struct ModuleDeclarator {
     pub position: Location,
     pub name: Identifier,
     pub declarations: Vec<Declaration>,
@@ -20,7 +23,7 @@ pub struct Module {
     // I would like this, but I have to think a little more about it
 }
 
-impl Module {
+impl ModuleDeclarator {
     pub fn find_value_declaration(&self, id: Identifier) -> Option<&Declaration> {
         self.declarations
             .iter()
@@ -38,26 +41,65 @@ impl Module {
 // I want to compute where to start typing the compilation unit
 // Which is at a function which only has dependencies to symbols which
 // already have known types
-pub struct DependencyMatrix<'a>(HashMap<&'a Identifier, Vec<&'a Identifier>>);
+pub struct DependencyMatrix<'a> {
+    outbound_dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
+    inbound_dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
+}
 
 impl<'a> DependencyMatrix<'a> {
     pub fn from_declarations(decls: &'a [Declaration]) -> Self {
-        let mut map = HashMap::default();
+        let mut outbound = HashMap::default();
+        let mut inbound: HashMap<&'a Identifier, Vec<&'a Identifier>> = HashMap::default();
 
         for decl in decls {
-            if let Declaration::Value {
-                binder, declarator, ..
-            } = decl
-            {
-                map.insert(binder, declarator.dependencies());
+            match decl {
+                Declaration::Value {
+                    binder, declarator, ..
+                } => {
+                    let deps = declarator.dependencies();
+                    for dep in &deps {
+                        inbound.entry(dep).or_default().push(binder);
+                    }
+                    outbound.insert(binder, deps);
+                }
+                _otherwise => (),
             }
         }
 
-        Self(map)
+        Self {
+            outbound_dependencies: outbound,
+            inbound_dependencies: inbound,
+        }
     }
 
-    pub fn dependencies(&self, d: &Identifier) -> Option<&[&Identifier]> {
-        self.0.get(d).map(Vec::as_slice)
+    fn is_cyclic(&self, id: &'a Identifier, seen: &mut HashSet<&'a Identifier>) -> bool {
+        if !seen.contains(id) {
+            seen.insert(id);
+
+            self.dependencies(id)
+                .unwrap_or_else(|| &[])
+                .iter()
+                .any(|x| self.is_cyclic(x, seen))
+        } else {
+            println!("Have already seen {id}");
+            true
+        }
+    }
+
+    pub fn is_acyclic(&'a self) -> bool {
+        !self
+            .outbound_dependencies
+            .keys()
+            .into_iter()
+            .any(|id| self.is_cyclic(id, &mut HashSet::default()))
+    }
+
+    pub fn dependencies(&self, d: &'a Identifier) -> Option<&[&'a Identifier]> {
+        self.outbound_dependencies.get(d).map(Vec::as_slice)
+    }
+
+    pub fn depends_on(&self, d: &'a Identifier) -> Option<&[&'a Identifier]> {
+        self.inbound_dependencies.get(d).map(Vec::as_slice)
     }
 }
 
@@ -114,7 +156,11 @@ pub enum Declaration {
         binding: Identifier,
         declarator: TypeDeclarator,
     },
-    Module(Module),
+    Module(ModuleDeclarator),
+    ExternalModule {
+        position: Location,
+        exported_symbols: Vec<Identifier>,
+    },
     // Use()    ??
 }
 
@@ -123,7 +169,8 @@ impl Declaration {
         match self {
             Self::Value { position, .. }
             | Self::Type { position, .. }
-            | Self::Module(Module { position, .. }) => position,
+            | Self::Module(ModuleDeclarator { position, .. })
+            | Self::ExternalModule { position, .. } => position,
         }
     }
 }
@@ -376,4 +423,43 @@ pub enum Product {
     Struct {
         bindings: HashMap<Identifier, Expression>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lexer::Location;
+
+    use super::{
+        ConstantDeclarator, Declaration, Expression, Identifier, ModuleDeclarator, TypeName,
+        ValueDeclarator,
+    };
+
+    #[test]
+    fn foo() {
+        // I should parse text instead of this
+        let m = ModuleDeclarator {
+            position: Location::default(),
+            name: Identifier::new(""),
+            declarations: vec![
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("foo"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("bar")),
+                        type_annotation: TypeName("".to_owned()),
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("bar"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("foo")),
+                        type_annotation: TypeName("".to_owned()),
+                    }),
+                },
+            ],
+        };
+
+        assert!(!m.dependency_matrix().is_acyclic());
+    }
 }
