@@ -2,8 +2,8 @@ use core::panic;
 
 use crate::{
     ast::{
-        CompilationUnit, Declaration, Expression, FunctionDeclarator, Identifier, ModuleDeclarator,
-        Parameter, ValueDeclarator,
+        CompilationUnit, ConstantDeclarator, Declaration, Expression, FunctionDeclarator,
+        Identifier, ModuleDeclarator, Parameter, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Location, Operator, Token, TokenType},
 };
@@ -24,8 +24,6 @@ use TokenType as TT;
 
 pub fn parse_compilation_unit<'a>(input: &'a [Token]) -> Result<CompilationUnit, ParseError> {
     let (declarations, remains) = parse_declarations(input)?;
-
-    println!("parse_compilation_unit: remains {:?}", remains);
 
     Ok(CompilationUnit::Implicit(ModuleDeclarator {
         position: Location::default(),
@@ -126,6 +124,17 @@ fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclar
             } else {
                 Err(ParseError::ExpectedTokenType(TT::Arrow))
             }
+        }
+        remains @ [..] => {
+            let (initializer, remains) =
+                parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0)?;
+            Ok((
+                ValueDeclarator::Constant(ConstantDeclarator {
+                    initializer,
+                    type_annotation: None,
+                }),
+                remains,
+            ))
         }
         otherwise => panic!("{otherwise:?}"),
     }

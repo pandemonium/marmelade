@@ -41,6 +41,7 @@ impl ModuleDeclarator {
 // I want to compute where to start typing the compilation unit
 // Which is at a function which only has dependencies to symbols which
 // already have known types
+#[derive(Debug)]
 pub struct DependencyMatrix<'a> {
     outbound_dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
     inbound_dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
@@ -62,6 +63,13 @@ impl<'a> DependencyMatrix<'a> {
                     }
                     outbound.insert(binder, deps);
                 }
+                Declaration::ImportModule {
+                    exported_symbols, ..
+                } => {
+                    for dep in exported_symbols {
+                        outbound.insert(dep, Vec::default());
+                    }
+                }
                 _otherwise => (),
             }
         }
@@ -72,14 +80,28 @@ impl<'a> DependencyMatrix<'a> {
         }
     }
 
-    pub fn is_wellformed(&'a self) -> bool {
-        self.is_acyclic() && self.is_satisfiable()
+    pub fn is_wellformed<F>(&'a self, is_external: F) -> bool
+    where
+        F: FnMut(&Identifier) -> bool,
+    {
+        self.is_acyclic() && self.is_satisfiable(is_external)
     }
 
-    pub fn is_satisfiable(&'a self) -> bool {
+    pub fn is_satisfiable<F>(&'a self, mut is_external: F) -> bool
+    where
+        F: FnMut(&Identifier) -> bool,
+    {
         self.outbound_dependencies.values().all(|deps| {
-            deps.iter()
-                .all(|dep| self.outbound_dependencies.contains_key(dep))
+            deps.iter().all(|dep| {
+                let retval = self.outbound_dependencies.contains_key(dep) || is_external(dep);
+
+                if !retval {
+                    println!("is_satisfiable: `{dep}` not found");
+                    println!("is_satisfiable: {:?}", self.outbound_dependencies)
+                }
+
+                retval
+            })
         })
     }
 
@@ -102,6 +124,10 @@ impl<'a> DependencyMatrix<'a> {
         } else {
             true
         }
+    }
+
+    pub fn nodes(&self) -> Vec<&'a Identifier> {
+        self.outbound_dependencies.keys().cloned().collect()
     }
 
     pub fn find<F>(&'a self, mut p: F) -> Option<&'a &'a Identifier>
@@ -181,7 +207,7 @@ pub enum Declaration {
         declarator: TypeDeclarator,
     },
     Module(ModuleDeclarator),
-    ExternalModule {
+    ImportModule {
         position: Location,
         exported_symbols: Vec<Identifier>,
     },
@@ -194,7 +220,7 @@ impl Declaration {
             Self::Value { position, .. }
             | Self::Type { position, .. }
             | Self::Module(ModuleDeclarator { position, .. })
-            | Self::ExternalModule { position, .. } => position,
+            | Self::ImportModule { position, .. } => position,
         }
     }
 }
@@ -240,7 +266,7 @@ impl ValueDeclarator {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstantDeclarator {
     pub initializer: Expression,
-    pub type_annotation: TypeName,
+    pub type_annotation: Option<TypeName>,
 }
 
 impl ConstantDeclarator {
@@ -470,7 +496,7 @@ mod tests {
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
-                        type_annotation: TypeName("".to_owned()),
+                        type_annotation: None,
                     }),
                 },
                 Declaration::Value {
@@ -478,7 +504,7 @@ mod tests {
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("foo")),
-                        type_annotation: TypeName("".to_owned()),
+                        type_annotation: None,
                     }),
                 },
             ],
@@ -498,7 +524,7 @@ mod tests {
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
-                        type_annotation: TypeName("".to_owned()),
+                        type_annotation: None,
                     }),
                 },
                 Declaration::Value {
@@ -506,7 +532,7 @@ mod tests {
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
-                        type_annotation: TypeName("".to_owned()),
+                        type_annotation: None,
                     }),
                 },
                 Declaration::Value {
@@ -514,7 +540,7 @@ mod tests {
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("frobnicator")),
-                        type_annotation: TypeName("".to_owned()),
+                        type_annotation: None,
                     }),
                 },
                 Declaration::Value {
@@ -522,7 +548,7 @@ mod tests {
                     binder: Identifier::new("frobnicator"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Literal(Constant::Int(1)),
-                        type_annotation: TypeName("".to_owned()),
+                        type_annotation: None,
                     }),
                 },
             ],
@@ -530,7 +556,7 @@ mod tests {
 
         let dep_mat = m.dependency_matrix();
         assert!(dep_mat.is_acyclic());
-        assert!(dep_mat.is_satisfiable());
+        assert!(dep_mat.is_satisfiable(|_| false));
     }
 
     #[test]
@@ -544,7 +570,7 @@ mod tests {
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
-                        type_annotation: TypeName("".to_owned()),
+                        type_annotation: None,
                     }),
                 },
                 Declaration::Value {
@@ -552,7 +578,7 @@ mod tests {
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
-                        type_annotation: TypeName("".to_owned()),
+                        type_annotation: None,
                     }),
                 },
                 Declaration::Value {
@@ -560,7 +586,7 @@ mod tests {
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("frobnicator")),
-                        type_annotation: TypeName("".to_owned()),
+                        type_annotation: None,
                     }),
                 },
             ],
@@ -568,6 +594,6 @@ mod tests {
 
         let dep_mat = m.dependency_matrix();
         assert!(dep_mat.is_acyclic());
-        assert!(!dep_mat.is_satisfiable());
+        assert!(!dep_mat.is_satisfiable(|_| false));
     }
 }

@@ -70,7 +70,7 @@ where
     }
 }
 
-pub fn define(env: &mut Environment) -> Interpretation<()> {
+pub fn import(env: &mut Environment) -> Interpretation<()> {
     // Could I polymorph this even more by traiting up the underlying operators?
     // A: Add, A: Mul, etc?
     OperatorBridge::<i64, _>::new(Operator::Plus, |p, q| p + q).define(env)?;
@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn plus() {
         let mut env = Environment::default();
-        stdlib::define(&mut env).unwrap();
+        stdlib::import(&mut env).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn minus() {
         let mut env = Environment::default();
-        stdlib::define(&mut env).unwrap();
+        stdlib::import(&mut env).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn times() {
         let mut env = Environment::default();
-        stdlib::define(&mut env).unwrap();
+        stdlib::import(&mut env).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn divides() {
         let mut env = Environment::default();
-        stdlib::define(&mut env).unwrap();
+        stdlib::import(&mut env).unwrap();
 
         let e = E::Apply {
             function: E::Apply {

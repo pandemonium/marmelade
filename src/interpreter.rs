@@ -1,4 +1,8 @@
-use std::{borrow::Cow, collections::VecDeque, rc::Rc};
+use std::{
+    borrow::Cow,
+    collections::{HashSet, VecDeque},
+    rc::Rc,
+};
 use thiserror::Error;
 
 use crate::{
@@ -58,6 +62,19 @@ impl Interpreter {
     fn load_module(self, module: ModuleDeclarator) -> Loaded<Environment> {
         ModuleLoader::try_initializing(&module, self.prelude)?.resolve_dependencies()
     }
+
+    fn _patch_with_prelude(
+        &self,
+        mut module: ModuleDeclarator,
+        prelude: &Environment,
+    ) -> ModuleDeclarator {
+        println!("patch_with_prelude: Not patching!!!");
+        //        module.declarations.push(Declaration::ImportModule {
+        //            position: Location::default(),
+        //            exported_symbols: prelude.symbols().into_iter().cloned().collect::<Vec<_>>(),
+        //        });
+        module
+    }
 }
 
 struct ModuleLoader<'a> {
@@ -67,13 +84,14 @@ struct ModuleLoader<'a> {
 }
 
 impl<'a> ModuleLoader<'a> {
-    fn try_initializing(module: &'a ModuleDeclarator, global: Environment) -> Loaded<Self> {
-        let matrix = module.dependency_matrix();
+    fn try_initializing(module: &'a ModuleDeclarator, prelude: Environment) -> Loaded<Self> {
+        let resolver = |id: &Identifier| prelude.is_defined(id);
 
-        if !matrix.is_wellformed() {
+        let matrix = module.dependency_matrix();
+        if !matrix.is_wellformed(resolver) {
             if !matrix.is_acyclic() {
                 Err(LoadError::DependencyCycle)
-            } else if !matrix.is_satisfiable() {
+            } else if !matrix.is_satisfiable(resolver) {
                 Err(LoadError::UnsatisfiedDependencies)
             } else {
                 unreachable!()
@@ -82,26 +100,9 @@ impl<'a> ModuleLoader<'a> {
             Ok(Self {
                 module,
                 matrix,
-                resolved: global,
+                resolved: prelude,
             })
         }
-    }
-
-    fn find_resolvable(&'a self) -> Option<&'a &'a Identifier> {
-        self.matrix.find(|id| {
-            self.matrix
-                .dependencies(id)
-                .unwrap_or_default()
-                .iter()
-                // Optimize this
-                .all(|id| self.resolved.is_defined(id))
-        })
-    }
-
-    fn is_resolved(&self) -> bool {
-        // Optimize this
-        self.matrix
-            .satisfies(|dependency| self.resolved.is_defined(dependency))
     }
 
     fn try_resolve(&mut self, id: &Identifier) -> Loaded<()> {
@@ -123,20 +124,24 @@ impl<'a> ModuleLoader<'a> {
 
             Ok(())
         } else {
-            panic!("Attempt to resolve un-resolvable declaration {id}")
+            panic!("Attempt to resolve un-resolvable declaration `{id}`")
         }
     }
 
     fn resolve_dependencies(mut self) -> Loaded<Environment> {
-        while !self.is_resolved() {
-            if let Some(resolvable) = self.find_resolvable().cloned() {
-                self.try_resolve(&resolvable.clone())?;
-            } else {
-                Err(LoadError::DependencyResolutionFailed)?
+        let mut unresolved = self.matrix.nodes().drain(..).collect::<VecDeque<_>>();
+
+        loop {
+            if unresolved.is_empty() {
+                break Ok(self.resolved);
+            }
+
+            if let Some(resolvable) = unresolved.pop_back() {
+                if self.try_resolve(&resolvable.clone()).is_err() {
+                    unresolved.push_front(resolvable);
+                }
             }
         }
-
-        Ok(self.resolved)
     }
 }
 
@@ -212,6 +217,10 @@ impl Environment {
 
     pub fn is_defined(&self, id: &Identifier) -> bool {
         self.state.iter().any(|(defined, ..)| defined == id)
+    }
+
+    pub fn symbols(&self) -> Vec<&Identifier> {
+        self.state.iter().map(|(id, ..)| id).collect::<Vec<_>>()
     }
 }
 
@@ -350,7 +359,7 @@ mod tests {
     #[test]
     fn reduce_literal() {
         let mut env = Environment::default();
-        stdlib::define(&mut env).unwrap();
+        stdlib::import(&mut env).unwrap();
 
         assert_eq!(
             Scalar::Int(1),
@@ -365,7 +374,7 @@ mod tests {
     #[test]
     fn reduce_with_variables() {
         let mut env = Environment::default();
-        stdlib::define(&mut env).unwrap();
+        stdlib::import(&mut env).unwrap();
 
         env.insert_binding(Identifier::new("x"), Value::Scalar(Scalar::Int(1)));
 
