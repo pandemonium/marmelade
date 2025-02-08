@@ -72,6 +72,25 @@ impl<'a> DependencyMatrix<'a> {
         }
     }
 
+    pub fn is_wellformed(&'a self) -> bool {
+        self.is_acyclic() && self.is_satisfiable()
+    }
+
+    pub fn is_satisfiable(&'a self) -> bool {
+        self.outbound_dependencies.values().all(|deps| {
+            deps.iter()
+                .all(|dep| self.outbound_dependencies.contains_key(dep))
+        })
+    }
+
+    pub fn is_acyclic(&'a self) -> bool {
+        !self
+            .outbound_dependencies
+            .keys()
+            .into_iter()
+            .any(|id| self.is_cyclic(id, &mut HashSet::default()))
+    }
+
     fn is_cyclic(&self, id: &'a Identifier, seen: &mut HashSet<&'a Identifier>) -> bool {
         if !seen.contains(id) {
             seen.insert(id);
@@ -81,17 +100,8 @@ impl<'a> DependencyMatrix<'a> {
                 .iter()
                 .any(|x| self.is_cyclic(x, seen))
         } else {
-            println!("Have already seen {id}");
             true
         }
-    }
-
-    pub fn is_acyclic(&'a self) -> bool {
-        !self
-            .outbound_dependencies
-            .keys()
-            .into_iter()
-            .any(|id| self.is_cyclic(id, &mut HashSet::default()))
     }
 
     pub fn dependencies(&self, d: &'a Identifier) -> Option<&[&'a Identifier]> {
@@ -430,12 +440,12 @@ mod tests {
     use crate::lexer::Location;
 
     use super::{
-        ConstantDeclarator, Declaration, Expression, Identifier, ModuleDeclarator, TypeName,
-        ValueDeclarator,
+        Constant, ConstantDeclarator, Declaration, Expression, Identifier, ModuleDeclarator,
+        TypeName, ValueDeclarator,
     };
 
     #[test]
-    fn foo() {
+    fn cyclic_dependencies() {
         // I should parse text instead of this
         let m = ModuleDeclarator {
             position: Location::default(),
@@ -461,5 +471,89 @@ mod tests {
         };
 
         assert!(!m.dependency_matrix().is_acyclic());
+    }
+
+    #[test]
+    fn satisfiable() {
+        let m = ModuleDeclarator {
+            position: Location::default(),
+            name: Identifier::new(""),
+            declarations: vec![
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("foo"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("bar")),
+                        type_annotation: TypeName("".to_owned()),
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("quux"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("bar")),
+                        type_annotation: TypeName("".to_owned()),
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("bar"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("frobnicator")),
+                        type_annotation: TypeName("".to_owned()),
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("frobnicator"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Literal(Constant::Int(1)),
+                        type_annotation: TypeName("".to_owned()),
+                    }),
+                },
+            ],
+        };
+
+        let dep_mat = m.dependency_matrix();
+        assert!(dep_mat.is_acyclic());
+        assert!(dep_mat.is_satisfiable());
+    }
+
+    #[test]
+    fn unsatisfiable() {
+        let m = ModuleDeclarator {
+            position: Location::default(),
+            name: Identifier::new(""),
+            declarations: vec![
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("foo"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("bar")),
+                        type_annotation: TypeName("".to_owned()),
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("quux"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("bar")),
+                        type_annotation: TypeName("".to_owned()),
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("bar"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("frobnicator")),
+                        type_annotation: TypeName("".to_owned()),
+                    }),
+                },
+            ],
+        };
+
+        let dep_mat = m.dependency_matrix();
+        assert!(dep_mat.is_acyclic());
+        assert!(!dep_mat.is_satisfiable());
     }
 }
