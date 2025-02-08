@@ -4,8 +4,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        CompilationUnit, Constant, ControlFlow, Declaration, Expression, Identifier,
-        ModuleDeclarator, ValueDeclarator,
+        CompilationUnit, Constant, ControlFlow, Declaration, DependencyMatrix, Expression,
+        Identifier, ModuleDeclarator, ValueDeclarator,
     },
     synthetics::SyntheticStub,
     types::{TrivialType, Type},
@@ -13,49 +13,128 @@ use crate::{
 
 pub struct Program {
     environment: Environment,
+
+    // This is not right
     entry_point: Expression,
+}
+
+pub type Loaded<A = Program> = Result<A, LoadError>;
+
+// Todo: which ones are involved in the cycle or are unresolved?
+#[derive(Debug, Error)]
+pub enum LoadError {
+    #[error("Cyclic dependencies")]
+    CyclicDependencies,
+
+    #[error("Unsatisfied dependencies")]
+    UnsatisfiedDependencies,
+
+    #[error("Runtime error initialzing the module")]
+    InitializationError(#[from] RuntimeError),
+}
+
+struct ModuleResolver<'a> {
+    module: &'a ModuleDeclarator,
+    matrix: DependencyMatrix<'a>,
+    resolved: Environment,
+}
+
+impl<'a> ModuleResolver<'a> {
+    fn try_new(module: &'a ModuleDeclarator, global: Environment) -> Loaded<Self> {
+        let matrix = module.dependency_matrix();
+
+        if !matrix.is_wellformed() {
+            // yeah yeah...
+            if !matrix.is_acyclic() {
+                Err(LoadError::CyclicDependencies)
+            } else if !matrix.is_satisfiable() {
+                Err(LoadError::UnsatisfiedDependencies)
+            } else {
+                todo!()
+            }
+        } else {
+            Ok(Self {
+                module,
+                matrix,
+                resolved: global,
+            })
+        }
+    }
+
+    fn find_resolvable(&'a self) -> Option<&'a &'a Identifier> {
+        self.matrix.find(|id| {
+            self.matrix
+                .dependencies(id)
+                .unwrap_or_else(|| &[])
+                .iter()
+                .all(|id| self.resolved.is_defined(id))
+        })
+    }
+
+    fn is_resolved(&self) -> bool {
+        self.matrix
+            .satisfies(|dependency| self.resolved.is_defined(dependency))
+    }
+
+    fn try_resolve(&mut self, id: &Identifier) -> Loaded<()> {
+        if let Some(Declaration::Value { declarator, .. }) = self.module.find_value_declaration(id)
+        {
+            // That this has to clone the Expressions is not ideal
+            match declarator {
+                ValueDeclarator::Constant(constant) => {
+                    let env = &mut self.resolved;
+                    let reduced = constant.initializer.clone().reduce(env)?;
+                    env.insert_binding(id.clone(), reduced);
+                }
+                ValueDeclarator::Function(function) => {
+                    let env = &mut self.resolved;
+                    let tree = function.clone().into_lambda_tree().reduce(env)?;
+                    env.insert_binding(id.clone(), tree);
+                }
+            }
+
+            Ok(())
+        } else {
+            panic!("Attempt to resolve un-resolvable declaration {id}")
+        }
+    }
+
+    fn resolve_dependencies(mut self) -> Loaded<()> {
+        while !self.is_resolved() {
+            if let Some(resolvable) = self.find_resolvable().cloned() {
+                self.try_resolve(&resolvable.clone())?;
+            } else {
+                // Not resolved, still no resolvable
+                panic!("Is not resolved, still no resolvable");
+            }
+        }
+
+        Ok(())
+    }
 }
 
 struct ProgamLoader;
 
 impl ProgamLoader {
-    pub fn load(self, program: CompilationUnit, prelude: Environment) -> Program {
+    pub fn load(self, program: CompilationUnit, prelude: Environment) -> Loaded {
         match program {
             CompilationUnit::Implicit(module) => self.load_module(module, prelude),
             _otherwise => todo!(),
         }
     }
 
-    fn load_module(self, module: ModuleDeclarator, mut env: Environment) -> Program {
-        let matrix = module.dependency_matrix();
+    fn load_module(self, module: ModuleDeclarator, global: Environment) -> Loaded {
+        let resolver = ModuleResolver::try_new(&module, global)?;
+        resolver.resolve_dependencies()?;
 
-        let is_defined = |id: &Identifier| env.lookup(id).is_ok();
+        // if `main` is a value, then this has already executed
+        //   the module is >>self resolved>>
+        // otherwise, main is a function - then call it
+        // how do I model this well?
 
-        // process declarations starting at those whose dependencies
-        // are already in the environment
+        //        resolver.resolved
 
-        //        module.declarations
-
-        for decl in module.declarations {
-            match decl {
-                Declaration::Value {
-                    binder,
-                    declarator: ValueDeclarator::Constant(constant),
-                    ..
-                } => (),
-                Declaration::Value {
-                    binder,
-                    declarator: ValueDeclarator::Function(function),
-                    ..
-                } => (),
-                _otherwise => todo!(),
-            }
-        }
-
-        Program {
-            environment: env,
-            entry_point: todo!(),
-        }
+        todo!()
     }
 }
 
@@ -127,6 +206,10 @@ impl Environment {
             .iter()
             .find_map(|(binder, bound)| (binder == id).then_some(bound))
             .ok_or_else(|| RuntimeError::UndefinedSymbol(id.clone()))
+    }
+
+    pub fn is_defined(&self, id: &Identifier) -> bool {
+        self.state.iter().any(|(defined, ..)| defined == id)
     }
 }
 

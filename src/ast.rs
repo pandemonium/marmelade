@@ -24,10 +24,10 @@ pub struct ModuleDeclarator {
 }
 
 impl ModuleDeclarator {
-    pub fn find_value_declaration(&self, id: Identifier) -> Option<&Declaration> {
+    pub fn find_value_declaration<'a>(&'a self, id: &'a Identifier) -> Option<&'a Declaration> {
         self.declarations
             .iter()
-            .find(|decl| matches!(decl, Declaration::Value { binder, .. } if binder == &id))
+            .find(|decl| matches!(decl, Declaration::Value { binder, .. } if binder == id))
     }
 
     pub fn dependency_matrix(&self) -> DependencyMatrix {
@@ -102,6 +102,20 @@ impl<'a> DependencyMatrix<'a> {
         } else {
             true
         }
+    }
+
+    pub fn find<F>(&'a self, mut p: F) -> Option<&'a &'a Identifier>
+    where
+        F: FnMut(&'a Identifier) -> bool,
+    {
+        self.outbound_dependencies.keys().find(|id| p(id))
+    }
+
+    pub fn satisfies<F>(&'a self, mut p: F) -> bool
+    where
+        F: FnMut(&'a Identifier) -> bool,
+    {
+        self.outbound_dependencies.keys().all(|id| p(id))
     }
 
     pub fn dependencies(&self, d: &'a Identifier) -> Option<&[&'a Identifier]> {
@@ -207,7 +221,7 @@ pub struct Constructor {
     pub signature: Vec<TypeName>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ValueDeclarator {
     Constant(ConstantDeclarator),
     Function(FunctionDeclarator),
@@ -223,7 +237,7 @@ impl ValueDeclarator {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConstantDeclarator {
     pub initializer: Expression,
     pub type_annotation: TypeName,
@@ -235,7 +249,7 @@ impl ConstantDeclarator {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDeclarator {
     pub parameters: Vec<Parameter>,
     pub return_type_annotation: Option<TypeName>,
