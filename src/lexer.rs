@@ -33,7 +33,7 @@ impl Location {
     }
 
     pub fn is_same_block(&self, rhs: &Self) -> bool {
-        self.column == rhs.column && self.is_below(rhs)
+        (self.column == rhs.column && self.is_below(rhs)) || self.row == rhs.row
     }
 }
 

@@ -85,21 +85,30 @@ pub fn find_next_in_block<'a>(
 pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration> {
     match input {
         [T(TT::Identifier(id), pos), T(TT::Equals, ..), remains @ ..] => {
-            let (declarator, remains) =
-                parse_value_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
-
-            Ok((
-                Declaration::Value {
-                    binder: Identifier::new(&id),
-                    declarator,
-                    position: pos.clone(),
-                },
-                remains,
-            ))
+            println!("parse_declaration: {id}");
+            parse_value_binding(id, pos, remains)
         }
         [t, ..] => Err(ParseError::UnexpectedToken(t.clone())),
         otherwise => panic!("{otherwise:?}"),
     }
+}
+
+fn parse_value_binding<'a>(
+    binder: &String,
+    position: &Location,
+    remains: &'a [Token],
+) -> ParseResult<'a, Declaration> {
+    let (declarator, remains) =
+        parse_value_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+
+    Ok((
+        Declaration::Value {
+            binder: Identifier::new(&binder),
+            declarator,
+            position: position.clone(),
+        },
+        remains,
+    ))
 }
 
 // These can have type annotations
@@ -136,7 +145,6 @@ fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclar
                 remains,
             ))
         }
-        otherwise => panic!("{otherwise:?}"),
     }
 }
 
@@ -290,13 +298,13 @@ fn parse_infix<'a>(
 
         // ( <Newline> | <;> ) <expr>
         // -- an expression sequence, e.g.: <statement>* <expr>
-        [t, remains @ ..]
+        remains @ [t, lookahead @ ..]
             if (t.token_type() == &TT::Layout(Layout::Newline)
                 || t.token_type() == &TT::Semicolon)
                 && remains.len() > 0 =>
         {
-            if !starts_with(TT::End, remains) {
-                let (and_then, remains) = parse_expression(remains, precedence)?;
+            if !starts_with(TT::End, &remains[1..]) && !is_toplevel(lookahead) {
+                let (and_then, remains) = parse_expression(&remains[1..], precedence)?;
                 Ok((
                     Expression::Sequence {
                         this: lhs.into(),
@@ -322,6 +330,17 @@ fn parse_infix<'a>(
 
         _otherwise => Ok((lhs, input)),
     }
+}
+
+fn is_toplevel<'a>(prefix: &'a [Token]) -> bool {
+    matches!(
+        prefix,
+        [
+            T(TT::Identifier(..), ..),
+            T(TT::Equals | TT::TypeAssign, ..),
+            ..
+        ]
+    )
 }
 
 fn parse_operator<'a>(
@@ -591,6 +610,16 @@ mod tests {
             decl
         );
     }
+
+    //    #[test]
+    //    fn unexpected_token_error() {
+    //        let mut lexer = LexicalAnalyzer::default();
+    //        let result = parse_expr_phrase(lexer.tokenize(&into_input("let x 10 in x + 20")));
+    //        assert!(matches!(
+    //            result,
+    //            Err(ParseError::ExpectedTokenType(TT::Equals))
+    //        ));
+    //    }
 
     #[test]
     fn module_function_decls() {
