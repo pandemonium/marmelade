@@ -110,22 +110,23 @@ impl<'a> DependencyMatrix<'a> {
             .outbound_dependencies
             .keys()
             .into_iter()
-            .any(|id| self.is_cyclic(id, &mut HashSet::default()))
+            .any(|id| self.is_cyclic(id, id, &mut HashSet::default()))
     }
 
-    fn is_cyclic(&self, parent: &'a Identifier, seen: &mut HashSet<&'a Identifier>) -> bool {
-        let mut in_subtree =
-            |x: &'a Identifier| parent == x || (!seen.contains(x) && self.is_cyclic(x, seen));
+    fn is_cyclic(
+        &self,
+        needle: &'a Identifier,
+        node: &'a Identifier,
+        seen: &mut HashSet<&'a Identifier>,
+    ) -> bool {
+        seen.insert(node);
 
-        let ret_val = self
-            .dependencies(parent)
+        let mut is_in_subtree = |id| !seen.contains(id) && self.is_cyclic(needle, id, seen);
+
+        self.dependencies(node)
             .unwrap_or_default()
             .iter()
-            .any(|&child| in_subtree(child));
-
-        seen.insert(parent);
-
-        ret_val
+            .any(|&child| needle == child || is_in_subtree(child))
     }
 
     pub fn nodes(&self) -> Vec<&'a Identifier> {
@@ -483,7 +484,7 @@ mod tests {
 
     use super::{
         Constant, ConstantDeclarator, Declaration, Expression, Identifier, ModuleDeclarator,
-        TypeName, ValueDeclarator,
+        ValueDeclarator,
     };
 
     #[test]
@@ -503,9 +504,17 @@ mod tests {
                 },
                 Declaration::Value {
                     position: Location::default(),
-                    binder: Identifier::new("bar"),
+                    binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("foo")),
+                        type_annotation: None,
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("bar"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("quux")),
                         type_annotation: None,
                     }),
                 },
