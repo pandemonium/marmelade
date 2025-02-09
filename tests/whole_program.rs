@@ -19,12 +19,17 @@ fn into_input(source: &str) -> Vec<char> {
 fn main1() {
     let mut lexer = LexicalAnalyzer::default();
 
-    // Crashes in the parser
+    // The parser does not deal very well, but partial application works
+    // This does create a dependency cycle though. It has seen create twice
+    // probably, but this is actually fine
     lexer.tokenize(&into_input(
-        r#"|create_window = fun x->1+2*x*8-1
+        r#"|create_window = fun x y ->
+           |    1+2*x*8-1 + y
            |
+           |create =
+           |    create_window 20
            |
-           |main = create_window 20
+           |main = create 7 * create 7
            |"#,
     ));
 
@@ -35,5 +40,5 @@ fn main1() {
 
     let return_value = Interpreter::new(prelude).load_and_run(program).unwrap();
 
-    assert_eq!(Scalar::Int(320), return_value.try_into_scalar().unwrap());
+    assert_eq!(Scalar::Int(327), return_value.try_into_scalar().unwrap());
 }

@@ -113,17 +113,19 @@ impl<'a> DependencyMatrix<'a> {
             .any(|id| self.is_cyclic(id, &mut HashSet::default()))
     }
 
-    fn is_cyclic(&self, id: &'a Identifier, seen: &mut HashSet<&'a Identifier>) -> bool {
-        if !seen.contains(id) {
-            seen.insert(id);
+    fn is_cyclic(&self, parent: &'a Identifier, seen: &mut HashSet<&'a Identifier>) -> bool {
+        let mut in_subtree =
+            |x: &'a Identifier| parent == x || (!seen.contains(x) && self.is_cyclic(x, seen));
 
-            self.dependencies(id)
-                .unwrap_or_else(|| &[])
-                .iter()
-                .any(|x| self.is_cyclic(x, seen))
-        } else {
-            true
-        }
+        let ret_val = self
+            .dependencies(parent)
+            .unwrap_or_default()
+            .iter()
+            .any(|&child| in_subtree(child));
+
+        seen.insert(parent);
+
+        ret_val
     }
 
     pub fn nodes(&self) -> Vec<&'a Identifier> {
