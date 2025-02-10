@@ -105,28 +105,39 @@ impl<'a> DependencyMatrix<'a> {
         })
     }
 
-    pub fn is_acyclic(&'a self) -> bool {
-        !self
-            .outbound_dependencies
+    pub fn is_acyclic(&self) -> bool {
+        let mut visited = HashSet::new();
+        let mut path = HashSet::new();
+
+        self.outbound_dependencies
             .keys()
-            .into_iter()
-            .any(|id| self.is_cyclic(id, id, &mut HashSet::default()))
+            .any(|id| self.is_cyclic(id, &mut visited, &mut path))
     }
 
     fn is_cyclic(
         &self,
-        needle: &'a Identifier,
         node: &'a Identifier,
         seen: &mut HashSet<&'a Identifier>,
+        path: &mut HashSet<&'a Identifier>,
     ) -> bool {
-        seen.insert(node);
+        if path.contains(node) {
+            true
+        } else if seen.contains(node) {
+            false
+        } else {
+            seen.insert(node);
+            path.insert(node);
 
-        let mut is_in_subtree = |id| !seen.contains(id) && self.is_cyclic(needle, id, seen);
+            let has_cycle = self
+                .dependencies(node)
+                .unwrap_or_default()
+                .iter()
+                .any(|&child| self.is_cyclic(child, seen, path));
 
-        self.dependencies(node)
-            .unwrap_or_default()
-            .iter()
-            .any(|&child| needle == child || is_in_subtree(child))
+            path.remove(node);
+
+            has_cycle
+        }
     }
 
     pub fn nodes(&self) -> Vec<&'a Identifier> {
@@ -512,6 +523,14 @@ mod tests {
                 },
                 Declaration::Value {
                     position: Location::default(),
+                    binder: Identifier::new("quux"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("foo1")),
+                        type_annotation: None,
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("quux")),
@@ -521,6 +540,7 @@ mod tests {
             ],
         };
 
+        // Still broken
         assert!(!m.dependency_matrix().is_acyclic());
     }
 

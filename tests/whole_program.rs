@@ -18,11 +18,7 @@ fn into_input(source: &str) -> Vec<char> {
 #[test]
 fn main1() {
     let mut lexer = LexicalAnalyzer::default();
-
-    // The parser does not deal very well, but partial application works
-    // This does create a dependency cycle though. It has seen create twice
-    // probably, but this is actually fine
-    lexer.tokenize(&into_input(
+    let program = parser::parse_compilation_unit(lexer.tokenize(&into_input(
         r#"|create_window = fun x y ->
            |    let q = 1+2*x*8-1 + y in
            |       q
@@ -33,21 +29,28 @@ fn main1() {
            |
            |main = create 7 * create 7 / create 7
            |"#,
-    ));
-    //    lexer.tokenize(&into_input(
-    //        r#"|create = create_window 20
-    //           |
-    //           |main = create 7 * create 7 / create 7
-    //           |"#,
-    //    ));
+    )))
+    .unwrap();
 
-    let input = lexer.tokens();
+    let mut prelude = Environment::default();
+    stdlib::import(&mut prelude).unwrap();
 
-    //    for Token(tt, loc) in input {
-    //        println!("{} {}", loc, tt);
-    //    }
+    let return_value = Interpreter::new(prelude).load_and_run(program).unwrap();
 
-    let program = parser::parse_compilation_unit(input).unwrap();
+    assert_eq!(Scalar::Int(327), return_value.try_into_scalar().unwrap());
+}
+
+#[test]
+fn factorial() {
+    let mut lexer = LexicalAnalyzer::default();
+    let program = parser::parse_compilation_unit(lexer.tokenize(&into_input(
+        r#"|factorial = fun x ->
+           |  if x == 1 then 1 else factorial (x - 1)
+           |
+           |main = create 7 * create 7 / create 7
+           |"#,
+    )))
+    .unwrap();
 
     let mut prelude = Environment::default();
     stdlib::import(&mut prelude).unwrap();

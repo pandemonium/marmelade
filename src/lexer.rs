@@ -97,6 +97,7 @@ pub enum Operator {
     Divides,
     Modulo,
     Juxtaposition,
+    Equals,
 }
 
 impl Operator {
@@ -104,6 +105,7 @@ impl Operator {
         match self {
             Self::Plus | Self::Minus => 1,
             Self::Times | Self::Divides | Self::Modulo => 2,
+            Self::Equals => 3,
             Self::Juxtaposition => 69,
         }
     }
@@ -116,6 +118,7 @@ impl Operator {
             Self::Times => "*".to_owned(),
             Self::Divides => "/".to_owned(),
             Self::Modulo => "%".to_owned(),
+            Self::Equals => "==".to_owned(),
             Self::Juxtaposition => "$".to_owned(),
         }
     }
@@ -129,6 +132,7 @@ impl fmt::Display for Operator {
             Self::Times => write!(f, "*"),
             Self::Divides => write!(f, "/"),
             Self::Modulo => write!(f, "%"),
+            Self::Equals => write!(f, "=="),
             Self::Juxtaposition => write!(f, "$"),
         }
     }
@@ -156,6 +160,8 @@ pub enum Keyword {
     Let,
     In,
     If,
+    Then,
+    Else,
     Struct,
     Coproduct,
     Alias,
@@ -170,6 +176,8 @@ impl Keyword {
             "let" => Some(Keyword::Let),
             "in" => Some(Keyword::In),
             "if" => Some(Keyword::If),
+            "then" => Some(Keyword::Then),
+            "else" => Some(Keyword::Else),
             "struct" => Some(Keyword::Struct),
             "coproduct" => Some(Keyword::Coproduct),
             "alias" => Some(Keyword::Alias),
@@ -187,6 +195,8 @@ impl fmt::Display for Keyword {
             Self::Let => write!(f, "Let"),
             Self::In => write!(f, "In"),
             Self::If => write!(f, "If"),
+            Self::Then => write!(f, "Then"),
+            Self::Else => write!(f, "Else"),
             Self::Struct => write!(f, "Struct"),
             Self::Coproduct => write!(f, "Coproduct"),
             Self::Alias => write!(f, "Alias"),
@@ -309,6 +319,7 @@ impl LexicalAnalyzer {
                 [':', ':', '=', remains @ ..] => self.emit(3, TokenType::TypeAssign, remains),
                 [':', ':', remains @ ..] => self.emit(2, TokenType::TypeAscribe, remains),
                 ['-', '>', remains @ ..] => self.emit(2, TokenType::Arrow, remains),
+                ['=', '=', remains @ ..] => self.emit_operator(2, Operator::Equals, remains),
 
                 ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
                 [',', remains @ ..] => self.emit(1, TokenType::Comma, remains),

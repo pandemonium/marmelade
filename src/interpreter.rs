@@ -1,8 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::{HashSet, VecDeque},
-    rc::Rc,
-};
+use std::{borrow::Cow, collections::VecDeque, rc::Rc};
 use thiserror::Error;
 
 use crate::{
@@ -46,12 +42,8 @@ impl Interpreter {
             CompilationUnit::Implicit(module) => {
                 // Typing has to happen for this to feel nice. TBD.
                 match self.load_module(module)?.lookup(&Identifier::new("main"))? {
-                    Value::Closure {
-                        parameter,
-                        capture,
-                        body,
-                    } => todo!(),
-                    Value::SyntheticBridge { stub } => todo!(),
+                    Value::Closure { .. } => todo!(),
+                    Value::SyntheticBridge { .. } => todo!(),
                     scalar => Ok(scalar.clone()),
                 }
             }
@@ -65,8 +57,8 @@ impl Interpreter {
 
     fn _patch_with_prelude(
         &self,
-        mut module: ModuleDeclarator,
-        prelude: &Environment,
+        module: ModuleDeclarator,
+        _prelude: &Environment,
     ) -> ModuleDeclarator {
         println!("patch_with_prelude: Not patching!!!");
         //        module.declarations.push(Declaration::ImportModule {
@@ -105,43 +97,44 @@ impl<'a> ModuleLoader<'a> {
         }
     }
 
-    fn try_resolve(&mut self, id: &Identifier) -> Loaded<()> {
-        if let Some(Declaration::Value { declarator, .. }) = self.module.find_value_declaration(id)
-        {
-            // That this has to clone the Expressions is not ideal
-            match declarator {
-                ValueDeclarator::Constant(constant) => {
-                    let env = &mut self.resolved;
-                    let reduced = constant.initializer.clone().reduce(env)?;
-                    env.insert_binding(id.clone(), reduced);
-                }
-                ValueDeclarator::Function(function) => {
-                    let env = &mut self.resolved;
-                    let tree = function.clone().into_lambda_tree().reduce(env)?;
-                    env.insert_binding(id.clone(), tree);
-                }
-            }
-
-            Ok(())
-        } else {
-            panic!("Attempt to resolve un-resolvable declaration `{id}`")
-        }
-    }
-
     fn resolve_dependencies(mut self) -> Loaded<Environment> {
         let mut unresolved = self.matrix.nodes().drain(..).collect::<VecDeque<_>>();
 
-        loop {
-            if unresolved.is_empty() {
-                break Ok(self.resolved);
-            }
-
-            if let Some(resolvable) = unresolved.pop_back() {
-                if self.try_resolve(&resolvable.clone()).is_err() {
-                    unresolved.push_front(resolvable);
-                }
+        while let Some(resolvable) = unresolved.pop_back() {
+            if self.try_resolve(&resolvable.clone()).is_err() {
+                unresolved.push_front(resolvable);
             }
         }
+
+        Ok(self.resolved)
+    }
+
+    fn try_resolve(&mut self, id: &Identifier) -> Loaded<()> {
+        if let Some(Declaration::Value { declarator, .. }) = self.module.find_value_declaration(id)
+        {
+            self.resolve_value_binding(id, declarator)
+        } else {
+            panic!("Unable to resolve declaration: `{id}` - not implemented")
+        }
+    }
+
+    fn resolve_value_binding(
+        &mut self,
+        id: &Identifier,
+        declarator: &ValueDeclarator,
+    ) -> Result<(), LoadError> {
+        // That this has to clone the Expressions is not ideal
+
+        let expression = match declarator.clone() {
+            ValueDeclarator::Constant(constant) => constant.initializer,
+            ValueDeclarator::Function(function) => function.into_lambda_tree(),
+        };
+
+        let env = &mut self.resolved;
+        let value = expression.reduce(env)?;
+        env.insert_binding(id.clone(), value);
+
+        Ok(())
     }
 }
 

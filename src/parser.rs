@@ -2,8 +2,8 @@ use core::panic;
 
 use crate::{
     ast::{
-        CompilationUnit, ConstantDeclarator, Declaration, Expression, FunctionDeclarator,
-        Identifier, ModuleDeclarator, Parameter, ValueDeclarator,
+        CompilationUnit, ConstantDeclarator, ControlFlow, Declaration, Expression,
+        FunctionDeclarator, Identifier, ModuleDeclarator, Parameter, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Location, Operator, Token, TokenType},
 };
@@ -194,6 +194,9 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
         [T(TT::Keyword(Let), position), T(TT::Identifier(binder), ..), T(TT::Equals, ..), remains @ ..] => {
             parse_binding(position.clone(), binder, remains)
         }
+        [T(TT::Keyword(If), position), remains @ ..] => {
+            parse_if_expression(position.clone(), remains)
+        }
         [T(TT::Literal(literal), ..), remains @ ..] => {
             Ok((Expression::Literal(literal.clone().into()), remains))
         }
@@ -202,6 +205,33 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
         }
         // Newline here
         otherwise => panic!("{otherwise:?}"),
+    }
+}
+
+fn parse_if_expression<'a>(clone: Location, remains: &'a [Token]) -> ParseResult<'a, Expression> {
+    let (predicate, remains) = parse_expression(remains, 0)?;
+
+    if matches!(remains, [T(TT::Keyword(Then), ..), ..]) {
+        let (consequent, remains) = parse_expression(&remains[1..], 0)?;
+
+        if matches!(remains, [T(TT::Keyword(Else), ..), ..]) {
+            let (alternate, remains) = parse_expression(&remains[1..], 0)?;
+
+            Ok((
+                Expression::ControlFlow(ControlFlow::If {
+                    predicate: predicate.into(),
+                    consequent: consequent.into(),
+                    alternate: alternate.into(),
+                }),
+                remains,
+            ))
+        } else {
+            // Expected `else`
+            todo!()
+        }
+    } else {
+        // Expected `then`
+        todo!()
     }
 }
 
