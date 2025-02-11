@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::ast::Identifier;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Location {
     pub row: u32,
@@ -110,16 +112,20 @@ impl Operator {
         }
     }
 
-    pub fn function_identifier(&self) -> String {
+    pub fn id(&self) -> Identifier {
+        Identifier::new(&self.function_identifier())
+    }
+
+    pub fn function_identifier(&self) -> &str {
         // These mappings are highly dubious
         match self {
-            Self::Plus => "+".to_owned(),
-            Self::Minus => "-".to_owned(),
-            Self::Times => "*".to_owned(),
-            Self::Divides => "/".to_owned(),
-            Self::Modulo => "%".to_owned(),
-            Self::Equals => "==".to_owned(),
-            Self::Juxtaposition => "$".to_owned(),
+            Self::Plus => "+",
+            Self::Minus => "-",
+            Self::Times => "*",
+            Self::Divides => "/",
+            Self::Modulo => "%",
+            Self::Equals => "==",
+            Self::Juxtaposition => "$",
         }
     }
 }

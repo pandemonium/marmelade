@@ -107,11 +107,10 @@ impl<'a> DependencyMatrix<'a> {
 
     pub fn is_acyclic(&self) -> bool {
         let mut visited = HashSet::new();
-        let mut path = HashSet::new();
 
         self.outbound_dependencies
             .keys()
-            .any(|id| self.is_cyclic(id, &mut visited, &mut path))
+            .all(|child| !self.is_cyclic(child, &mut visited, &mut HashSet::new()))
     }
 
     fn is_cyclic(
@@ -125,8 +124,8 @@ impl<'a> DependencyMatrix<'a> {
         } else if seen.contains(node) {
             false
         } else {
-            seen.insert(node);
             path.insert(node);
+            seen.insert(node);
 
             let has_cycle = self
                 .dependencies(node)
@@ -181,7 +180,7 @@ impl Identifier {
         x
     }
 
-    pub fn scoped_with(&self, scope: String) -> Self {
+    pub fn scoped_with(&self, scope: &str) -> Self {
         let Self(id) = self;
         Self(format!("{scope}::{id}"))
     }
@@ -518,14 +517,6 @@ mod tests {
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("foo")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: Location::default(),
-                    binder: Identifier::new("quux"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("foo1")),
                         type_annotation: None,
                     }),
                 },

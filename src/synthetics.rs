@@ -15,7 +15,7 @@ where
     fn surface_binder(&self) -> Identifier;
 
     fn stub_binder(&self) -> Identifier {
-        self.surface_binder().scoped_with("synthetic".to_owned())
+        self.surface_binder().scoped_with("synthetic")
     }
 
     fn apply(&self, capture: &Environment) -> CallResult<Value>;
@@ -23,6 +23,7 @@ where
     fn signature(&self) -> Type;
 }
 
+// Does this have to be a trait? I don't think it does
 pub trait Lambda2: SyntheticStub + Sized + 'static {
     type P0: TryFrom<Value, Error = RuntimeError>;
     type P1: TryFrom<Value, Error = RuntimeError>;
@@ -65,41 +66,5 @@ fn synthesize_lambda2_tree(stub_binder: &Identifier) -> Expression {
             body: Expression::InvokeSynthetic(stub_binder.clone()).into(),
         }
         .into(),
-    }
-}
-
-impl TryFrom<Value> for i64 {
-    type Error = RuntimeError;
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if let Value::Scalar(Scalar::Int(x)) = value {
-            Ok(x)
-        } else {
-            Err(RuntimeError::ExpectedType(Type::Trivial(TrivialType::Int)))
-        }
-    }
-}
-
-impl From<i64> for Value {
-    fn from(value: i64) -> Self {
-        Self::Scalar(Scalar::Int(value))
-    }
-}
-
-impl TryFrom<Value> for f64 {
-    type Error = RuntimeError;
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if let Value::Scalar(Scalar::Float(x)) = value {
-            Ok(x)
-        } else {
-            Err(RuntimeError::ExpectedType(Type::Trivial(TrivialType::Int)))
-        }
-    }
-}
-
-impl From<f64> for Value {
-    fn from(value: f64) -> Self {
-        Self::Scalar(Scalar::Float(value))
     }
 }

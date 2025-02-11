@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::VecDeque, rc::Rc};
+use std::{borrow::Cow, collections::VecDeque, fmt, rc::Rc};
 use thiserror::Error;
 
 use crate::{
@@ -6,7 +6,7 @@ use crate::{
         CompilationUnit, Constant, ControlFlow, Declaration, DependencyMatrix, Expression,
         Identifier, ModuleDeclarator, ValueDeclarator,
     },
-    synthetics::SyntheticStub,
+    bridge::Bridge,
     types::{TrivialType, Type},
 };
 
@@ -43,7 +43,7 @@ impl Interpreter {
                 // Typing has to happen for this to feel nice. TBD.
                 match self.load_module(module)?.lookup(&Identifier::new("main"))? {
                     Value::Closure { .. } => todo!(),
-                    Value::SyntheticBridge { .. } => todo!(),
+                    Value::Bridge { .. } => todo!(),
                     scalar => Ok(scalar.clone()),
                 }
             }
@@ -146,8 +146,8 @@ pub enum Value {
         capture: Environment,
         body: Expression,
     },
-    SyntheticBridge {
-        stub: Rc<dyn SyntheticStub>,
+    Bridge {
+        target: BridgeDebug,
     },
 }
 
@@ -160,13 +160,24 @@ impl Value {
         }
     }
 
-    pub fn synthetic_stub<S>(stub: S) -> Self
+    pub fn bridge<B>(bridge: B) -> Self
     where
-        S: SyntheticStub + 'static,
+        B: Bridge + 'static,
     {
-        Self::SyntheticBridge {
-            stub: Rc::new(stub),
+        Self::Bridge {
+            target: BridgeDebug(Rc::new(bridge)),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct BridgeDebug(Rc<dyn Bridge + 'static>);
+
+impl fmt::Debug for BridgeDebug {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self(b) = self;
+        // Could display the type here too, I guess
+        write!(f, "Bridge(Lamda{}(..))", b.arity())
     }
 }
 
@@ -238,7 +249,7 @@ impl Expression {
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
             Self::Variable(id) => env.lookup(&id).cloned(),
-            Self::InvokeSynthetic(id) => evaluate_synthetic(id, env),
+            Self::InvokeSynthetic(id) => evaluate_bridge(id, env),
             Self::Literal(constant) => immediate(constant),
             Self::Lambda { parameter, body } => close_over_environment(parameter.name, *body, env),
             Self::Apply { function, argument } => apply_function(*function, *argument, env),
@@ -270,9 +281,13 @@ fn sequence(
     and_then.reduce(env)
 }
 
-fn evaluate_synthetic(id: Identifier, env: &mut Environment) -> Interpretation {
-    if let Value::SyntheticBridge { stub } = env.lookup(&id)? {
-        stub.clone().apply(env)
+fn evaluate_bridge(id: Identifier, env: &mut Environment) -> Interpretation {
+    if let Value::Bridge {
+        // Do away with this sucker. Impl Deref.
+        target: BridgeDebug(bridge),
+    } = env.lookup(&id)?
+    {
+        bridge.evaluate(env)
     } else {
         Err(RuntimeError::ExpectedSynthetic(id))
     }

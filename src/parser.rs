@@ -411,7 +411,7 @@ fn parse_juxtaposition<'a>(
 
 fn apply_binary_operator(op: Operator, lhs: Expression, rhs: Expression) -> Expression {
     let apply_lhs = Expression::Apply {
-        function: Expression::Variable(Identifier::new(&op.function_identifier())).into(),
+        function: Expression::Variable(op.id()).into(),
         argument: lhs.into(),
     };
     Expression::Apply {
