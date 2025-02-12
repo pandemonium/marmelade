@@ -6,13 +6,18 @@ use crate::{
 
 pub type CallResult<A> = Result<A, RuntimeError>;
 
+// This thing works well for regular functions but it does not solve
+// operators. Is it type check and then monomorphisation that is
+// required here? How would it know which symbol to put in there
+// base off of types?
+// I could always mangle the type signature into its name.
 pub trait Bridge {
     fn arity(&self) -> usize;
     fn evaluate(&self, e: &Environment) -> CallResult<Value>;
     fn signature(&self) -> Type;
 
     fn lambda_tree(&self, target: Identifier) -> Expression {
-        (0..self.arity()).rfold(Expression::InvokeSynthetic(target), |acc, x| {
+        (0..self.arity()).rfold(Expression::CallBridge(target), |acc, x| {
             Expression::Lambda {
                 parameter: Parameter::new(Identifier::new(&format!("p{x}"))),
                 body: acc.into(),
@@ -61,6 +66,34 @@ where
             e.lookup(&Identifier::new("p1")).cloned()?.try_into()?,
         )
         .into())
+    }
+
+    fn signature(&self) -> Type {
+        todo!()
+    }
+}
+
+// See if I can do something with the Add, Sub, Mul and Div type classes
+// for this thing.
+// Or could I impl Bridge for all tripples that have Add?
+#[derive(Debug, Clone)]
+pub struct PartialRawLambda2(pub fn(Scalar, Scalar) -> Option<Scalar>);
+
+impl Bridge for PartialRawLambda2 {
+    fn arity(&self) -> usize {
+        2
+    }
+
+    fn evaluate(&self, e: &Environment) -> CallResult<Value> {
+        let Self(f) = self;
+        // They have to be scalars.
+        let p0 = e.lookup(&Identifier::new("p0")).cloned()?.try_into_scalar();
+        let p1 = e.lookup(&Identifier::new("p1")).cloned()?.try_into_scalar();
+
+        p0.zip(p1)
+            .and_then(|(p0, p1)| f.clone()(p0, p1))
+            .map(Value::Scalar)
+            .ok_or_else(|| RuntimeError::InapplicableLamda2) // bring in arguments here later
     }
 
     fn signature(&self) -> Type {

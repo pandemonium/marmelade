@@ -335,7 +335,7 @@ impl Parameter {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Variable(Identifier),
-    InvokeSynthetic(Identifier),
+    CallBridge(Identifier),
     Literal(Constant),
     Lambda {
         parameter: Parameter,
@@ -394,7 +394,7 @@ impl Expression {
                     free.insert(id);
                 }
             }
-            Self::InvokeSynthetic(id) => {
+            Self::CallBridge(id) => {
                 free.insert(id);
             }
             Self::Lambda { parameter, body } => {

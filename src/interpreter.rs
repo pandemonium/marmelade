@@ -200,6 +200,17 @@ impl From<Constant> for Scalar {
     }
 }
 
+impl fmt::Display for Scalar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Int(x) => write!(f, "{x}"),
+            Self::Float(x) => write!(f, "{x}"),
+            Self::Text(x) => write!(f, "{x}"),
+            Self::Bool(x) => write!(f, "{x}"),
+        }
+    }
+}
+
 // Is there a Rust-blessed persistent Cons-list such that
 // I can share the tail? Will a Cow do here? Cow<VecDeque> ?
 #[derive(Debug, Clone, Default)]
@@ -241,6 +252,9 @@ pub enum RuntimeError {
 
     #[error("Expected a synthetic closure {0}")]
     ExpectedSynthetic(Identifier),
+
+    #[error("Not applicable")]
+    InapplicableLamda2,
 }
 
 pub type Interpretation<A = Value> = Result<A, RuntimeError>;
@@ -249,7 +263,7 @@ impl Expression {
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
             Self::Variable(id) => env.lookup(&id).cloned(),
-            Self::InvokeSynthetic(id) => evaluate_bridge(id, env),
+            Self::CallBridge(id) => evaluate_bridge(id, env),
             Self::Literal(constant) => immediate(constant),
             Self::Lambda { parameter, body } => close_over_environment(parameter.name, *body, env),
             Self::Apply { function, argument } => apply_function(*function, *argument, env),

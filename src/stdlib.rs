@@ -1,39 +1,61 @@
 use crate::{
-    bridge::{self, Lambda2},
-    interpreter::{Environment, Interpretation},
+    bridge,
+    interpreter::{Environment, Interpretation, Scalar, Value},
     lexer::Operator,
 };
 
 pub fn import(env: &mut Environment) -> Interpretation<()> {
-    // Could I polymorph this even more by traiting up the underlying operators?
-    // A: Add, A: Mul, etc?
-    //    OperatorBridge::<i64, _>::new(Operator::Plus, |p, q| p + q).define(env)?;
-    //    OperatorBridge::<i64, _>::new(Operator::Minus, |p, q| p - q).define(env)?;
-    //    OperatorBridge::<i64, _>::new(Operator::Times, |p, q| p * q).define(env)?;
-    //    OperatorBridge::<i64, _>::new(Operator::Divides, |p, q| p / q).define(env)?;
+    import_operator(env)?;
 
-    // See if this can be golfed.
+    Ok(())
+}
+
+fn import_operator(env: &mut Environment) -> Interpretation<()> {
     bridge::define(
         Operator::Plus.id(),
-        bridge::Lambda2(|p: i64, q: i64| p + q),
+        bridge::PartialRawLambda2(|p, q| match (p, q) {
+            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p + q)),
+            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p + q)),
+            _otherwise => None,
+        }),
         env,
     )?;
     bridge::define(
         Operator::Minus.id(),
-        bridge::Lambda2(|p: i64, q: i64| p - q),
+        bridge::PartialRawLambda2(|p, q| match (p, q) {
+            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p - q)),
+            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p - q)),
+            _otherwise => None,
+        }),
         env,
     )?;
     bridge::define(
         Operator::Times.id(),
-        bridge::Lambda2(|p: i64, q: i64| p * q),
+        bridge::PartialRawLambda2(|p, q| match (p, q) {
+            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p * q)),
+            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p * q)),
+            _otherwise => None,
+        }),
         env,
     )?;
     bridge::define(
         Operator::Divides.id(),
-        bridge::Lambda2(|p: i64, q: i64| p / q),
+        bridge::PartialRawLambda2(|p, q| match (p, q) {
+            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p / q)),
+            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p / q)),
+            _otherwise => None,
+        }),
         env,
     )?;
-
+    bridge::define(
+        Operator::Modulo.id(),
+        bridge::PartialRawLambda2(|p, q| match (p, q) {
+            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p % q)),
+            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p % q)),
+            _otherwise => None,
+        }),
+        env,
+    )?;
     Ok(())
 }
 
@@ -41,12 +63,12 @@ pub fn import(env: &mut Environment) -> Interpretation<()> {
 mod tests {
     use crate::{
         ast::{Constant, Expression as E, Identifier},
-        interpreter::{Environment, Scalar},
+        interpreter::{Environment, RuntimeError, Scalar},
         stdlib,
     };
 
     #[test]
-    fn plus() {
+    fn plus_i64() {
         let mut env = Environment::default();
         stdlib::import(&mut env).unwrap();
 
@@ -62,6 +84,46 @@ mod tests {
         assert_eq!(
             Scalar::Int(3),
             e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
+        );
+    }
+
+    #[test]
+    fn plus_f64() {
+        let mut env = Environment::default();
+        stdlib::import(&mut env).unwrap();
+
+        let e = E::Apply {
+            function: E::Apply {
+                function: E::Variable(Identifier::new("+")).into(),
+                argument: E::Literal(Constant::Float(1.5)).into(),
+            }
+            .into(),
+            argument: E::Literal(Constant::Float(2.3)).into(),
+        };
+
+        assert_eq!(
+            Scalar::Float(1.5 + 2.3),
+            e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
+        );
+    }
+
+    #[test]
+    fn plus_wrong_types() {
+        let mut env = Environment::default();
+        stdlib::import(&mut env).unwrap();
+
+        let e = E::Apply {
+            function: E::Apply {
+                function: E::Variable(Identifier::new("+")).into(),
+                argument: E::Literal(Constant::Float(1.5)).into(),
+            }
+            .into(),
+            argument: E::Literal(Constant::Int(2)).into(),
+        };
+
+        assert_eq!(
+            RuntimeError::InapplicableLamda2,
+            e.reduce(&mut env).unwrap_err()
         );
     }
 
