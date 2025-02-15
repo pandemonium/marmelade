@@ -1,16 +1,32 @@
 use crate::{
     bridge,
-    interpreter::{Environment, Interpretation, Scalar, Value},
+    interpreter::{Environment, Interpretation, Scalar},
     lexer::Operator,
 };
 
 pub fn import(env: &mut Environment) -> Interpretation<()> {
+    //    import_std_file(env)?;
     import_operator(env)?;
 
     Ok(())
 }
 
+fn import_std_file(env: &mut Environment) -> Interpretation<()> {
+    todo!()
+}
+
 fn import_operator(env: &mut Environment) -> Interpretation<()> {
+    bridge::define(
+        Operator::Equals.id(),
+        bridge::PartialRawLambda2(|p, q| match (p, q) {
+            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Bool(p == q)),
+            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Bool(p == q)),
+            (Scalar::Bool(p), Scalar::Bool(q)) => Some(Scalar::Bool(p == q)),
+            (Scalar::Text(p), Scalar::Text(q)) => Some(Scalar::Bool(p == q)),
+            _otherwise => None,
+        }),
+        env,
+    )?;
     bridge::define(
         Operator::Plus.id(),
         bridge::PartialRawLambda2(|p, q| match (p, q) {

@@ -85,7 +85,6 @@ pub fn find_next_in_block<'a>(
 pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration> {
     match input {
         [T(TT::Identifier(id), pos), T(TT::Equals, ..), remains @ ..] => {
-            println!("parse_declaration: {id}");
             parse_value_binding(id, pos, remains)
         }
         [t, ..] => Err(ParseError::UnexpectedToken(t.clone())),
@@ -208,7 +207,10 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
     }
 }
 
-fn parse_if_expression<'a>(clone: Location, remains: &'a [Token]) -> ParseResult<'a, Expression> {
+fn parse_if_expression<'a>(
+    position: Location,
+    remains: &'a [Token],
+) -> ParseResult<'a, Expression> {
     let (predicate, remains) = parse_expression(remains, 0)?;
 
     if matches!(remains, [T(TT::Keyword(Then), ..), ..]) {
@@ -356,7 +358,9 @@ fn parse_infix<'a>(
 
         // <expr> <expr>
         // -- Function application
-        [t, ..] if t.token_type() != &TT::End => parse_juxtaposition(lhs, input, precedence),
+        [t, ..] if !matches!(t.token_type(), TT::End | TT::Keyword(..)) => {
+            parse_juxtaposition(lhs, input, precedence)
+        }
 
         _otherwise => Ok((lhs, input)),
     }

@@ -124,8 +124,8 @@ impl Operator {
             Self::Times => "*",
             Self::Divides => "/",
             Self::Modulo => "%",
-            Self::Equals => "==",
-            Self::Juxtaposition => "$",
+            Self::Equals => "==", // I would like this to be a single = instead,
+            Self::Juxtaposition => "$", // but then no tokens are no longer unique
         }
     }
 }

@@ -583,6 +583,7 @@ mod typer {
                 }
             }
             ast::Expression::Literal(constant) => synthesize_type_of_constantg(constant, ctx),
+            ast::Expression::SelfReferential { .. } => todo!(),
             ast::Expression::Lambda { parameter, body } => infer_lambda(parameter, body, ctx),
             ast::Expression::Apply { function, argument } => {
                 infer_application(function, argument, ctx)

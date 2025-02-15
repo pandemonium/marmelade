@@ -86,6 +86,7 @@ impl Bridge for PartialRawLambda2 {
 
     fn evaluate(&self, e: &Environment) -> CallResult<Value> {
         let Self(f) = self;
+
         // They have to be scalars.
         let p0 = e.lookup(&Identifier::new("p0")).cloned()?.try_into_scalar();
         let p1 = e.lookup(&Identifier::new("p1")).cloned()?.try_into_scalar();
@@ -109,6 +110,8 @@ where
     let tree = bridge.lambda_tree(bridge_name.clone());
     env.insert_binding(bridge_name, Value::bridge(bridge));
 
+    // this captures a closure where user functions do not exist
+    // But how could this possibly matter?
     let tree = tree.reduce(env)?;
     env.insert_binding(surface_name, tree);
 

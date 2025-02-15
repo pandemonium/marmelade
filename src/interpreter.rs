@@ -1,4 +1,12 @@
-use std::{borrow::Cow, collections::VecDeque, fmt, rc::Rc};
+use std::{
+    borrow::Cow,
+    cell::{OnceCell, RefCell},
+    collections::{HashMap, VecDeque},
+    fmt,
+    ops::Deref,
+    rc::Rc,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use thiserror::Error;
 
 use crate::{
@@ -21,7 +29,7 @@ pub enum LoadError {
     #[error("Unsatisfied dependencies")]
     UnsatisfiedDependencies,
 
-    #[error("Runtime error initialzing the module")]
+    #[error("Runtime error initialzing the module {0}")]
     InitializationError(#[from] RuntimeError),
 
     #[error("Dependency resolution failed")]
@@ -41,7 +49,8 @@ impl Interpreter {
         match program {
             CompilationUnit::Implicit(module) => {
                 // Typing has to happen for this to feel nice. TBD.
-                match self.load_module(module)?.lookup(&Identifier::new("main"))? {
+                let env = self.load_module(module)?;
+                match env.lookup(&Identifier::new("main"))? {
                     Value::Closure { .. } => todo!(),
                     Value::Bridge { .. } => todo!(),
                     scalar => Ok(scalar.clone()),
@@ -101,11 +110,18 @@ impl<'a> ModuleLoader<'a> {
         let mut unresolved = self.matrix.nodes().drain(..).collect::<VecDeque<_>>();
 
         while let Some(resolvable) = unresolved.pop_back() {
-            if self.try_resolve(&resolvable.clone()).is_err() {
+            if self
+                .try_resolve(&resolvable.clone())
+                .inspect_err(|e| println!("resolve_dependencies: resolving {resolvable} {e}"))
+                .is_err()
+            {
                 unresolved.push_front(resolvable);
             }
         }
 
+        //        self.try_resolve(&Identifier::new("factorial"))?;
+        //        self.try_resolve(&Identifier::new("main"))?;
+        //
         Ok(self.resolved)
     }
 
@@ -127,7 +143,7 @@ impl<'a> ModuleLoader<'a> {
 
         let expression = match declarator.clone() {
             ValueDeclarator::Constant(constant) => constant.initializer,
-            ValueDeclarator::Function(function) => function.into_lambda_tree(),
+            ValueDeclarator::Function(function) => function.into_lambda_tree(id.clone()),
         };
 
         let env = &mut self.resolved;
@@ -141,14 +157,9 @@ impl<'a> ModuleLoader<'a> {
 #[derive(Debug, Clone)]
 pub enum Value {
     Scalar(Scalar),
-    Closure {
-        parameter: Identifier,
-        capture: Environment,
-        body: Expression,
-    },
-    Bridge {
-        target: BridgeDebug,
-    },
+    Closure(Closure),
+    RecursiveClosure(RecursiveClosure),
+    Bridge { target: BridgeDebug },
 }
 
 impl Value {
@@ -167,6 +178,51 @@ impl Value {
         Self::Bridge {
             target: BridgeDebug(Rc::new(bridge)),
         }
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scalar(scalar) => write!(f, "{scalar}"),
+            Self::Closure(closure) => writeln!(f, "closure {closure}"),
+            Self::RecursiveClosure(closure) => writeln!(f, "closure {closure}"),
+            Self::Bridge { target } => write!(f, "{target:?}"),
+        }
+    }
+}
+
+// Turn SelfReferentialLambda into this
+#[derive(Debug, Clone)]
+pub struct RecursiveClosure {
+    pub name: Identifier,
+    pub inner: Rc<RefCell<Closure>>,
+}
+
+impl fmt::Display for RecursiveClosure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { name, inner } = self;
+        write!(f, "{name} -> {inner:?}")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Closure {
+    pub parameter: Identifier,
+    pub capture: Environment,
+    pub body: Expression,
+}
+
+impl fmt::Display for Closure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            parameter,
+            capture,
+            body,
+        } = self;
+        writeln!(f, "\\{parameter}. ")?;
+        write!(f, "{capture}")?;
+        write!(f, "{body}")
     }
 }
 
@@ -211,6 +267,57 @@ impl fmt::Display for Scalar {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Env(HashMap<Identifier, Value>, usize);
+
+impl Env {
+    pub fn get_id(&self) -> usize {
+        self.1
+    }
+
+    pub fn insert_binding(&mut self, binder: Identifier, bound: Value) {
+        self.0.insert(binder, bound);
+    }
+
+    pub fn lookup(&self, id: &Identifier) -> Interpretation<&Value> {
+        self.0
+            .get(id)
+            .ok_or_else(|| RuntimeError::UndefinedSymbol(id.clone()))
+    }
+
+    pub fn is_defined(&self, id: &Identifier) -> bool {
+        self.0.contains_key(id)
+    }
+
+    pub fn symbols(&self) -> Vec<&Identifier> {
+        self.0.keys().collect::<Vec<_>>()
+    }
+
+    fn remove_binding(&mut self, binder: &Identifier) {
+        self.0.remove(binder);
+    }
+}
+
+impl fmt::Display for Env {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self(env, id) = self;
+        write!(f, "     ")?;
+        for (binder, binding) in env {
+            write!(f, "{binder} = {binding},")?;
+        }
+        Ok(())
+    }
+}
+
+//static ID: AtomicUsize = AtomicUsize::new(0);
+//
+//impl Default for Environment {
+//    fn default() -> Self {
+//        let id = ID.fetch_add(1, Ordering::Relaxed);
+//        Self(HashMap::default(), id)
+//    }
+//}
+
 // Is there a Rust-blessed persistent Cons-list such that
 // I can share the tail? Will a Cow do here? Cow<VecDeque> ?
 #[derive(Debug, Clone, Default)]
@@ -237,9 +344,25 @@ impl Environment {
     pub fn symbols(&self) -> Vec<&Identifier> {
         self.state.iter().map(|(id, ..)| id).collect::<Vec<_>>()
     }
+
+    fn remove_binding(&mut self, binder: &Identifier) {
+        if let Some(pos) = self.state.iter().position(|(b, _)| b == binder) {
+            self.state.to_mut().remove(pos);
+        }
+    }
 }
 
-#[derive(Debug, PartialEq, Error)]
+impl fmt::Display for Environment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "     ")?;
+        for (binder, binding) in self.state.iter() {
+            write!(f, "{binder} = {binding},")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Error)]
 pub enum RuntimeError {
     #[error("Undefined symbol {0}")]
     UndefinedSymbol(Identifier),
@@ -265,7 +388,12 @@ impl Expression {
             Self::Variable(id) => env.lookup(&id).cloned(),
             Self::CallBridge(id) => evaluate_bridge(id, env),
             Self::Literal(constant) => immediate(constant),
-            Self::Lambda { parameter, body } => close_over_environment(parameter.name, *body, env),
+            Self::SelfReferential {
+                name,
+                parameter,
+                body,
+            } => make_recursive_closure(name, parameter.name, *body, env.clone()),
+            Self::Lambda { parameter, body } => make_closure(parameter.name, *body, env.clone()),
             Self::Apply { function, argument } => apply_function(*function, *argument, env),
             Self::Construct { .. } => todo!(),
             Self::Product(..) => todo!(),
@@ -280,6 +408,30 @@ impl Expression {
             Self::ControlFlow(control) => reduce_control_flow(control, env),
         }
     }
+}
+
+fn make_recursive_closure(
+    name: Identifier,
+    parameter: Identifier,
+    body: Expression,
+    capture: Environment,
+) -> Result<Value, RuntimeError> {
+    let closure = Rc::new(RefCell::new(Closure {
+        parameter,
+        capture,
+        body,
+    }));
+
+    closure.borrow_mut().capture.insert_binding(
+        name.clone(),
+        Value::RecursiveClosure(RecursiveClosure {
+            name,
+            inner: Rc::clone(&closure),
+        }),
+    );
+
+    let closure = closure.borrow();
+    Ok(Value::Closure(closure.clone()))
 }
 
 fn immediate(constant: Constant) -> Interpretation {
@@ -334,9 +486,10 @@ fn reduce_binding(
     env: &mut Environment,
 ) -> Interpretation {
     let bound = bound.reduce(env)?;
-    env.insert_binding(binder, bound);
-    // remove binder here, before returning?
-    body.reduce(env)
+    env.insert_binding(binder.clone(), bound);
+    let retval = body.reduce(env);
+    env.remove_binding(&binder);
+    retval
 }
 
 fn apply_function(
@@ -345,38 +498,49 @@ fn apply_function(
     env: &mut Environment,
 ) -> Interpretation {
     match function.reduce(env)? {
-        Value::Closure {
+        Value::Closure(Closure {
             parameter,
             mut capture,
             body,
-        } => {
+        }) => {
             let binding = argument.reduce(env)?;
-            capture.insert_binding(parameter, binding);
-            body.reduce(&mut capture)
+            capture.insert_binding(parameter.clone(), binding);
+
+            let retval = body.reduce(&mut capture);
+            capture.remove_binding(&parameter);
+            retval
+        }
+        Value::RecursiveClosure(RecursiveClosure { name, inner }) => {
+            let binding = argument.reduce(env)?;
+
+            let mut inner = { inner.borrow_mut().clone() };
+            let parameter = inner.parameter.clone();
+            inner.capture.insert_binding(parameter.clone(), binding);
+
+            inner.body.clone().reduce(&mut inner.capture)
         }
         _otherwise => Err(RuntimeError::ExpectedFunction),
     }
 }
 
-fn close_over_environment(
-    param: Identifier,
-    body: Expression,
-    env: &mut Environment,
-) -> Interpretation {
-    Ok(Value::Closure {
+fn make_closure(param: Identifier, body: Expression, env: Environment) -> Interpretation {
+    Ok(Value::Closure(Closure {
         parameter: param,
-        capture: env.clone(),
+        capture: env,
         body,
-    })
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{Constant, Expression, Identifier},
+        ast::{Constant, ControlFlow, Expression, Identifier, Parameter},
         interpreter::{Environment, RuntimeError, Scalar, Value},
+        lexer::Location,
         stdlib,
     };
+
+    use super::Closure;
 
     #[test]
     fn reduce_literal() {
@@ -415,5 +579,178 @@ mod tests {
                 .reduce(&mut env)
                 .unwrap_err()
         )
+    }
+
+    fn make_fix() -> Expression {
+        Expression::Apply {
+            function: Box::new(Expression::Lambda {
+                parameter: Parameter::new(Identifier::new("x")),
+                body: Box::new(Expression::Apply {
+                    function: Box::new(Expression::Variable(Identifier::new("x"))),
+                    argument: Box::new(Expression::Variable(Identifier::new("x"))),
+                }),
+            }),
+            argument: Box::new(Expression::Lambda {
+                parameter: Parameter::new(Identifier::new("x")),
+                body: Box::new(Expression::Apply {
+                    function: Box::new(Expression::Variable(Identifier::new("x"))),
+                    argument: Box::new(Expression::Variable(Identifier::new("x"))),
+                }),
+            }),
+        }
+    }
+
+    fn make_fix_value(env: Environment) -> Value {
+        Value::Closure(Closure {
+            parameter: Identifier::new("f"),
+            capture: env.clone(),
+            body: Expression::Apply {
+                function: Box::new(Expression::Lambda {
+                    parameter: Parameter::new(Identifier::new("x")),
+                    body: Box::new(Expression::Apply {
+                        function: Box::new(Expression::Variable(Identifier::new("f"))),
+                        argument: Box::new(Expression::Lambda {
+                            parameter: Parameter::new(Identifier::new("y")),
+                            body: Box::new(Expression::Apply {
+                                function: Box::new(Expression::Variable(Identifier::new("x"))),
+                                argument: Box::new(Expression::Variable(Identifier::new("x"))),
+                            }),
+                        }),
+                    }),
+                }),
+                argument: Box::new(Expression::Lambda {
+                    parameter: Parameter::new(Identifier::new("x")),
+                    body: Box::new(Expression::Apply {
+                        function: Box::new(Expression::Variable(Identifier::new("f"))),
+                        argument: Box::new(Expression::Lambda {
+                            parameter: Parameter::new(Identifier::new("y")),
+                            body: Box::new(Expression::Apply {
+                                function: Box::new(Expression::Variable(Identifier::new("x"))),
+                                argument: Box::new(Expression::Variable(Identifier::new("x"))),
+                            }),
+                        }),
+                    }),
+                }),
+            },
+        })
+    }
+
+    #[test]
+    fn eval_fix() {
+        let factorial = Expression::Lambda {
+            parameter: Parameter::new(Identifier::new("x")),
+            body: Expression::ControlFlow(ControlFlow::If {
+                predicate: Expression::Apply {
+                    function: Expression::Variable(Identifier::new("==")).into(),
+                    argument: Expression::Variable(Identifier::new("x")).into(),
+                }
+                .into(),
+                consequent: Expression::Literal(Constant::Int(1)).into(),
+                alternate: Expression::Binding {
+                    postition: Location::default(), // Placeholder for actual location
+                    binder: Identifier::new("xx"),
+                    bound: Expression::Apply {
+                        function: Expression::Apply {
+                            function: Expression::Variable(Identifier::new("-")).into(),
+                            argument: Expression::Variable(Identifier::new("x")).into(),
+                        }
+                        .into(),
+                        argument: Expression::Literal(Constant::Int(1)).into(),
+                    }
+                    .into(),
+                    body: Expression::Apply {
+                        function: Expression::Apply {
+                            function: Expression::Variable(Identifier::new("*")).into(),
+                            argument: Expression::Variable(Identifier::new("x")).into(),
+                        }
+                        .into(),
+                        argument: Expression::Apply {
+                            function: Expression::Variable(Identifier::new("factorial")).into(),
+                            argument: Expression::Variable(Identifier::new("xx")).into(),
+                        }
+                        .into(),
+                    }
+                    .into(),
+                }
+                .into(),
+            })
+            .into(),
+        };
+    }
+
+    //    #[test]
+    fn fixed_factorial() {
+        let factorial = Expression::Apply {
+            function: Expression::Variable(Identifier::new("fix")).into(),
+            argument: Expression::Lambda {
+                parameter: Parameter::new(Identifier::new("fact")),
+                body: Expression::Lambda {
+                    parameter: Parameter::new(Identifier::new("x")),
+                    body: Expression::ControlFlow(ControlFlow::If {
+                        predicate: Expression::Apply {
+                            function: Expression::Apply {
+                                function: Expression::Variable(Identifier::new("==")).into(),
+                                argument: Expression::Variable(Identifier::new("x")).into(),
+                            }
+                            .into(),
+                            argument: Expression::Literal(Constant::Int(0)).into(),
+                        }
+                        .into(),
+                        consequent: Expression::Literal(Constant::Int(1)).into(),
+                        alternate: Expression::Binding {
+                            postition: Location::default(), // Placeholder for actual location
+                            binder: Identifier::new("xx"),
+                            bound: Expression::Apply {
+                                function: Expression::Apply {
+                                    function: Expression::Variable(Identifier::new("-")).into(),
+                                    argument: Expression::Variable(Identifier::new("x")).into(),
+                                }
+                                .into(),
+                                argument: Expression::Literal(Constant::Int(1)).into(),
+                            }
+                            .into(),
+                            body: Expression::Apply {
+                                function: Expression::Apply {
+                                    function: Expression::Variable(Identifier::new("*")).into(),
+                                    argument: Expression::Variable(Identifier::new("x")).into(),
+                                }
+                                .into(),
+                                argument: Expression::Apply {
+                                    function: Expression::Variable(Identifier::new("fact")).into(),
+                                    argument: Expression::Variable(Identifier::new("xx")).into(),
+                                }
+                                .into(),
+                            }
+                            .into(),
+                        }
+                        .into(),
+                    })
+                    .into(),
+                }
+                .into(),
+            }
+            .into(),
+        };
+
+        let mut env = Environment::default();
+        stdlib::import(&mut env).unwrap();
+
+        env.insert_binding(
+            Identifier::new("fix"),
+            make_fix_value(Environment::default()),
+        );
+
+        let reduced_fact = factorial.reduce(&mut env).unwrap();
+        env.insert_binding(Identifier::new("factorial"), reduced_fact);
+
+        let e = Expression::Apply {
+            function: Expression::Variable(Identifier::new("factorial")).into(),
+            argument: Expression::Literal(Constant::Int(1)).into(),
+        };
+
+        assert_eq!(
+            Scalar::Int(127),
+            e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
+        );
     }
 }
