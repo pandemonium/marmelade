@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use marmelade::{
     ast::{Expression, Identifier, Parameter},
     interpreter::{Closure, Environment, Interpreter, Scalar, Value},
@@ -98,7 +100,9 @@ fn factorial22() {
     let mut prelude = Environment::default();
     stdlib::import(&mut prelude).unwrap();
 
-    let return_value = Interpreter::new(prelude).load_and_run(program);
+    let program_environment = Environment::make_child(Rc::new(prelude));
+
+    let return_value = Interpreter::new(program_environment).load_and_run(program);
     assert_eq!(
         Scalar::Int(120),
         return_value.unwrap().try_into_scalar().unwrap()

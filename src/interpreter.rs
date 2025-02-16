@@ -267,87 +267,61 @@ impl fmt::Display for Scalar {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Env(HashMap<Identifier, Value>, usize);
-
-impl Env {
-    pub fn get_id(&self) -> usize {
-        self.1
-    }
-
-    pub fn insert_binding(&mut self, binder: Identifier, bound: Value) {
-        self.0.insert(binder, bound);
-    }
-
-    pub fn lookup(&self, id: &Identifier) -> Interpretation<&Value> {
-        self.0
-            .get(id)
-            .ok_or_else(|| RuntimeError::UndefinedSymbol(id.clone()))
-    }
-
-    pub fn is_defined(&self, id: &Identifier) -> bool {
-        self.0.contains_key(id)
-    }
-
-    pub fn symbols(&self) -> Vec<&Identifier> {
-        self.0.keys().collect::<Vec<_>>()
-    }
-
-    fn remove_binding(&mut self, binder: &Identifier) {
-        self.0.remove(binder);
-    }
-}
-
-impl fmt::Display for Env {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self(env, id) = self;
-        write!(f, "     ")?;
-        for (binder, binding) in env {
-            write!(f, "{binder} = {binding},")?;
-        }
-        Ok(())
-    }
-}
-
-//static ID: AtomicUsize = AtomicUsize::new(0);
-//
-//impl Default for Environment {
-//    fn default() -> Self {
-//        let id = ID.fetch_add(1, Ordering::Relaxed);
-//        Self(HashMap::default(), id)
-//    }
-//}
-
-// Is there a Rust-blessed persistent Cons-list such that
-// I can share the tail? Will a Cow do here? Cow<VecDeque> ?
 #[derive(Debug, Clone, Default)]
 pub struct Environment {
-    state: Cow<'static, VecDeque<(Identifier, Value)>>,
+    enclosing: Option<Rc<Environment>>,
+    leaf: Vec<(Identifier, Value)>,
 }
 
 impl Environment {
+    pub fn make_child(self: Rc<Environment>) -> Self {
+        Self {
+            enclosing: self.into(),
+            leaf: Vec::default(),
+        }
+    }
+
     pub fn insert_binding(&mut self, binder: Identifier, bound: Value) {
-        self.state.to_mut().push_front((binder, bound));
+        self.leaf.push((binder, bound));
     }
 
     pub fn lookup(&self, id: &Identifier) -> Interpretation<&Value> {
-        self.state
+        self.leaf
             .iter()
+            .rev()
             .find_map(|(binder, bound)| (binder == id).then_some(bound))
-            .ok_or_else(|| RuntimeError::UndefinedSymbol(id.clone()))
+            .map(Ok)
+            .unwrap_or_else(|| {
+                println!("looking: enclosing: {id}");
+                self.enclosing.as_ref().map_or_else(
+                    || Err(RuntimeError::UndefinedSymbol(id.clone())),
+                    |env| env.lookup(id),
+                )
+            })
     }
 
     pub fn is_defined(&self, id: &Identifier) -> bool {
-        self.state.iter().any(|(defined, ..)| defined == id)
+        self.lookup(id).is_ok()
     }
 
     pub fn symbols(&self) -> Vec<&Identifier> {
-        self.state.iter().map(|(id, ..)| id).collect::<Vec<_>>()
+        let mut boofer = self
+            .leaf
+            .iter()
+            .rev()
+            .map(|(id, ..)| id)
+            .collect::<Vec<_>>();
+
+        if let Some(enclosing) = self.enclosing.as_ref() {
+            boofer.extend(enclosing.symbols());
+        }
+
+        boofer
     }
 
     fn remove_binding(&mut self, binder: &Identifier) {
-        if let Some(pos) = self.state.iter().position(|(b, _)| b == binder) {
-            self.state.to_mut().remove(pos);
+        if let Some(pos) = self.leaf.iter().rposition(|(b, _)| b == binder) {
+            self.leaf.remove(pos);
         }
     }
 }
@@ -355,9 +329,15 @@ impl Environment {
 impl fmt::Display for Environment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "     ")?;
-        for (binder, binding) in self.state.iter() {
+        for (binder, binding) in self.leaf.iter().rev() {
             write!(f, "{binder} = {binding},")?;
         }
+
+        if let Some(enclosing) = self.enclosing.as_ref() {
+            writeln!(f, "")?;
+            write!(f, "{enclosing}")?;
+        }
+
         Ok(())
     }
 }
