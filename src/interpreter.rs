@@ -1,12 +1,4 @@
-use std::{
-    borrow::Cow,
-    cell::{OnceCell, RefCell},
-    collections::{HashMap, VecDeque},
-    fmt,
-    ops::Deref,
-    rc::Rc,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{cell::RefCell, collections::VecDeque, fmt, rc::Rc};
 use thiserror::Error;
 
 use crate::{
@@ -195,7 +187,7 @@ impl fmt::Display for Value {
 // Turn SelfReferentialLambda into this
 #[derive(Debug, Clone)]
 pub struct RecursiveClosure {
-    pub name: Identifier,
+    pub name: Identifier, // Name does not seem used.
     pub inner: Rc<RefCell<Closure>>,
 }
 
@@ -292,7 +284,6 @@ impl Environment {
             .find_map(|(binder, bound)| (binder == id).then_some(bound))
             .map(Ok)
             .unwrap_or_else(|| {
-                println!("looking: enclosing: {id}");
                 self.enclosing.as_ref().map_or_else(
                     || Err(RuntimeError::UndefinedSymbol(id.clone())),
                     |env| env.lookup(id),
@@ -490,7 +481,7 @@ fn apply_function(
             capture.remove_binding(&parameter);
             retval
         }
-        Value::RecursiveClosure(RecursiveClosure { name, inner }) => {
+        Value::RecursiveClosure(RecursiveClosure { inner, .. }) => {
             let binding = argument.reduce(env)?;
 
             let mut inner = { inner.borrow_mut().clone() };
@@ -515,6 +506,7 @@ fn make_closure(param: Identifier, body: Expression, env: Environment) -> Interp
 mod tests {
     use crate::{
         ast::{Constant, ControlFlow, Expression, Identifier, Parameter},
+        context::CompilationContext,
         interpreter::{Environment, RuntimeError, Scalar, Value},
         lexer::Location,
         stdlib,
@@ -524,13 +516,13 @@ mod tests {
 
     #[test]
     fn reduce_literal() {
-        let mut env = Environment::default();
-        stdlib::import(&mut env).unwrap();
+        let mut context = CompilationContext::default();
+        stdlib::import(&mut context).unwrap();
 
         assert_eq!(
             Scalar::Int(1),
             Expression::Literal(Constant::Int(1))
-                .reduce(&mut env)
+                .reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()
                 .unwrap(),
@@ -539,15 +531,17 @@ mod tests {
 
     #[test]
     fn reduce_with_variables() {
-        let mut env = Environment::default();
-        stdlib::import(&mut env).unwrap();
+        let mut context = CompilationContext::default();
+        stdlib::import(&mut context).unwrap();
 
-        env.insert_binding(Identifier::new("x"), Value::Scalar(Scalar::Int(1)));
+        context
+            .interpreter_environment
+            .insert_binding(Identifier::new("x"), Value::Scalar(Scalar::Int(1)));
 
         assert_eq!(
             Scalar::Int(1),
             Expression::Variable(Identifier::new("x"))
-                .reduce(&mut env)
+                .reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()
                 .unwrap()
@@ -556,12 +550,12 @@ mod tests {
         assert_eq!(
             RuntimeError::UndefinedSymbol(Identifier::new("y")),
             Expression::Variable(Identifier::new("y"))
-                .reduce(&mut env)
+                .reduce(&mut context.interpreter_environment)
                 .unwrap_err()
         )
     }
 
-    fn make_fix() -> Expression {
+    fn _make_fix() -> Expression {
         Expression::Apply {
             function: Box::new(Expression::Lambda {
                 parameter: Parameter::new(Identifier::new("x")),
@@ -580,7 +574,7 @@ mod tests {
         }
     }
 
-    fn make_fix_value(env: Environment) -> Value {
+    fn _make_fix_value(env: Environment) -> Value {
         Value::Closure(Closure {
             parameter: Identifier::new("f"),
             capture: env.clone(),
@@ -617,7 +611,7 @@ mod tests {
 
     #[test]
     fn eval_fix() {
-        let factorial = Expression::Lambda {
+        let _factorial = Expression::Lambda {
             parameter: Parameter::new(Identifier::new("x")),
             body: Expression::ControlFlow(ControlFlow::If {
                 predicate: Expression::Apply {
@@ -659,7 +653,7 @@ mod tests {
     }
 
     //    #[test]
-    fn fixed_factorial() {
+    fn _fixed_factorial() {
         let factorial = Expression::Apply {
             function: Expression::Variable(Identifier::new("fix")).into(),
             argument: Expression::Lambda {
@@ -712,16 +706,20 @@ mod tests {
             .into(),
         };
 
-        let mut env = Environment::default();
-        stdlib::import(&mut env).unwrap();
+        let mut context = CompilationContext::default();
+        stdlib::import(&mut context).unwrap();
 
-        env.insert_binding(
+        context.interpreter_environment.insert_binding(
             Identifier::new("fix"),
-            make_fix_value(Environment::default()),
+            _make_fix_value(Environment::default()),
         );
 
-        let reduced_fact = factorial.reduce(&mut env).unwrap();
-        env.insert_binding(Identifier::new("factorial"), reduced_fact);
+        let reduced_fact = factorial
+            .reduce(&mut context.interpreter_environment)
+            .unwrap();
+        context
+            .interpreter_environment
+            .insert_binding(Identifier::new("factorial"), reduced_fact);
 
         let e = Expression::Apply {
             function: Expression::Variable(Identifier::new("factorial")).into(),
@@ -730,7 +728,10 @@ mod tests {
 
         assert_eq!(
             Scalar::Int(127),
-            e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
+            e.reduce(&mut context.interpreter_environment)
+                .unwrap()
+                .try_into_scalar()
+                .unwrap()
         );
     }
 }

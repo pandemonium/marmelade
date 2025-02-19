@@ -1,92 +1,169 @@
 use crate::{
     bridge,
-    interpreter::{Environment, Interpretation, Scalar},
+    context::CompilationContext,
+    interpreter::{Environment, Interpretation},
     lexer::Operator,
+    types::{TrivialType, Type, TypeParameter},
 };
 
-pub fn import(env: &mut Environment) -> Interpretation<()> {
+pub fn import(context: &mut CompilationContext) -> Interpretation<()> {
     //    import_std_file(env)?;
-    import_operator(env)?;
+    import_operators(context)?;
 
     Ok(())
 }
 
-fn import_std_file(env: &mut Environment) -> Interpretation<()> {
+fn _import_std_file(_env: &mut Environment) -> Interpretation<()> {
     todo!()
 }
 
-fn import_operator(env: &mut Environment) -> Interpretation<()> {
-    bridge::define(
-        Operator::Equals.id(),
-        bridge::PartialRawLambda2(|p, q| match (p, q) {
+fn make_binary_boolean_operator() -> Type {
+    let ty = TypeParameter::fresh();
+    let tp = Box::new(Type::Parameter(ty.clone()));
+    Type::Forall(
+        ty.clone(),
+        Type::Function(
+            tp.clone(),
+            Type::Function(tp, Type::Trivial(TrivialType::Bool).into()).into(),
+        )
+        .into(),
+    )
+}
+
+fn make_binary_operator() -> Type {
+    let ty = TypeParameter::fresh();
+    let tp = Box::new(Type::Parameter(ty.clone()));
+    Type::Forall(
+        ty.clone(),
+        Type::Function(tp.clone(), Type::Function(tp.clone(), tp).into()).into(),
+    )
+}
+
+mod operator {
+    use crate::interpreter::Scalar;
+
+    pub fn equals(p: Scalar, q: Scalar) -> Option<Scalar> {
+        match (p, q) {
             (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Bool(p == q)),
             (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Bool(p == q)),
             (Scalar::Bool(p), Scalar::Bool(q)) => Some(Scalar::Bool(p == q)),
             (Scalar::Text(p), Scalar::Text(q)) => Some(Scalar::Bool(p == q)),
             _otherwise => None,
-        }),
-        env,
-    )?;
-    bridge::define(
-        Operator::Plus.id(),
-        bridge::PartialRawLambda2(|p, q| match (p, q) {
+        }
+    }
+
+    pub fn plus(p: Scalar, q: Scalar) -> Option<Scalar> {
+        match (p, q) {
             (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p + q)),
             (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p + q)),
             _otherwise => None,
-        }),
-        env,
-    )?;
-    bridge::define(
-        Operator::Minus.id(),
-        bridge::PartialRawLambda2(|p, q| match (p, q) {
+        }
+    }
+
+    pub fn minus(p: Scalar, q: Scalar) -> Option<Scalar> {
+        match (p, q) {
             (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p - q)),
             (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p - q)),
             _otherwise => None,
-        }),
-        env,
-    )?;
-    bridge::define(
-        Operator::Times.id(),
-        bridge::PartialRawLambda2(|p, q| match (p, q) {
+        }
+    }
+
+    pub fn times(p: Scalar, q: Scalar) -> Option<Scalar> {
+        match (p, q) {
             (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p * q)),
             (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p * q)),
             _otherwise => None,
-        }),
-        env,
-    )?;
-    bridge::define(
-        Operator::Divides.id(),
-        bridge::PartialRawLambda2(|p, q| match (p, q) {
+        }
+    }
+
+    pub fn divides(p: Scalar, q: Scalar) -> Option<Scalar> {
+        match (p, q) {
             (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p / q)),
             (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p / q)),
             _otherwise => None,
-        }),
-        env,
-    )?;
-    bridge::define(
-        Operator::Modulo.id(),
-        bridge::PartialRawLambda2(|p, q| match (p, q) {
+        }
+    }
+
+    pub fn modulo(p: Scalar, q: Scalar) -> Option<Scalar> {
+        match (p, q) {
             (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p % q)),
             (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p % q)),
             _otherwise => None,
-        }),
+        }
+    }
+}
+
+fn import_operators(env: &mut CompilationContext) -> Interpretation<()> {
+    use operator::*;
+
+    bridge::define(
+        Operator::Equals.id(),
+        bridge::PartialRawLambda2 {
+            apply: equals,
+            signature: make_binary_boolean_operator(),
+        },
         env,
     )?;
-    Ok(())
+
+    bridge::define(
+        Operator::Plus.id(),
+        bridge::PartialRawLambda2 {
+            apply: plus,
+            signature: make_binary_operator(),
+        },
+        env,
+    )?;
+
+    bridge::define(
+        Operator::Minus.id(),
+        bridge::PartialRawLambda2 {
+            apply: minus,
+            signature: make_binary_operator(),
+        },
+        env,
+    )?;
+
+    bridge::define(
+        Operator::Times.id(),
+        bridge::PartialRawLambda2 {
+            apply: times,
+            signature: make_binary_operator(),
+        },
+        env,
+    )?;
+
+    bridge::define(
+        Operator::Divides.id(),
+        bridge::PartialRawLambda2 {
+            apply: divides,
+            signature: make_binary_operator(),
+        },
+        env,
+    )?;
+
+    bridge::define(
+        Operator::Modulo.id(),
+        bridge::PartialRawLambda2 {
+            apply: modulo,
+            signature: make_binary_operator(),
+        },
+        env,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         ast::{Constant, Expression as E, Identifier},
-        interpreter::{Environment, RuntimeError, Scalar},
+        context::CompilationContext,
+        interpreter::{RuntimeError, Scalar},
         stdlib,
     };
 
     #[test]
     fn plus_i64() {
-        let mut env = Environment::default();
-        stdlib::import(&mut env).unwrap();
+        let mut context = CompilationContext::default();
+        stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -99,14 +176,17 @@ mod tests {
 
         assert_eq!(
             Scalar::Int(3),
-            e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
+            e.reduce(&mut context.interpreter_environment)
+                .unwrap()
+                .try_into_scalar()
+                .unwrap()
         );
     }
 
     #[test]
     fn plus_f64() {
-        let mut env = Environment::default();
-        stdlib::import(&mut env).unwrap();
+        let mut context = CompilationContext::default();
+        stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -119,14 +199,17 @@ mod tests {
 
         assert_eq!(
             Scalar::Float(1.5 + 2.3),
-            e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
+            e.reduce(&mut context.interpreter_environment)
+                .unwrap()
+                .try_into_scalar()
+                .unwrap()
         );
     }
 
     #[test]
     fn plus_wrong_types() {
-        let mut env = Environment::default();
-        stdlib::import(&mut env).unwrap();
+        let mut context = CompilationContext::default();
+        stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -139,14 +222,14 @@ mod tests {
 
         assert_eq!(
             RuntimeError::InapplicableLamda2,
-            e.reduce(&mut env).unwrap_err()
+            e.reduce(&mut context.interpreter_environment).unwrap_err()
         );
     }
 
     #[test]
     fn minus() {
-        let mut env = Environment::default();
-        stdlib::import(&mut env).unwrap();
+        let mut context = CompilationContext::default();
+        stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -159,14 +242,17 @@ mod tests {
 
         assert_eq!(
             Scalar::Int(-1),
-            e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
+            e.reduce(&mut context.interpreter_environment)
+                .unwrap()
+                .try_into_scalar()
+                .unwrap()
         );
     }
 
     #[test]
     fn times() {
-        let mut env = Environment::default();
-        stdlib::import(&mut env).unwrap();
+        let mut context = CompilationContext::default();
+        stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -179,14 +265,17 @@ mod tests {
 
         assert_eq!(
             Scalar::Int(2),
-            e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
+            e.reduce(&mut context.interpreter_environment)
+                .unwrap()
+                .try_into_scalar()
+                .unwrap()
         );
     }
 
     #[test]
     fn divides() {
-        let mut env = Environment::default();
-        stdlib::import(&mut env).unwrap();
+        let mut context = CompilationContext::default();
+        stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
             function: E::Apply {
@@ -199,7 +288,10 @@ mod tests {
 
         assert_eq!(
             Scalar::Int(0),
-            e.reduce(&mut env).unwrap().try_into_scalar().unwrap()
+            e.reduce(&mut context.interpreter_environment)
+                .unwrap()
+                .try_into_scalar()
+                .unwrap()
         );
     }
 }

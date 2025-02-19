@@ -1,9 +1,13 @@
 use std::rc::Rc;
 
 use marmelade::{
-    ast::{Expression, Identifier, Parameter},
+    ast::{
+        CompilationUnit, Declaration, Expression, FunctionDeclarator, Identifier, Parameter,
+        ValueDeclarator,
+    },
+    context::CompilationContext,
     interpreter::{Closure, Environment, Interpreter, Scalar, Value},
-    lexer::{LexicalAnalyzer, Token},
+    lexer::LexicalAnalyzer,
     parser, stdlib,
 };
 
@@ -35,15 +39,17 @@ fn main1() {
     )))
     .unwrap();
 
-    let mut prelude = Environment::default();
+    let mut prelude = CompilationContext::default();
     stdlib::import(&mut prelude).unwrap();
 
-    let return_value = Interpreter::new(prelude).load_and_run(program).unwrap();
+    let return_value = Interpreter::new(prelude.interpreter_environment)
+        .load_and_run(program)
+        .unwrap();
 
     assert_eq!(Scalar::Int(327), return_value.try_into_scalar().unwrap());
 }
 
-fn make_fix_value(env: Environment) -> Value {
+fn _make_fix_value(env: Environment) -> Value {
     Value::Closure(Closure {
         parameter: Identifier::new("f"),
         capture: env.clone(),
@@ -79,7 +85,7 @@ fn make_fix_value(env: Environment) -> Value {
 }
 
 #[test]
-fn factorial22() {
+fn factorial20() {
     let mut lexer = LexicalAnalyzer::default();
     // Dependency resolution probably gets stuck now that there is a cycle.
     let program = parser::parse_compilation_unit(lexer.tokenize(&into_input(
@@ -90,21 +96,67 @@ fn factorial22() {
            |  if x == 0 then 1 else if x == 1 then 1 else let a = x - 1 in let b = x - 2 in fibonacci a + fibonacci b
            |
            |
-           |main = fibonacci 25
+           |main = factorial 20
            |"#,
     )))
     .unwrap();
 
-    println!("{program}");
-
-    let mut prelude = Environment::default();
+    let mut prelude = CompilationContext::default();
     stdlib::import(&mut prelude).unwrap();
 
-    let program_environment = Environment::make_child(Rc::new(prelude));
+    let program_environment = Environment::make_child(Rc::new(prelude.interpreter_environment));
 
     let return_value = Interpreter::new(program_environment).load_and_run(program);
     assert_eq!(
-        Scalar::Int(120),
+        Scalar::Int(2432902008176640000),
+        return_value.unwrap().try_into_scalar().unwrap()
+    );
+}
+
+#[test]
+fn fibonacci23() {
+    let mut lexer = LexicalAnalyzer::default();
+    // Dependency resolution probably gets stuck now that there is a cycle.
+    let program = parser::parse_compilation_unit(lexer.tokenize(&into_input(
+        r#"|fibonacci = fun x ->
+           |  if x == 0 then 1 else if x == 1 then 1 else let a = x - 1 in let b = x - 2 in fibonacci a + fibonacci b
+           |main = fibonacci 23
+           |"#,
+    )))
+    .unwrap();
+
+    let mut context = CompilationContext::default();
+    stdlib::import(&mut context).unwrap();
+
+    if let CompilationUnit::Implicit(module) = &program {
+        if let Declaration::Value {
+            position,
+            binder,
+            declarator,
+        } = module
+            .find_value_declaration(&Identifier::new("fibonacci"))
+            .unwrap()
+        {
+            if let ValueDeclarator::Function(function) = declarator {
+                let x = context
+                    .typing_context
+                    .infer_type(
+                        &function
+                            .clone()
+                            .into_lambda_tree(Identifier::new("fibonacci")),
+                    )
+                    .unwrap();
+                println!("Type of fibonacci: {:?}", x.inferred_type);
+            }
+        }
+    }
+
+    let return_value = Interpreter::new(Environment::make_child(Rc::new(
+        context.interpreter_environment,
+    )))
+    .load_and_run(program);
+    assert_eq!(
+        Scalar::Int(46368),
         return_value.unwrap().try_into_scalar().unwrap()
     );
 }

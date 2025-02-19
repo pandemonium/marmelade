@@ -23,7 +23,7 @@ use Token as T;
 use TokenType as TT;
 
 pub fn parse_compilation_unit<'a>(input: &'a [Token]) -> Result<CompilationUnit, ParseError> {
-    let (declarations, remains) = parse_declarations(input)?;
+    let (declarations, ..) = parse_declarations(input)?;
 
     Ok(CompilationUnit::Implicit(ModuleDeclarator {
         position: Location::default(),
@@ -208,7 +208,7 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
 }
 
 fn parse_if_expression<'a>(
-    position: Location,
+    _position: Location,
     remains: &'a [Token],
 ) -> ParseResult<'a, Expression> {
     let (predicate, remains) = parse_expression(remains, 0)?;

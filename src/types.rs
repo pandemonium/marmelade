@@ -4,23 +4,37 @@ use std::{
     slice::Iter,
 };
 
-use typer::{Substitution, TypeParameter};
+use crate::{
+    ast::{self, Expression, Identifier},
+    types::typer::Substitutions,
+};
 
-use crate::ast::{self, CompilationUnit, Expression, Identifier};
+/*
+    The structure of this file is off.
+    The toplevel module ought to be typer.
+    What does the types/ typer dichotomy afford us?
+    I don't really like the way the associated functions
+      are distributed over the types either.
+*/
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
-    Parameter(typer::TypeParameter),
+    Parameter(TypeParameter),
     Trivial(TrivialType),
     Product(ProductType),
     Coproduct(CoproductType),
     Function(Box<Type>, Box<Type>),
-    Forall(typer::TypeParameter, Box<Type>),
+    Forall(TypeParameter, Box<Type>),
+    // + is (Int -> Int -> Int | Float -> Float -> Float)
+    // until there are constraints
+    //    Alternatives(Vec<Type>),
 }
 
 impl Type {
-    fn apply(self, subs: &typer::Substitution) -> Self {
+    fn apply(self, subs: &typer::Substitutions) -> Self {
         match self {
+            // Recurse into apply here to apply the whole chain of
+            // substitutions?
             Self::Parameter(param) => subs
                 .lookup(&param)
                 .cloned()
@@ -41,9 +55,9 @@ impl Type {
         }
     }
 
-    fn free_variables(&self) -> HashSet<typer::TypeParameter> {
+    fn free_variables(&self) -> HashSet<TypeParameter> {
         match self {
-            Self::Parameter(param) => vec![*param].into_iter().collect(),
+            Self::Parameter(param) => HashSet::from([*param]),
             Self::Function(tv0, tv1) => {
                 let mut vars = tv0.free_variables();
                 vars.extend(tv1.free_variables());
@@ -70,7 +84,7 @@ impl Type {
 
     fn instantiate(&self) -> Self {
         let mut map = HashMap::default();
-        fn rename(ty: Type, map: &mut HashMap<typer::TypeParameter, Type>) -> Type {
+        fn rename(ty: Type, map: &mut HashMap<TypeParameter, Type>) -> Type {
             match ty {
                 Type::Forall(ty_var, ty) => {
                     map.insert(ty_var, Type::fresh());
@@ -90,13 +104,13 @@ impl Type {
         rename(self.clone(), &mut map)
     }
 
-    fn fresh() -> Type {
+    pub fn fresh() -> Type {
         Self::Parameter(TypeParameter::fresh())
     }
 
-    fn unify_tuples(lhs: &[Type], rhs: &[Type]) -> Result<Substitution, TypeError> {
+    fn unify_tuples(lhs: &[Type], rhs: &[Type]) -> Result<Substitutions, TypeError> {
         if lhs.len() == rhs.len() {
-            let mut substitution = Substitution::default();
+            let mut substitution = Substitutions::default();
             for (lhs, rhs) in lhs.into_iter().zip(rhs.into_iter()) {
                 substitution = substitution.compose(lhs.unify(rhs)?);
             }
@@ -112,9 +126,9 @@ impl Type {
     fn unify_coproducts(
         lhs: &CoproductType,
         rhs: &CoproductType,
-    ) -> Result<Substitution, TypeError> {
+    ) -> Result<Substitutions, TypeError> {
         if lhs.arity() == rhs.arity() {
-            let mut sub = Substitution::default();
+            let mut sub = Substitutions::default();
 
             for ((lhs_constructor, lhs_ty), (rhs_constructor, rhs_ty)) in lhs.iter().zip(rhs.iter())
             {
@@ -137,12 +151,12 @@ impl Type {
         }
     }
 
-    fn unify(&self, rhs: &Type) -> Result<Substitution, TypeError> {
+    fn unify(&self, rhs: &Type) -> Result<Substitutions, TypeError> {
         let lhs = self;
 
         match (lhs, rhs) {
-            (Self::Trivial(t), Self::Trivial(u)) if t == u => Ok(Substitution::default()),
-            (Self::Parameter(t), Self::Parameter(u)) if t == u => Ok(Substitution::default()),
+            (Self::Trivial(t), Self::Trivial(u)) if t == u => Ok(Substitutions::default()),
+            (Self::Parameter(t), Self::Parameter(u)) if t == u => Ok(Substitutions::default()),
             (Self::Parameter(param), ty) | (ty, Self::Parameter(param)) => {
                 if ty.free_variables().contains(param) {
                     Err(TypeError::InfiniteType {
@@ -150,7 +164,7 @@ impl Type {
                         ty: ty.clone(),
                     })
                 } else {
-                    let mut substitution = Substitution::default();
+                    let mut substitution = Substitutions::default();
                     substitution.add(param.clone(), ty.clone());
                     Ok(substitution)
                 }
@@ -166,13 +180,13 @@ impl Type {
                 Self::Function(lhs_domain, lhs_codomain),
                 Self::Function(rhs_domain, rhs_codomain),
             ) => {
-                let sub1 = lhs_domain.unify(rhs_domain)?;
-                let sub2 = (*lhs_codomain)
+                let domain = lhs_domain.unify(rhs_domain)?;
+                let codomain = (*lhs_codomain)
                     .clone()
-                    .apply(&sub1)
-                    .unify(&(*rhs_codomain).clone().apply(&sub1))?;
+                    .apply(&domain)
+                    .unify(&(*rhs_codomain).clone().apply(&domain))?;
 
-                Ok(sub1.compose(sub2))
+                Ok(domain.compose(codomain))
             }
             (lhs, rhs) => Err(TypeError::UnifyImpossible {
                 lhs: lhs.clone(),
@@ -188,7 +202,7 @@ impl Type {
     fn unify_structs(
         lhs: &HashMap<Identifier, Type>,
         rhs: &HashMap<Identifier, Type>,
-    ) -> Result<Substitution, TypeError> {
+    ) -> Result<Substitutions, TypeError> {
         if lhs.len() == rhs.len() {
             let mut lhs_fields = lhs.iter().collect::<Vec<_>>();
             lhs_fields.sort_by(|(p, _), (q, _)| p.cmp(&q));
@@ -196,7 +210,7 @@ impl Type {
             let mut rhs_fields = rhs.iter().collect::<Vec<_>>();
             rhs_fields.sort_by(|(p, _), (q, _)| p.cmp(&q));
 
-            let mut substitutions = Substitution::default();
+            let mut substitutions = Substitutions::default();
             for ((lhs_id, lhs_ty), (rhs_id, rhs_ty)) in
                 lhs_fields.into_iter().zip(rhs_fields.into_iter())
             {
@@ -260,7 +274,7 @@ pub enum ProductType {
     Struct(HashMap<Identifier, Type>),
 }
 impl ProductType {
-    fn apply(self, subs: &Substitution) -> ProductType {
+    fn apply(self, subs: &Substitutions) -> ProductType {
         match self {
             ProductType::Tuple(elements) => {
                 ProductType::Tuple(elements.into_iter().map(|ty| ty.apply(subs)).collect())
@@ -318,7 +332,7 @@ impl CoproductType {
         constructors.iter()
     }
 
-    fn apply(self, subs: &Substitution) -> Self {
+    fn apply(self, subs: &Substitutions) -> Self {
         let Self(constructors) = self;
         Self(
             constructors
@@ -342,11 +356,11 @@ impl fmt::Display for CoproductType {
     }
 }
 
-pub type Typing = Result<TypeInference, TypeError>;
+pub type Typing<A = TypeInference> = Result<A, TypeError>;
 
 #[derive(Debug)]
 pub struct TypeInference {
-    pub substitutions: typer::Substitution,
+    pub substitutions: typer::Substitutions,
     pub inferred_type: Type,
 }
 
@@ -398,13 +412,8 @@ impl From<ast::TypeName> for Binding {
     }
 }
 
-impl CompilationUnit {
-    pub fn typing_context(&self) -> TypingContext {
-        // When does stdlib::install come in to play?
-        todo!()
-    }
-}
-
+// Couldn't this also be a Vec?
+// It ought to be hierarchical just like the Environment in the interpreter.
 #[derive(Debug, Clone, Default)]
 pub struct TypingContext(HashMap<Binding, Type>);
 
@@ -419,16 +428,16 @@ impl TypingContext {
         map.get(binding)
     }
 
-    pub fn infer(&self, e: &Expression) -> Typing {
+    pub fn infer_type(&self, e: &Expression) -> Typing {
         typer::infer(e, self)
     }
 
-    fn free_variables(&self) -> HashSet<typer::TypeParameter> {
+    fn free_variables(&self) -> HashSet<TypeParameter> {
         let Self(map) = self;
         map.values().flat_map(|ty| ty.free_variables()).collect()
     }
 
-    fn apply(&self, subs: &typer::Substitution) -> Self {
+    fn apply(&self, subs: &typer::Substitutions) -> Self {
         let Self(map) = self;
 
         let mut map = map.clone();
@@ -438,6 +447,9 @@ impl TypingContext {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct TypeParameter(u32);
+
 mod typer {
     use std::{
         collections::HashMap,
@@ -445,13 +457,13 @@ mod typer {
         sync::atomic::{AtomicU32, Ordering},
     };
 
-    use super::{ProductType, TrivialType, Type, TypeError, TypeInference, Typing, TypingContext};
-    use crate::ast::{self, Expression};
+    use super::{
+        ProductType, TrivialType, Type, TypeError, TypeInference, TypeParameter, Typing,
+        TypingContext,
+    };
+    use crate::ast::{self, ControlFlow, Expression};
 
     static FRESH_TYPE_ID: AtomicU32 = AtomicU32::new(0);
-
-    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-    pub struct TypeParameter(u32);
 
     impl TypeParameter {
         pub fn fresh() -> Self {
@@ -471,9 +483,9 @@ mod typer {
     }
 
     #[derive(Debug, Clone, Default)]
-    pub struct Substitution(HashMap<TypeParameter, Type>);
+    pub struct Substitutions(HashMap<TypeParameter, Type>);
 
-    impl Substitution {
+    impl Substitutions {
         pub fn add(&mut self, param: TypeParameter, ty: Type) {
             let Self(map) = self;
             map.insert(param, ty);
@@ -489,7 +501,7 @@ mod typer {
             map.remove(param);
         }
 
-        pub fn compose(&self, Substitution(mut rhs): Self) -> Self {
+        pub fn compose(&self, Substitutions(mut rhs): Self) -> Self {
             let mut composed = rhs
                 .drain()
                 .map(|(param, ty)| (param, ty.apply(self)))
@@ -520,6 +532,7 @@ mod typer {
         };
 
         let mut ctx = ctx.clone();
+        println!("Binding {} to {}", name, expected_param_type);
         ctx.bind(name.clone().into(), expected_param_type.clone());
 
         let body = infer(body, &ctx)?;
@@ -529,7 +542,7 @@ mod typer {
         let annotation_unification = expected_param_type.unify(&inferred_param_type)?;
 
         let function_type = generalize_type(
-            Type::Function(Box::new(inferred_param_type), Box::new(body.inferred_type)),
+            Type::Function(inferred_param_type.into(), body.inferred_type.into()),
             &ctx,
         );
 
@@ -575,15 +588,25 @@ mod typer {
                 // Ref-variants of Binding too?
                 if let Some(ty) = ctx.lookup(&binding.clone().into()) {
                     Ok(TypeInference {
-                        substitutions: Substitution::default(),
+                        substitutions: Substitutions::default(),
                         inferred_type: ty.instantiate(),
                     })
                 } else {
+                    panic!("Undefined: {}", binding);
                     Err(TypeError::UndefinedSymbol(binding.clone()))
                 }
             }
-            ast::Expression::Literal(constant) => synthesize_type_of_constantg(constant, ctx),
-            ast::Expression::SelfReferential { .. } => todo!(),
+            ast::Expression::Literal(constant) => synthesize_type_of_constant(constant, ctx),
+            ast::Expression::SelfReferential {
+                name,
+                parameter,
+                body,
+            } => {
+                // is this going to work?
+                let mut ctx = ctx.clone();
+                ctx.bind(name.clone().into(), Type::fresh());
+                infer_lambda(parameter, body, &ctx)
+            }
             ast::Expression::Lambda { parameter, body } => infer_lambda(parameter, body, ctx),
             ast::Expression::Apply { function, argument } => {
                 infer_application(function, argument, ctx)
@@ -604,8 +627,48 @@ mod typer {
             ast::Expression::Sequence { .. } => {
                 todo!()
             }
-            ast::Expression::ControlFlow(_control_flow) => todo!(),
+            ast::Expression::ControlFlow(control) => infer_control_flow(control, ctx),
         }
+    }
+
+    fn infer_control_flow(control: &ControlFlow, ctx: &TypingContext) -> Typing {
+        match control {
+            ControlFlow::If {
+                predicate,
+                consequent,
+                alternate,
+            } => infer_if_expression(predicate, consequent, alternate, ctx),
+        }
+    }
+
+    fn infer_if_expression(
+        predicate: &Expression,
+        consequent: &Expression,
+        alternate: &Expression,
+        ctx: &TypingContext,
+    ) -> Typing {
+        let predicate_type = infer(predicate, ctx)?;
+        let predicate = predicate_type
+            .inferred_type
+            .unify(&Type::Trivial(TrivialType::Bool))?;
+
+        let consequent = infer(consequent, ctx)?;
+        let alternate = infer(alternate, ctx)?;
+
+        let branch = consequent.inferred_type.unify(&alternate.inferred_type)?;
+
+        let substitutions = predicate
+            .compose(predicate_type.substitutions)
+            .compose(consequent.substitutions)
+            .compose(alternate.substitutions)
+            .compose(branch);
+
+        let inferred_type = consequent.inferred_type.apply(&substitutions);
+
+        Ok(TypeInference {
+            substitutions,
+            inferred_type,
+        })
     }
 
     fn infer_binding(
@@ -662,7 +725,7 @@ mod typer {
         }
     }
 
-    fn synthesize_type_of_constantg(c: &ast::Constant, _ctx: &TypingContext) -> Typing {
+    fn synthesize_type_of_constant(c: &ast::Constant, _ctx: &TypingContext) -> Typing {
         match c {
             ast::Constant::Int(..) => synthesize_trivial(TrivialType::Int),
             ast::Constant::Float(..) => synthesize_trivial(TrivialType::Float),
@@ -715,11 +778,11 @@ mod typer {
         elements: &HashMap<ast::Identifier, ast::Expression>,
         ctx: &TypingContext,
     ) -> Typing {
-        let mut substitutions = Substitution::default();
+        let mut substitutions = Substitutions::default();
         let mut types = Vec::with_capacity(elements.len());
 
         for (label, initializer) in elements {
-            let initializer = ctx.infer(initializer)?;
+            let initializer = ctx.infer_type(initializer)?;
 
             substitutions = substitutions.compose(initializer.substitutions);
             types.push((label.clone(), initializer.inferred_type));
@@ -732,11 +795,11 @@ mod typer {
     }
 
     fn infer_tuple(elements: &[ast::Expression], ctx: &TypingContext) -> Typing {
-        let mut substitutions = Substitution::default();
+        let mut substitutions = Substitutions::default();
         let mut types = Vec::with_capacity(elements.len());
 
         for element in elements {
-            let element = ctx.infer(element)?;
+            let element = ctx.infer_type(element)?;
 
             substitutions = substitutions.compose(element.substitutions);
             types.push(element.inferred_type);
@@ -751,7 +814,7 @@ mod typer {
 
     fn synthesize_trivial(ty: TrivialType) -> Typing {
         Ok(TypeInference {
-            substitutions: Substitution::default(),
+            substitutions: Substitutions::default(),
             inferred_type: Type::Trivial(ty),
         })
     }
@@ -769,10 +832,10 @@ mod typer {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{typer, Binding, CoproductType, TypingContext};
+    use super::{Binding, CoproductType, TypingContext};
     use crate::{
         ast,
-        types::{ProductType, TrivialType, Type},
+        types::{ProductType, TrivialType, Type, TypeParameter},
     };
 
     fn mk_apply(f: ast::Expression, arg: ast::Expression) -> ast::Expression {
@@ -796,7 +859,7 @@ mod tests {
         let ctx = TypingContext::default();
 
         let e = mk_apply(id.clone(), ast::Expression::Literal(ast::Constant::Int(10)));
-        let t = ctx.infer(&e).unwrap();
+        let t = ctx.infer_type(&e).unwrap();
         assert_eq!(t.inferred_type, Type::Trivial(TrivialType::Int));
 
         let e = mk_apply(
@@ -806,7 +869,7 @@ mod tests {
                 ast::Expression::Literal(ast::Constant::Float(1.0)),
             ])),
         );
-        let t = ctx.infer(&e).unwrap();
+        let t = ctx.infer_type(&e).unwrap();
         assert_eq!(
             t.inferred_type,
             Type::Product(ProductType::Tuple(vec![
@@ -824,7 +887,7 @@ mod tests {
             ast::Expression::Literal(ast::Constant::Float(1.0)),
         ]));
 
-        let t = ctx.infer(&e).unwrap();
+        let t = ctx.infer_type(&e).unwrap();
         assert_eq!(
             t.inferred_type,
             Type::Product(ProductType::Tuple(vec![
@@ -837,7 +900,7 @@ mod tests {
             base: e.into(),
             index: ast::ProductIndex::Tuple(0),
         };
-        let t = ctx.infer(&e).unwrap();
+        let t = ctx.infer_type(&e).unwrap();
         assert_eq!(t.inferred_type, Type::Trivial(TrivialType::Int));
     }
 
@@ -860,7 +923,7 @@ mod tests {
                 ]),
             }),
         );
-        let t = ctx.infer(&e).unwrap();
+        let t = ctx.infer_type(&e).unwrap();
         let expected_type = Type::Product(ProductType::Struct(HashMap::from([
             (ast::Identifier::new("id"), mk_identity_type()),
             (ast::Identifier::new("x"), mk_trivial_type(TrivialType::Int)),
@@ -873,7 +936,7 @@ mod tests {
         t.inferred_type.unify(&expected_type).unwrap();
 
         let e = mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0)));
-        let t = ctx.infer(&e).unwrap();
+        let t = ctx.infer_type(&e).unwrap();
 
         assert_eq!(t.inferred_type, mk_trivial_type(TrivialType::Float));
 
@@ -888,21 +951,21 @@ mod tests {
         let e = mk_apply(abs, mk_constant(ast::Constant::Float(1.0)));
 
         ctx.bind(
-            crate::types::Binding::TypeTerm("builtin::Int".to_owned()),
+            Binding::TypeTerm("builtin::Int".to_owned()),
             Type::Trivial(TrivialType::Int),
         );
         ctx.bind(
-            crate::types::Binding::TypeTerm("builtin::Float".to_owned()),
+            Binding::TypeTerm("builtin::Float".to_owned()),
             Type::Trivial(TrivialType::Float),
         );
-        let t = ctx.infer(&e).unwrap();
+        let t = ctx.infer_type(&e).unwrap();
         assert_eq!(t.inferred_type, mk_trivial_type(TrivialType::Float));
     }
 
     #[test]
     fn coproducts() {
         let mut ctx = TypingContext::default();
-        let t = typer::TypeParameter::fresh();
+        let t = TypeParameter::fresh();
         ctx.bind(
             Binding::TypeTerm("Option".to_owned()),
             Type::Forall(
@@ -920,7 +983,7 @@ mod tests {
             constructor: ast::Identifier::new("The"),
             argument: mk_constant(ast::Constant::Float(1.0)).into(),
         };
-        let t = ctx.infer(&e).unwrap();
+        let t = ctx.infer_type(&e).unwrap();
 
         assert_eq!(
             t.inferred_type,
@@ -935,7 +998,7 @@ mod tests {
     fn polymorphic() {
         let mut ctx = TypingContext::default();
 
-        let t = typer::TypeParameter::fresh();
+        let t = TypeParameter::fresh();
         ctx.bind(
             Binding::ValueTerm("id".to_owned()),
             Type::Function(Type::Parameter(t).into(), Type::Parameter(t).into()).into(),
@@ -959,7 +1022,7 @@ mod tests {
                 ]),
             }),
         );
-        let t = ctx.infer(&e).unwrap();
+        let t = ctx.infer_type(&e).unwrap();
         assert_eq!(
             t.inferred_type,
             Type::Product(ProductType::Struct(HashMap::from([
@@ -988,7 +1051,7 @@ mod tests {
             }),
         };
 
-        let t = gamma.infer(&apply_to_five_expr).unwrap();
+        let t = gamma.infer_type(&apply_to_five_expr).unwrap();
         println!("t::{t:?}");
 
         gamma.bind(Binding::ValueTerm("id".to_owned()), mk_identity_type());
@@ -998,12 +1061,12 @@ mod tests {
             argument: ast::Expression::Variable(ast::Identifier::new("id")).into(), // Apply it to `id`
         };
 
-        let t = gamma.infer(&apply_to_five_to_id).unwrap();
+        let t = gamma.infer_type(&apply_to_five_to_id).unwrap();
         println!("t::{t:?}");
     }
 
     fn mk_identity_type() -> Type {
-        let ty = typer::TypeParameter::new_for_test(1);
+        let ty = TypeParameter::new_for_test(1);
         Type::Function(Type::Parameter(ty).into(), Type::Parameter(ty).into()).into()
     }
 
