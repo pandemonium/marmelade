@@ -1,6 +1,6 @@
 use crate::{
     ast::{Expression, Identifier, Parameter},
-    context::CompilationContext,
+    context::InterpretationContext,
     interpreter::{Environment, Interpretation, RuntimeError, Scalar, Value},
     types::{TrivialType, Type},
 };
@@ -124,10 +124,10 @@ impl Bridge for PartialRawLambda2 {
 pub fn define<B>(
     surface_name: Identifier,
     bridge: B,
-    CompilationContext {
+    InterpretationContext {
         typing_context,
         interpreter_environment,
-    }: &mut CompilationContext,
+    }: &mut InterpretationContext,
 ) -> Interpretation<()>
 where
     B: Bridge + 'static,
@@ -197,7 +197,7 @@ mod test {
         let _x = define(
             Identifier::new("open_file"),
             Lambda1(open_file),
-            &mut CompilationContext::default(),
+            &mut InterpretationContext::default(),
         )
         .unwrap();
     }

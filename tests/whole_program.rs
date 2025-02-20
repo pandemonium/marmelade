@@ -5,7 +5,7 @@ use marmelade::{
         CompilationUnit, Declaration, Expression, FunctionDeclarator, Identifier, Parameter,
         ValueDeclarator,
     },
-    context::CompilationContext,
+    context::InterpretationContext,
     interpreter::{Closure, Environment, Interpreter, Scalar, Value},
     lexer::LexicalAnalyzer,
     parser, stdlib,
@@ -39,7 +39,7 @@ fn main1() {
     )))
     .unwrap();
 
-    let mut prelude = CompilationContext::default();
+    let mut prelude = InterpretationContext::default();
     stdlib::import(&mut prelude).unwrap();
 
     let return_value = Interpreter::new(prelude.interpreter_environment)
@@ -101,7 +101,7 @@ fn factorial20() {
     )))
     .unwrap();
 
-    let mut prelude = CompilationContext::default();
+    let mut prelude = InterpretationContext::default();
     stdlib::import(&mut prelude).unwrap();
 
     let program_environment = Environment::make_child(Rc::new(prelude.interpreter_environment));
@@ -119,21 +119,26 @@ fn fibonacci23() {
     // Dependency resolution probably gets stuck now that there is a cycle.
     let program = parser::parse_compilation_unit(lexer.tokenize(&into_input(
         r#"|fibonacci = fun x ->
-           |  if x == 0 then 1 else if x == 1 then 1 else let a = x - 1 in let b = x - 2 in fibonacci a + fibonacci b
+           |  if x == 0 then
+           |    1
+           |  else
+           |    if x == 1
+           |    then 1
+           |     else
+           |      let a = x - 1 in
+           |      let b =
+           |        x - 2
+           |      in fibonacci a + fibonacci b
            |main = fibonacci 23
            |"#,
     )))
     .unwrap();
 
-    let mut context = CompilationContext::default();
+    let mut context = InterpretationContext::default();
     stdlib::import(&mut context).unwrap();
 
     if let CompilationUnit::Implicit(module) = &program {
-        if let Declaration::Value {
-            position,
-            binder,
-            declarator,
-        } = module
+        if let Declaration::Value { declarator, .. } = module
             .find_value_declaration(&Identifier::new("fibonacci"))
             .unwrap()
         {

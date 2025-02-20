@@ -1,12 +1,12 @@
 use crate::{
     bridge,
-    context::CompilationContext,
+    context::InterpretationContext,
     interpreter::{Environment, Interpretation},
     lexer::Operator,
     types::{TrivialType, Type, TypeParameter},
 };
 
-pub fn import(context: &mut CompilationContext) -> Interpretation<()> {
+pub fn import(context: &mut InterpretationContext) -> Interpretation<()> {
     //    import_std_file(env)?;
     import_operators(context)?;
 
@@ -93,7 +93,7 @@ mod operator {
     }
 }
 
-fn import_operators(env: &mut CompilationContext) -> Interpretation<()> {
+fn import_operators(env: &mut InterpretationContext) -> Interpretation<()> {
     use operator::*;
 
     bridge::define(
@@ -155,14 +155,14 @@ fn import_operators(env: &mut CompilationContext) -> Interpretation<()> {
 mod tests {
     use crate::{
         ast::{Constant, Expression as E, Identifier},
-        context::CompilationContext,
+        context::InterpretationContext,
         interpreter::{RuntimeError, Scalar},
         stdlib,
     };
 
     #[test]
     fn plus_i64() {
-        let mut context = CompilationContext::default();
+        let mut context = InterpretationContext::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn plus_f64() {
-        let mut context = CompilationContext::default();
+        let mut context = InterpretationContext::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn plus_wrong_types() {
-        let mut context = CompilationContext::default();
+        let mut context = InterpretationContext::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn minus() {
-        let mut context = CompilationContext::default();
+        let mut context = InterpretationContext::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn times() {
-        let mut context = CompilationContext::default();
+        let mut context = InterpretationContext::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn divides() {
-        let mut context = CompilationContext::default();
+        let mut context = InterpretationContext::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {

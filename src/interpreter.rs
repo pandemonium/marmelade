@@ -506,7 +506,7 @@ fn make_closure(param: Identifier, body: Expression, env: Environment) -> Interp
 mod tests {
     use crate::{
         ast::{Constant, ControlFlow, Expression, Identifier, Parameter},
-        context::CompilationContext,
+        context::InterpretationContext,
         interpreter::{Environment, RuntimeError, Scalar, Value},
         lexer::Location,
         stdlib,
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn reduce_literal() {
-        let mut context = CompilationContext::default();
+        let mut context = InterpretationContext::default();
         stdlib::import(&mut context).unwrap();
 
         assert_eq!(
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn reduce_with_variables() {
-        let mut context = CompilationContext::default();
+        let mut context = InterpretationContext::default();
         stdlib::import(&mut context).unwrap();
 
         context
@@ -706,7 +706,7 @@ mod tests {
             .into(),
         };
 
-        let mut context = CompilationContext::default();
+        let mut context = InterpretationContext::default();
         stdlib::import(&mut context).unwrap();
 
         context.interpreter_environment.insert_binding(

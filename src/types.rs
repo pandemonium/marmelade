@@ -25,9 +25,6 @@ pub enum Type {
     Coproduct(CoproductType),
     Function(Box<Type>, Box<Type>),
     Forall(TypeParameter, Box<Type>),
-    // + is (Int -> Int -> Int | Float -> Float -> Float)
-    // until there are constraints
-    //    Alternatives(Vec<Type>),
 }
 
 impl Type {
@@ -592,7 +589,6 @@ mod typer {
                         inferred_type: ty.instantiate(),
                     })
                 } else {
-                    panic!("Undefined: {}", binding);
                     Err(TypeError::UndefinedSymbol(binding.clone()))
                 }
             }
@@ -602,7 +598,6 @@ mod typer {
                 parameter,
                 body,
             } => {
-                // is this going to work?
                 let mut ctx = ctx.clone();
                 ctx.bind(name.clone().into(), Type::fresh());
                 infer_lambda(parameter, body, &ctx)

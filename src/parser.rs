@@ -202,7 +202,6 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
         [T(TT::Identifier(id), ..), remains @ ..] => {
             Ok((Expression::Variable(Identifier::new(&id)), remains))
         }
-        // Newline here
         otherwise => panic!("{otherwise:?}"),
     }
 }
@@ -213,11 +212,25 @@ fn parse_if_expression<'a>(
 ) -> ParseResult<'a, Expression> {
     let (predicate, remains) = parse_expression(remains, 0)?;
 
-    if matches!(remains, [T(TT::Keyword(Then), ..), ..]) {
-        let (consequent, remains) = parse_expression(&remains[1..], 0)?;
+    let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
+    let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
 
+    if matches!(remains, [T(TT::Keyword(Then), ..), ..]) {
+        let remains = &remains[1..];
+        let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
+        let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+
+        let (consequent, remains) = parse_expression(remains, 0)?;
+
+        let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
+        let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+        let remains = strip_if_starts_with(TT::Layout(Layout::Dedent), remains);
         if matches!(remains, [T(TT::Keyword(Else), ..), ..]) {
-            let (alternate, remains) = parse_expression(&remains[1..], 0)?;
+            let remains = &remains[1..];
+            let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
+            let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+
+            let (alternate, remains) = parse_expression(&remains[0..], 0)?;
 
             Ok((
                 Expression::ControlFlow(ControlFlow::If {
@@ -228,12 +241,10 @@ fn parse_if_expression<'a>(
                 remains,
             ))
         } else {
-            // Expected `else`
-            todo!()
+            Err(ParseError::ExpectedTokenType(TokenType::Keyword(Else)))
         }
     } else {
-        // Expected `then`
-        todo!()
+        Err(ParseError::ExpectedTokenType(TokenType::Keyword(Then)))
     }
 }
 
@@ -266,12 +277,13 @@ fn parse_binding<'a>(
     let (bound, remains) = parse_expression(strip_first_if(indented, input), 0)?;
 
     let dedented = starts_with(TokenType::Layout(Layout::Dedent), remains);
-    match strip_first_if(indented && dedented, remains) {
+    let newlined = starts_with(TokenType::Layout(Layout::Newline), remains);
+    match strip_first_if(indented && dedented || newlined, remains) {
         [T(TT::Keyword(In), ..), remains @ ..] => {
-            let (body, remains) = parse_expression(
-                strip_if_starts_with(TokenType::Layout(Layout::Indent), remains),
-                0,
-            )?;
+            let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
+            let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+
+            let (body, remains) = parse_expression(remains, 0)?;
 
             Ok((
                 Expression::Binding {
@@ -291,6 +303,7 @@ fn parse_binding<'a>(
 
 fn parse_expression<'a>(tokens: &'a [Token], precedence: usize) -> ParseResult<'a, Expression> {
     let (prefix, remains) = parse_prefix(tokens)?;
+
     // An initial Indent could occur here, right?
     parse_infix(prefix, remains, precedence)
 }
@@ -302,9 +315,10 @@ fn parse_infix<'a>(
     precedence: usize,
 ) -> ParseResult<'a, Expression> {
     let is_done = |t: &Token| {
+        //        println!("is_done: {t:?}");
         matches!(
             t.token_type(),
-            TT::Keyword(In) | TT::End | TT::Layout(Layout::Dedent)
+            TT::Keyword(..) | TT::End | TT::Layout(Layout::Dedent)
         )
     };
 
@@ -314,6 +328,8 @@ fn parse_infix<'a>(
     match input {
         [t, ..] if is_done(t) => Ok((lhs, input)),
 
+        [T(TT::Layout(..), ..), u, ..] if is_done(u) => Ok((lhs, input)),
+
         // <op> <expr>
         [T(TT::Operator(op), ..), remains @ ..] => {
             parse_operator(lhs, input, precedence, op, remains)
@@ -321,22 +337,15 @@ fn parse_infix<'a>(
 
         // ( <Newline> | <Indent> ) <op> <expr>
         // -- a continuation of the infix operator sequence on the next line (possibly indented.)
-        [t, T(TT::Operator(op), ..), remains @ ..]
-            if t.token_type() == &TT::Layout(Layout::Newline)
-                || t.token_type() == &TT::Layout(Layout::Indent) =>
-        {
+        [T(TT::Layout(Layout::Newline | Layout::Indent), ..), T(TT::Operator(op), ..), remains @ ..] => {
             parse_operator(lhs, input, precedence, op, remains)
         }
 
         // ( <Newline> | <;> ) <expr>
         // -- an expression sequence, e.g.: <statement>* <expr>
-        remains @ [t, lookahead @ ..]
-            if (t.token_type() == &TT::Layout(Layout::Newline)
-                || t.token_type() == &TT::Semicolon)
-                && remains.len() > 0 =>
-        {
-            if !starts_with(TT::End, &remains[1..]) && !is_toplevel(lookahead) {
-                let (and_then, remains) = parse_expression(&remains[1..], precedence)?;
+        [T(TT::Layout(Layout::Newline) | TT::Semicolon, ..), lookahead @ ..] if input.len() > 0 => {
+            if !starts_with(TT::End, &input[1..]) && !is_toplevel(lookahead) {
+                let (and_then, remains) = parse_expression(&input[1..], precedence)?;
                 Ok((
                     Expression::Sequence {
                         this: lhs.into(),
@@ -352,14 +361,16 @@ fn parse_infix<'a>(
         // <expr>
         //     <expr>
         // -- Function application, argument indented
-        [t, remains @ ..] if t.token_type() == &TT::Layout(Layout::Indent) => {
-            parse_juxtaposition(lhs, remains, precedence)
+        [T(TT::Layout(Layout::Indent), ..), remains @ ..] => {
+            parse_juxtaposed(lhs, remains, precedence)
         }
 
         // <expr> <expr>
         // -- Function application
-        [t, ..] if !matches!(t.token_type(), TT::End | TT::Keyword(..)) => {
-            parse_juxtaposition(lhs, input, precedence)
+        [T(tt, ..), ..]
+            if !matches!(tt, TT::Layout(Layout::Dedent) | TT::End | TT::Keyword(..)) =>
+        {
+            parse_juxtaposed(lhs, input, precedence)
         }
 
         _otherwise => Ok((lhs, input)),
@@ -387,6 +398,7 @@ fn parse_operator<'a>(
     let operator_precedence = operator.precedence();
     if operator_precedence > context_precedence {
         let (rhs, remains) = parse_expression(remains, operator_precedence)?;
+
         parse_infix(
             apply_binary_operator(*operator, lhs, rhs),
             remains,
@@ -397,7 +409,7 @@ fn parse_operator<'a>(
     }
 }
 
-fn parse_juxtaposition<'a>(
+fn parse_juxtaposed<'a>(
     lhs: Expression,
     tokens: &'a [Token],
     precedence: usize,
