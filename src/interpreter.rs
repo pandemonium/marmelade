@@ -3,10 +3,11 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        CompilationUnit, Constant, ControlFlow, Declaration, DependencyMatrix, Expression,
+        CompilationUnit, Constant, ControlFlow, Declaration, DependencyGraph, Expression,
         Identifier, ModuleDeclarator, ValueDeclarator,
     },
     bridge::Bridge,
+    lexer::Location,
     types::{TrivialType, Type},
 };
 
@@ -52,27 +53,27 @@ impl Interpreter {
         }
     }
 
-    fn load_module(self, module: ModuleDeclarator) -> Loaded<Environment> {
+    fn load_module(self, mut module: ModuleDeclarator) -> Loaded<Environment> {
+        self.patch_with_prelude(&mut module);
         ModuleLoader::try_initializing(&module, self.prelude)?.resolve_dependencies()
     }
 
-    fn _patch_with_prelude(
-        &self,
-        module: ModuleDeclarator,
-        _prelude: &Environment,
-    ) -> ModuleDeclarator {
-        println!("patch_with_prelude: Not patching!!!");
-        //        module.declarations.push(Declaration::ImportModule {
-        //            position: Location::default(),
-        //            exported_symbols: prelude.symbols().into_iter().cloned().collect::<Vec<_>>(),
-        //        });
-        module
+    fn patch_with_prelude(&self, module: &mut ModuleDeclarator) {
+        module.declarations.push(Declaration::ImportModule {
+            position: Location::default(),
+            exported_symbols: self
+                .prelude
+                .symbols()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        });
     }
 }
 
 struct ModuleLoader<'a> {
     module: &'a ModuleDeclarator,
-    matrix: DependencyMatrix<'a>,
+    dependency_graph: DependencyGraph<'a>,
     resolved: Environment,
 }
 
@@ -80,11 +81,14 @@ impl<'a> ModuleLoader<'a> {
     fn try_initializing(module: &'a ModuleDeclarator, prelude: Environment) -> Loaded<Self> {
         let resolver = |id: &Identifier| prelude.is_defined(id);
 
-        let matrix = module.dependency_matrix();
-        if !matrix.is_wellformed(resolver) {
-            if !matrix.is_acyclic() {
+        // How do I unite this with the prelude?
+
+        let dependency_graph = module.dependency_graph();
+
+        if !dependency_graph.is_wellformed(resolver) {
+            if !dependency_graph.is_acyclic() {
                 Err(LoadError::DependencyCycle)
-            } else if !matrix.is_satisfiable(resolver) {
+            } else if !dependency_graph.is_satisfiable(resolver) {
                 Err(LoadError::UnsatisfiedDependencies)
             } else {
                 unreachable!()
@@ -92,35 +96,28 @@ impl<'a> ModuleLoader<'a> {
         } else {
             Ok(Self {
                 module,
-                matrix,
+                dependency_graph,
                 resolved: prelude,
             })
         }
     }
 
     fn resolve_dependencies(mut self) -> Loaded<Environment> {
-        let mut unresolved = self.matrix.nodes().drain(..).collect::<VecDeque<_>>();
-
-        while let Some(resolvable) = unresolved.pop_back() {
-            if self
-                .try_resolve(&resolvable.clone())
-                .inspect_err(|e| println!("resolve_dependencies: resolving {resolvable} {e}"))
-                .is_err()
-            {
-                unresolved.push_front(resolvable);
-            }
+        for dependency in self.dependency_graph.compute_resolution_order().drain(..) {
+            println!("resolve_dependencies: {dependency}");
+            self.try_resolving(dependency)?
         }
 
-        //        self.try_resolve(&Identifier::new("factorial"))?;
-        //        self.try_resolve(&Identifier::new("main"))?;
-        //
         Ok(self.resolved)
     }
 
-    fn try_resolve(&mut self, id: &Identifier) -> Loaded<()> {
+    fn try_resolving(&mut self, id: &Identifier) -> Loaded<()> {
         if let Some(Declaration::Value { declarator, .. }) = self.module.find_value_declaration(id)
         {
             self.resolve_value_binding(id, declarator)
+        } else if self.resolved.is_defined(id) {
+            println!("try_resolve: {id} is already resolved.");
+            Ok(())
         } else {
             panic!("Unable to resolve declaration: `{id}` - not implemented")
         }

@@ -156,6 +156,11 @@ fn fibonacci23() {
         }
     }
 
+    println!(
+        "Interpreter environment: {}",
+        context.interpreter_environment
+    );
+
     let return_value = Interpreter::new(Environment::make_child(Rc::new(
         context.interpreter_environment,
     )))

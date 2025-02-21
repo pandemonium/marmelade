@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
 };
 
@@ -44,8 +44,8 @@ impl ModuleDeclarator {
             .find(|decl| matches!(decl, Declaration::Value { binder, .. } if binder == id))
     }
 
-    pub fn dependency_matrix(&self) -> DependencyMatrix {
-        DependencyMatrix::from_declarations(&self.declarations)
+    pub fn dependency_graph(&self) -> DependencyGraph {
+        DependencyGraph::from_declarations(&self.declarations)
     }
 }
 
@@ -63,39 +63,29 @@ impl fmt::Display for ModuleDeclarator {
     }
 }
 
-// Where is the stdlib stuff? Or other libraries.
-// Is a Use also a pathway to Declarations?
-
-// I want to compute where to start typing the compilation unit
-// Which is at a function which only has dependencies to symbols which
-// already have known types
 #[derive(Debug)]
-pub struct DependencyMatrix<'a> {
-    outbound_dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
-    inbound_dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
+pub struct DependencyGraph<'a> {
+    dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
 }
 
-impl<'a> DependencyMatrix<'a> {
+impl<'a> DependencyGraph<'a> {
     pub fn from_declarations(decls: &'a [Declaration]) -> Self {
-        let mut outbound = HashMap::default();
-        let mut inbound: HashMap<&'a Identifier, Vec<&'a Identifier>> = HashMap::default();
+        let mut outbound = HashMap::with_capacity(decls.len());
 
         for decl in decls {
             match decl {
                 Declaration::Value {
                     binder, declarator, ..
                 } => {
-                    let deps = declarator.dependencies();
-                    for dep in &deps {
-                        inbound.entry(dep).or_default().push(binder);
-                    }
-                    outbound.insert(binder, deps);
+                    outbound.insert(binder, declarator.dependencies().into_iter().collect());
                 }
                 Declaration::ImportModule {
                     exported_symbols, ..
                 } => {
+                    println!("from_declarations: {exported_symbols:?}");
+
                     for dep in exported_symbols {
-                        outbound.insert(dep, Vec::default());
+                        outbound.entry(dep).or_default();
                     }
                 }
                 _otherwise => (),
@@ -103,9 +93,69 @@ impl<'a> DependencyMatrix<'a> {
         }
 
         Self {
-            outbound_dependencies: outbound,
-            inbound_dependencies: inbound,
+            dependencies: outbound,
         }
+    }
+
+    // Think about whether or not this consumes self.
+    pub fn compute_resolution_order(&self) -> Vec<&'a Identifier> {
+        let mut boofer = Vec::with_capacity(self.dependencies.len());
+
+        fn exclude_self_referentials<'a>(
+            node: &'a Identifier,
+            edges: &Vec<&'a Identifier>,
+        ) -> HashSet<&'a Identifier> {
+            edges
+                .iter()
+                .filter(|&&edge| edge != node)
+                .map(|&x| x)
+                .collect::<HashSet<_>>()
+        }
+
+        let mut graph = self
+            .dependencies
+            .iter()
+            .map(|(&node, edges)| (node, exclude_self_referentials(node, edges)))
+            .collect::<Vec<_>>();
+
+        // Look in to doing away with this go-between structure and make the lookups
+        // directly in graph instead
+        let mut in_degrees = graph
+            .iter()
+            .map(|(node, edges)| (*node, edges.len()))
+            .collect::<HashMap<_, _>>();
+
+        let mut queue = Vec::with_capacity(in_degrees.len());
+
+        loop {
+            let independents = in_degrees
+                .iter()
+                .filter_map(|(&node, edges)| (*edges == 0).then_some(node))
+                .collect::<Vec<_>>();
+
+            if independents.is_empty() {
+                // if in_degrees is not empty here, then there were cycles.
+                println!("compute_resolution_order: {in_degrees:?}");
+                break;
+            }
+
+            queue.extend(independents);
+
+            for independent in queue.drain(..) {
+                for (node, edges) in graph.iter_mut() {
+                    if edges.remove(independent) {
+                        if let Some(v) = in_degrees.get_mut(node) {
+                            *v -= 1;
+                        }
+                    }
+                }
+
+                in_degrees.remove(independent);
+                boofer.push(independent);
+            }
+        }
+
+        boofer
     }
 
     pub fn is_wellformed<F>(&'a self, is_external: F) -> bool
@@ -120,13 +170,13 @@ impl<'a> DependencyMatrix<'a> {
     where
         F: FnMut(&Identifier) -> bool,
     {
-        self.outbound_dependencies.values().all(|deps| {
+        self.dependencies.values().all(|deps| {
             deps.iter().all(|dep| {
-                let retval = self.outbound_dependencies.contains_key(dep) || is_external(dep);
+                let retval = self.dependencies.contains_key(dep) || is_external(dep);
 
                 if !retval {
                     println!("is_satisfiable: `{dep}` not found");
-                    println!("is_satisfiable: {:?}", self.outbound_dependencies)
+                    println!("is_satisfiable: {:?}", self.dependencies)
                 }
 
                 retval
@@ -137,7 +187,7 @@ impl<'a> DependencyMatrix<'a> {
     pub fn is_acyclic(&self) -> bool {
         let mut visited = HashSet::new();
 
-        self.outbound_dependencies
+        self.dependencies
             .keys()
             .all(|child| !self.is_cyclic(child, &mut visited, &mut HashSet::new()))
     }
@@ -170,29 +220,25 @@ impl<'a> DependencyMatrix<'a> {
     }
 
     pub fn nodes(&self) -> Vec<&'a Identifier> {
-        self.outbound_dependencies.keys().cloned().collect()
+        self.dependencies.keys().cloned().collect()
     }
 
     pub fn find<F>(&'a self, mut p: F) -> Option<&'a &'a Identifier>
     where
         F: FnMut(&'a Identifier) -> bool,
     {
-        self.outbound_dependencies.keys().find(|id| p(id))
+        self.dependencies.keys().find(|id| p(id))
     }
 
     pub fn satisfies<F>(&'a self, mut p: F) -> bool
     where
         F: FnMut(&'a Identifier) -> bool,
     {
-        self.outbound_dependencies.keys().all(|id| p(id))
+        self.dependencies.keys().all(|id| p(id))
     }
 
     pub fn dependencies(&self, d: &'a Identifier) -> Option<&[&'a Identifier]> {
-        self.outbound_dependencies.get(d).map(Vec::as_slice)
-    }
-
-    pub fn depends_on(&self, d: &'a Identifier) -> Option<&[&'a Identifier]> {
-        self.inbound_dependencies.get(d).map(Vec::as_slice)
+        self.dependencies.get(d).map(Vec::as_slice)
     }
 }
 
@@ -373,7 +419,7 @@ pub enum ValueDeclarator {
 }
 
 impl ValueDeclarator {
-    pub fn dependencies(&self) -> Vec<&Identifier> {
+    pub fn dependencies(&self) -> HashSet<&Identifier> {
         let mut free = match self {
             Self::Constant(decl) => decl.free_identifiers(),
             Self::Function(decl) => decl.free_identifiers(),
@@ -788,7 +834,7 @@ mod tests {
         };
 
         // Still broken
-        assert!(!m.dependency_matrix().is_acyclic());
+        assert!(!m.dependency_graph().is_acyclic());
     }
 
     #[test]
@@ -832,7 +878,7 @@ mod tests {
             ],
         };
 
-        let dep_mat = m.dependency_matrix();
+        let dep_mat = m.dependency_graph();
         assert!(dep_mat.is_acyclic());
         assert!(dep_mat.is_satisfiable(|_| false));
     }
@@ -870,8 +916,65 @@ mod tests {
             ],
         };
 
-        let dep_mat = m.dependency_matrix();
+        let dep_mat = m.dependency_graph();
         assert!(dep_mat.is_acyclic());
         assert!(!dep_mat.is_satisfiable(|_| false));
+    }
+
+    #[test]
+    fn top_of_the_day() {
+        let m = ModuleDeclarator {
+            position: Location::default(),
+            name: Identifier::new(""),
+            declarations: vec![
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("foo"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("bar")),
+                        type_annotation: None,
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("quux"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("bar")),
+                        type_annotation: None,
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("bar"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Variable(Identifier::new("frobnicator")),
+                        type_annotation: None,
+                    }),
+                },
+                Declaration::Value {
+                    position: Location::default(),
+                    binder: Identifier::new("frobnicator"),
+                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                        initializer: Expression::Literal(Constant::Int(1)),
+                        type_annotation: None,
+                    }),
+                },
+            ],
+        };
+
+        let graph = m.dependency_graph();
+
+        let order = graph.compute_resolution_order();
+
+        // This order is not stable. Find a better way.
+        assert_eq!(
+            vec![
+                &Identifier::new("frobnicator"),
+                &Identifier::new("bar"),
+                &Identifier::new("foo"),
+                &Identifier::new("quux"),
+            ],
+            order
+        );
     }
 }
