@@ -1,15 +1,20 @@
-use std::{cell::RefCell, collections::VecDeque, fmt, rc::Rc};
+use module::ModuleLoader;
+use std::{cell::RefCell, fmt, rc::Rc};
 use thiserror::Error;
 
 use crate::{
     ast::{
-        CompilationUnit, Constant, ControlFlow, Declaration, DependencyGraph, Expression,
-        Identifier, ModuleDeclarator, ValueDeclarator,
+        CompilationUnit, Constant, ControlFlow, Declaration, Expression, Identifier,
+        ModuleDeclarator,
     },
     bridge::Bridge,
     lexer::Location,
     types::{TrivialType, Type},
 };
+
+mod module;
+
+pub use module::DependencyGraph;
 
 pub type Loaded<A> = Result<A, LoadError>;
 
@@ -68,78 +73,6 @@ impl Interpreter {
                 .cloned()
                 .collect::<Vec<_>>(),
         });
-    }
-}
-
-struct ModuleLoader<'a> {
-    module: &'a ModuleDeclarator,
-    dependency_graph: DependencyGraph<'a>,
-    resolved: Environment,
-}
-
-impl<'a> ModuleLoader<'a> {
-    fn try_initializing(module: &'a ModuleDeclarator, prelude: Environment) -> Loaded<Self> {
-        let resolver = |id: &Identifier| prelude.is_defined(id);
-
-        // How do I unite this with the prelude?
-
-        let dependency_graph = module.dependency_graph();
-
-        if !dependency_graph.is_wellformed(resolver) {
-            if !dependency_graph.is_acyclic() {
-                Err(LoadError::DependencyCycle)
-            } else if !dependency_graph.is_satisfiable(resolver) {
-                Err(LoadError::UnsatisfiedDependencies)
-            } else {
-                unreachable!()
-            }
-        } else {
-            Ok(Self {
-                module,
-                dependency_graph,
-                resolved: prelude,
-            })
-        }
-    }
-
-    fn resolve_dependencies(mut self) -> Loaded<Environment> {
-        for dependency in self.dependency_graph.compute_resolution_order().drain(..) {
-            println!("resolve_dependencies: {dependency}");
-            self.try_resolving(dependency)?
-        }
-
-        Ok(self.resolved)
-    }
-
-    fn try_resolving(&mut self, id: &Identifier) -> Loaded<()> {
-        if let Some(Declaration::Value { declarator, .. }) = self.module.find_value_declaration(id)
-        {
-            self.resolve_value_binding(id, declarator)
-        } else if self.resolved.is_defined(id) {
-            println!("try_resolve: {id} is already resolved.");
-            Ok(())
-        } else {
-            panic!("Unable to resolve declaration: `{id}` - not implemented")
-        }
-    }
-
-    fn resolve_value_binding(
-        &mut self,
-        id: &Identifier,
-        declarator: &ValueDeclarator,
-    ) -> Result<(), LoadError> {
-        // That this has to clone the Expressions is not ideal
-
-        let expression = match declarator.clone() {
-            ValueDeclarator::Constant(constant) => constant.initializer,
-            ValueDeclarator::Function(function) => function.into_lambda_tree(id.clone()),
-        };
-
-        let env = &mut self.resolved;
-        let value = expression.reduce(env)?;
-        env.insert_binding(id.clone(), value);
-
-        Ok(())
     }
 }
 
