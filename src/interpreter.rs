@@ -9,7 +9,7 @@ use crate::{
     },
     bridge::Bridge,
     lexer::Location,
-    types::{TrivialType, Type},
+    types::{BaseType, Type},
 };
 
 mod module;
@@ -78,15 +78,15 @@ impl Interpreter {
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    Scalar(Scalar),
+    Base(Base),
     Closure(Closure),
     RecursiveClosure(RecursiveClosure),
     Bridge { target: BridgeDebug },
 }
 
 impl Value {
-    pub fn try_into_scalar(self) -> Option<Scalar> {
-        if let Self::Scalar(s) = self {
+    pub fn try_into_scalar(self) -> Option<Base> {
+        if let Self::Base(s) = self {
             Some(s)
         } else {
             None
@@ -106,7 +106,7 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Scalar(scalar) => write!(f, "{scalar}"),
+            Self::Base(scalar) => write!(f, "{scalar}"),
             Self::Closure(closure) => writeln!(f, "closure {closure}"),
             Self::RecursiveClosure(closure) => writeln!(f, "closure {closure}"),
             Self::Bridge { target } => write!(f, "{target:?}"),
@@ -160,31 +160,34 @@ impl fmt::Debug for BridgeDebug {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Scalar {
+pub enum Base {
     Int(i64),
     Float(f64),
     Text(String),
     Bool(bool),
+    Unit,
 }
 
-impl From<Constant> for Scalar {
+impl From<Constant> for Base {
     fn from(value: Constant) -> Self {
         match value {
             Constant::Int(x) => Self::Int(x),
             Constant::Float(x) => Self::Float(x),
             Constant::Text(x) => Self::Text(x),
             Constant::Bool(x) => Self::Bool(x),
+            Constant::Unit => Self::Unit,
         }
     }
 }
 
-impl fmt::Display for Scalar {
+impl fmt::Display for Base {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Int(x) => write!(f, "{x}"),
             Self::Float(x) => write!(f, "{x}"),
             Self::Text(x) => write!(f, "{x}"),
             Self::Bool(x) => write!(f, "{x}"),
+            Self::Unit => write!(f, "()"),
         }
     }
 }
@@ -336,7 +339,7 @@ fn make_recursive_closure(
 }
 
 fn immediate(constant: Constant) -> Interpretation {
-    Ok(Value::Scalar(constant.into()))
+    Ok(Value::Base(constant.into()))
 }
 
 fn sequence(
@@ -367,14 +370,14 @@ fn reduce_control_flow(control: ControlFlow, env: &mut Environment) -> Interpret
             consequent,
             alternate,
         } => {
-            if let Value::Scalar(Scalar::Bool(test)) = predicate.reduce(env)? {
+            if let Value::Base(Base::Bool(test)) = predicate.reduce(env)? {
                 if test {
                     consequent.reduce(env)
                 } else {
                     alternate.reduce(env)
                 }
             } else {
-                Err(RuntimeError::ExpectedType(Type::Trivial(TrivialType::Bool)))
+                Err(RuntimeError::ExpectedType(Type::Base(BaseType::Bool)))
             }
         }
     }
@@ -437,7 +440,7 @@ mod tests {
     use crate::{
         ast::{Constant, ControlFlow, Expression, Identifier, Parameter},
         context::InterpretationContext,
-        interpreter::{Environment, RuntimeError, Scalar, Value},
+        interpreter::{Base, Environment, RuntimeError, Value},
         lexer::Location,
         stdlib,
     };
@@ -450,7 +453,7 @@ mod tests {
         stdlib::import(&mut context).unwrap();
 
         assert_eq!(
-            Scalar::Int(1),
+            Base::Int(1),
             Expression::Literal(Constant::Int(1))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap()
@@ -466,10 +469,10 @@ mod tests {
 
         context
             .interpreter_environment
-            .insert_binding(Identifier::new("x"), Value::Scalar(Scalar::Int(1)));
+            .insert_binding(Identifier::new("x"), Value::Base(Base::Int(1)));
 
         assert_eq!(
-            Scalar::Int(1),
+            Base::Int(1),
             Expression::Variable(Identifier::new("x"))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap()
@@ -657,7 +660,7 @@ mod tests {
         };
 
         assert_eq!(
-            Scalar::Int(127),
+            Base::Int(127),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()

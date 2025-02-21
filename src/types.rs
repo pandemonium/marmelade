@@ -20,7 +20,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Parameter(TypeParameter),
-    Trivial(TrivialType),
+    Base(BaseType),
     Product(ProductType),
     Coproduct(CoproductType),
     Function(Box<Type>, Box<Type>),
@@ -152,7 +152,7 @@ impl Type {
         let lhs = self;
 
         match (lhs, rhs) {
-            (Self::Trivial(t), Self::Trivial(u)) if t == u => Ok(Substitutions::default()),
+            (Self::Base(t), Self::Base(u)) if t == u => Ok(Substitutions::default()),
             (Self::Parameter(t), Self::Parameter(u)) if t == u => Ok(Substitutions::default()),
             (Self::Parameter(param), ty) | (ty, Self::Parameter(param)) => {
                 if ty.free_variables().contains(param) {
@@ -235,7 +235,7 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Parameter(ty_var) => write!(f, "{ty_var}"),
-            Self::Trivial(ty) => write!(f, "{ty}"),
+            Self::Base(ty) => write!(f, "{ty}"),
             Self::Coproduct(ty) => write!(f, "{ty}"),
             Self::Product(ty) => write!(f, "{ty}"),
             Self::Function(ty0, ty1) => write!(f, "{ty0}->{ty1}"),
@@ -245,7 +245,7 @@ impl fmt::Display for Type {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum TrivialType {
+pub enum BaseType {
     Unit,
     Int,
     Bool,
@@ -253,7 +253,7 @@ pub enum TrivialType {
     Text,
 }
 
-impl fmt::Display for TrivialType {
+impl fmt::Display for BaseType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unit => write!(f, "Unit"),
@@ -455,8 +455,7 @@ mod typer {
     };
 
     use super::{
-        ProductType, TrivialType, Type, TypeError, TypeInference, TypeParameter, Typing,
-        TypingContext,
+        BaseType, ProductType, Type, TypeError, TypeInference, TypeParameter, Typing, TypingContext,
     };
     use crate::ast::{self, ControlFlow, Expression};
 
@@ -619,8 +618,9 @@ mod typer {
             } => infer_coproduct(name, constructor, argument, ctx),
             ast::Expression::Product(product) => infer_product(product, ctx),
             ast::Expression::Project { base, index } => infer_projection(base, index, ctx),
-            ast::Expression::Sequence { .. } => {
-                todo!()
+            ast::Expression::Sequence { this, and_then } => {
+                infer(this, ctx)?;
+                infer(and_then, ctx)
             }
             ast::Expression::ControlFlow(control) => infer_control_flow(control, ctx),
         }
@@ -645,7 +645,7 @@ mod typer {
         let predicate_type = infer(predicate, ctx)?;
         let predicate = predicate_type
             .inferred_type
-            .unify(&Type::Trivial(TrivialType::Bool))?;
+            .unify(&Type::Base(BaseType::Bool))?;
 
         let consequent = infer(consequent, ctx)?;
         let alternate = infer(alternate, ctx)?;
@@ -722,10 +722,11 @@ mod typer {
 
     fn synthesize_type_of_constant(c: &ast::Constant, _ctx: &TypingContext) -> Typing {
         match c {
-            ast::Constant::Int(..) => synthesize_trivial(TrivialType::Int),
-            ast::Constant::Float(..) => synthesize_trivial(TrivialType::Float),
-            ast::Constant::Text(..) => synthesize_trivial(TrivialType::Text),
-            ast::Constant::Bool(..) => synthesize_trivial(TrivialType::Bool),
+            ast::Constant::Int(..) => synthesize_trivial(BaseType::Int),
+            ast::Constant::Float(..) => synthesize_trivial(BaseType::Float),
+            ast::Constant::Text(..) => synthesize_trivial(BaseType::Text),
+            ast::Constant::Bool(..) => synthesize_trivial(BaseType::Bool),
+            ast::Constant::Unit => synthesize_trivial(BaseType::Unit),
         }
     }
 
@@ -807,10 +808,10 @@ mod typer {
         })
     }
 
-    fn synthesize_trivial(ty: TrivialType) -> Typing {
+    fn synthesize_trivial(ty: BaseType) -> Typing {
         Ok(TypeInference {
             substitutions: Substitutions::default(),
-            inferred_type: Type::Trivial(ty),
+            inferred_type: Type::Base(ty),
         })
     }
 
@@ -830,7 +831,7 @@ mod tests {
     use super::{Binding, CoproductType, TypingContext};
     use crate::{
         ast,
-        types::{ProductType, TrivialType, Type, TypeParameter},
+        types::{BaseType, ProductType, Type, TypeParameter},
     };
 
     fn mk_apply(f: ast::Expression, arg: ast::Expression) -> ast::Expression {
@@ -855,7 +856,7 @@ mod tests {
 
         let e = mk_apply(id.clone(), ast::Expression::Literal(ast::Constant::Int(10)));
         let t = ctx.infer_type(&e).unwrap();
-        assert_eq!(t.inferred_type, Type::Trivial(TrivialType::Int));
+        assert_eq!(t.inferred_type, Type::Base(BaseType::Int));
 
         let e = mk_apply(
             id.clone(),
@@ -868,8 +869,8 @@ mod tests {
         assert_eq!(
             t.inferred_type,
             Type::Product(ProductType::Tuple(vec![
-                Type::Trivial(TrivialType::Int),
-                Type::Trivial(TrivialType::Float)
+                Type::Base(BaseType::Int),
+                Type::Base(BaseType::Float)
             ]))
         );
     }
@@ -886,8 +887,8 @@ mod tests {
         assert_eq!(
             t.inferred_type,
             Type::Product(ProductType::Tuple(vec![
-                Type::Trivial(TrivialType::Int),
-                Type::Trivial(TrivialType::Float)
+                Type::Base(BaseType::Int),
+                Type::Base(BaseType::Float)
             ]))
         );
 
@@ -896,7 +897,7 @@ mod tests {
             index: ast::ProductIndex::Tuple(0),
         };
         let t = ctx.infer_type(&e).unwrap();
-        assert_eq!(t.inferred_type, Type::Trivial(TrivialType::Int));
+        assert_eq!(t.inferred_type, Type::Base(BaseType::Int));
     }
 
     #[test]
@@ -921,11 +922,8 @@ mod tests {
         let t = ctx.infer_type(&e).unwrap();
         let expected_type = Type::Product(ProductType::Struct(HashMap::from([
             (ast::Identifier::new("id"), mk_identity_type()),
-            (ast::Identifier::new("x"), mk_trivial_type(TrivialType::Int)),
-            (
-                ast::Identifier::new("y"),
-                mk_trivial_type(TrivialType::Float),
-            ),
+            (ast::Identifier::new("x"), mk_trivial_type(BaseType::Int)),
+            (ast::Identifier::new("y"), mk_trivial_type(BaseType::Float)),
         ])));
 
         t.inferred_type.unify(&expected_type).unwrap();
@@ -933,7 +931,7 @@ mod tests {
         let e = mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0)));
         let t = ctx.infer_type(&e).unwrap();
 
-        assert_eq!(t.inferred_type, mk_trivial_type(TrivialType::Float));
+        assert_eq!(t.inferred_type, mk_trivial_type(BaseType::Float));
 
         let abs = ast::Expression::Lambda {
             parameter: ast::Parameter {
@@ -947,14 +945,14 @@ mod tests {
 
         ctx.bind(
             Binding::TypeTerm("builtin::Int".to_owned()),
-            Type::Trivial(TrivialType::Int),
+            Type::Base(BaseType::Int),
         );
         ctx.bind(
             Binding::TypeTerm("builtin::Float".to_owned()),
-            Type::Trivial(TrivialType::Float),
+            Type::Base(BaseType::Float),
         );
         let t = ctx.infer_type(&e).unwrap();
-        assert_eq!(t.inferred_type, mk_trivial_type(TrivialType::Float));
+        assert_eq!(t.inferred_type, mk_trivial_type(BaseType::Float));
     }
 
     #[test]
@@ -967,7 +965,7 @@ mod tests {
                 t,
                 Type::Coproduct(CoproductType::new(vec![
                     ("The".to_owned(), Type::Parameter(t)),
-                    ("Nil".to_owned(), Type::Trivial(TrivialType::Unit)),
+                    ("Nil".to_owned(), Type::Base(BaseType::Unit)),
                 ]))
                 .into(),
             ),
@@ -983,8 +981,8 @@ mod tests {
         assert_eq!(
             t.inferred_type,
             Type::Coproduct(CoproductType::new(vec![
-                ("The".to_owned(), Type::Trivial(TrivialType::Float)),
-                ("Nil".to_owned(), Type::Trivial(TrivialType::Unit)),
+                ("The".to_owned(), Type::Base(BaseType::Float)),
+                ("Nil".to_owned(), Type::Base(BaseType::Unit)),
             ]))
         )
     }
@@ -1021,11 +1019,8 @@ mod tests {
         assert_eq!(
             t.inferred_type,
             Type::Product(ProductType::Struct(HashMap::from([
-                (ast::Identifier::new("x"), mk_trivial_type(TrivialType::Int)),
-                (
-                    ast::Identifier::new("y"),
-                    mk_trivial_type(TrivialType::Float)
-                ),
+                (ast::Identifier::new("x"), mk_trivial_type(BaseType::Int)),
+                (ast::Identifier::new("y"), mk_trivial_type(BaseType::Float)),
             ])))
         )
     }
@@ -1065,8 +1060,8 @@ mod tests {
         Type::Function(Type::Parameter(ty).into(), Type::Parameter(ty).into()).into()
     }
 
-    fn mk_trivial_type(ty: TrivialType) -> Type {
-        Type::Trivial(ty)
+    fn mk_trivial_type(ty: BaseType) -> Type {
+        Type::Base(ty)
     }
 
     fn mk_constant(int: ast::Constant) -> ast::Expression {

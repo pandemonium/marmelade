@@ -344,16 +344,12 @@ fn parse_infix<'a>(
         // ( <Newline> | <;> ) <expr>
         // -- an expression sequence, e.g.: <statement>* <expr>
         [T(TT::Layout(Layout::Newline) | TT::Semicolon, ..), lookahead @ ..] if input.len() > 0 => {
+            println!("parse_infix3: {:?}", &input[..5]);
+
             if !starts_with(TT::End, &input[1..]) && !is_toplevel(lookahead) {
-                let (and_then, remains) = parse_expression(&input[1..], precedence)?;
-                Ok((
-                    Expression::Sequence {
-                        this: lhs.into(),
-                        and_then: and_then.into(),
-                    },
-                    remains,
-                ))
+                parse_sequence(lhs, &input[1..])
             } else {
+                println!("parse_infix2: {:?}", &input[..5]);
                 Ok((lhs, input))
             }
         }
@@ -423,6 +419,24 @@ fn parse_juxtaposed<'a>(
         remains,
         precedence,
     )
+}
+
+fn parse_sequence<'a>(lhs: Expression, tokens: &'a [Token]) -> ParseResult<'a, Expression> {
+    let (rhs, remains) = parse_expression(tokens, 0)?;
+
+    let sequence = Expression::Sequence {
+        this: lhs.into(),
+        and_then: rhs.into(),
+    };
+
+    if matches!(
+        remains,
+        [T(TT::Semicolon | TT::Layout(Layout::Newline), ..), ..]
+    ) {
+        parse_sequence(sequence, &remains[1..])
+    } else {
+        Ok((sequence, remains))
+    }
 }
 
 fn apply_binary_operator(op: Operator, lhs: Expression, rhs: Expression) -> Expression {

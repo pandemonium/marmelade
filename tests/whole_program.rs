@@ -6,7 +6,7 @@ use marmelade::{
         ValueDeclarator,
     },
     context::InterpretationContext,
-    interpreter::{Closure, Environment, Interpreter, Scalar, Value},
+    interpreter::{Base, Closure, Environment, Interpreter, Value},
     lexer::LexicalAnalyzer,
     parser, stdlib,
 };
@@ -46,7 +46,7 @@ fn main1() {
         .load_and_run(program)
         .unwrap();
 
-    assert_eq!(Scalar::Int(327), return_value.try_into_scalar().unwrap());
+    assert_eq!(Base::Int(327), return_value.try_into_scalar().unwrap());
 }
 
 fn _make_fix_value(env: Environment) -> Value {
@@ -108,7 +108,7 @@ fn factorial20() {
 
     let return_value = Interpreter::new(program_environment).load_and_run(program);
     assert_eq!(
-        Scalar::Int(2432902008176640000),
+        Base::Int(2432902008176640000),
         return_value.unwrap().try_into_scalar().unwrap()
     );
 }
@@ -116,19 +116,23 @@ fn factorial20() {
 #[test]
 fn fibonacci23() {
     let mut lexer = LexicalAnalyzer::default();
-    // Dependency resolution probably gets stuck now that there is a cycle.
     let program = parser::parse_compilation_unit(lexer.tokenize(&into_input(
         r#"|fibonacci = fun x ->
-           |  if x == 0 then
-           |    1
-           |  else
-           |    if x == 1
-           |    then 1
-           |     else
-           |      let a = x - 1 in
-           |      let b =
-           |        x - 2
-           |      in fibonacci a + fibonacci b
+           |  let msg = show x
+           |  in
+           |    print msg
+           |    print "; "
+           |    if x == 0 then
+           |      1
+           |    else
+           |      if x == 1
+           |      then
+           |        1
+           |       else
+           |        let a = x - 1 in
+           |        let b =
+           |          x - 2
+           |        in fibonacci a + fibonacci b
            |main = fibonacci 23
            |"#,
     )))
@@ -166,7 +170,7 @@ fn fibonacci23() {
     )))
     .load_and_run(program);
     assert_eq!(
-        Scalar::Int(46368),
+        Base::Int(46368),
         return_value.unwrap().try_into_scalar().unwrap()
     );
 }

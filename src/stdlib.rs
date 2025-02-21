@@ -3,152 +3,67 @@ use crate::{
     context::InterpretationContext,
     interpreter::{Environment, Interpretation},
     lexer::Operator,
-    types::{TrivialType, Type, TypeParameter},
+    types::{BaseType, Type, TypeParameter},
 };
+
+mod operators;
 
 pub fn import(context: &mut InterpretationContext) -> Interpretation<()> {
     //    import_std_file(env)?;
-    import_operators(context)?;
+    operators::import(context)?;
+    stdio::import(context)?;
+    conversions::import(context)?;
 
     Ok(())
 }
 
+mod stdio {
+    use crate::{
+        ast::Identifier, bridge, context::InterpretationContext, interpreter::Interpretation,
+    };
+
+    pub fn print_endline(text: String) {
+        println!("{text}");
+    }
+
+    pub fn print(text: String) {
+        print!("{text}");
+    }
+
+    pub fn import(context: &mut InterpretationContext) -> Interpretation<()> {
+        bridge::define(
+            Identifier::new("print_endline"),
+            bridge::Lambda1(print_endline),
+            context,
+        )?;
+
+        bridge::define(Identifier::new("print"), bridge::Lambda1(print), context)?;
+
+        Ok(())
+    }
+}
+
+mod conversions {
+    use crate::{
+        ast::Identifier,
+        bridge,
+        context::InterpretationContext,
+        interpreter::{Interpretation, Value},
+    };
+
+    pub fn show(value: Value) -> String {
+        format!("{value}")
+    }
+
+    pub fn import(context: &mut InterpretationContext) -> Interpretation<()> {
+        bridge::define(Identifier::new("show"), bridge::RawLambda1(show), context)?;
+
+        Ok(())
+    }
+}
+
 fn _import_std_file(_env: &mut Environment) -> Interpretation<()> {
     todo!()
-}
-
-fn make_binary_boolean_operator() -> Type {
-    let ty = TypeParameter::fresh();
-    let tp = Box::new(Type::Parameter(ty.clone()));
-    Type::Forall(
-        ty.clone(),
-        Type::Function(
-            tp.clone(),
-            Type::Function(tp, Type::Trivial(TrivialType::Bool).into()).into(),
-        )
-        .into(),
-    )
-}
-
-fn make_binary_operator() -> Type {
-    let ty = TypeParameter::fresh();
-    let tp = Box::new(Type::Parameter(ty.clone()));
-    Type::Forall(
-        ty.clone(),
-        Type::Function(tp.clone(), Type::Function(tp.clone(), tp).into()).into(),
-    )
-}
-
-mod operator {
-    use crate::interpreter::Scalar;
-
-    pub fn equals(p: Scalar, q: Scalar) -> Option<Scalar> {
-        match (p, q) {
-            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Bool(p == q)),
-            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Bool(p == q)),
-            (Scalar::Bool(p), Scalar::Bool(q)) => Some(Scalar::Bool(p == q)),
-            (Scalar::Text(p), Scalar::Text(q)) => Some(Scalar::Bool(p == q)),
-            _otherwise => None,
-        }
-    }
-
-    pub fn plus(p: Scalar, q: Scalar) -> Option<Scalar> {
-        match (p, q) {
-            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p + q)),
-            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p + q)),
-            _otherwise => None,
-        }
-    }
-
-    pub fn minus(p: Scalar, q: Scalar) -> Option<Scalar> {
-        match (p, q) {
-            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p - q)),
-            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p - q)),
-            _otherwise => None,
-        }
-    }
-
-    pub fn times(p: Scalar, q: Scalar) -> Option<Scalar> {
-        match (p, q) {
-            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p * q)),
-            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p * q)),
-            _otherwise => None,
-        }
-    }
-
-    pub fn divides(p: Scalar, q: Scalar) -> Option<Scalar> {
-        match (p, q) {
-            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p / q)),
-            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p / q)),
-            _otherwise => None,
-        }
-    }
-
-    pub fn modulo(p: Scalar, q: Scalar) -> Option<Scalar> {
-        match (p, q) {
-            (Scalar::Int(p), Scalar::Int(q)) => Some(Scalar::Int(p % q)),
-            (Scalar::Float(p), Scalar::Float(q)) => Some(Scalar::Float(p % q)),
-            _otherwise => None,
-        }
-    }
-}
-
-fn import_operators(env: &mut InterpretationContext) -> Interpretation<()> {
-    use operator::*;
-
-    bridge::define(
-        Operator::Equals.id(),
-        bridge::PartialRawLambda2 {
-            apply: equals,
-            signature: make_binary_boolean_operator(),
-        },
-        env,
-    )?;
-
-    bridge::define(
-        Operator::Plus.id(),
-        bridge::PartialRawLambda2 {
-            apply: plus,
-            signature: make_binary_operator(),
-        },
-        env,
-    )?;
-
-    bridge::define(
-        Operator::Minus.id(),
-        bridge::PartialRawLambda2 {
-            apply: minus,
-            signature: make_binary_operator(),
-        },
-        env,
-    )?;
-
-    bridge::define(
-        Operator::Times.id(),
-        bridge::PartialRawLambda2 {
-            apply: times,
-            signature: make_binary_operator(),
-        },
-        env,
-    )?;
-
-    bridge::define(
-        Operator::Divides.id(),
-        bridge::PartialRawLambda2 {
-            apply: divides,
-            signature: make_binary_operator(),
-        },
-        env,
-    )?;
-
-    bridge::define(
-        Operator::Modulo.id(),
-        bridge::PartialRawLambda2 {
-            apply: modulo,
-            signature: make_binary_operator(),
-        },
-        env,
-    )
 }
 
 #[cfg(test)]
@@ -156,7 +71,7 @@ mod tests {
     use crate::{
         ast::{Constant, Expression as E, Identifier},
         context::InterpretationContext,
-        interpreter::{RuntimeError, Scalar},
+        interpreter::{Base, RuntimeError},
         stdlib,
     };
 
@@ -175,7 +90,7 @@ mod tests {
         };
 
         assert_eq!(
-            Scalar::Int(3),
+            Base::Int(3),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()
@@ -198,7 +113,7 @@ mod tests {
         };
 
         assert_eq!(
-            Scalar::Float(1.5 + 2.3),
+            Base::Float(1.5 + 2.3),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()
@@ -241,7 +156,7 @@ mod tests {
         };
 
         assert_eq!(
-            Scalar::Int(-1),
+            Base::Int(-1),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()
@@ -264,7 +179,7 @@ mod tests {
         };
 
         assert_eq!(
-            Scalar::Int(2),
+            Base::Int(2),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()
@@ -287,7 +202,7 @@ mod tests {
         };
 
         assert_eq!(
-            Scalar::Int(0),
+            Base::Int(0),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()

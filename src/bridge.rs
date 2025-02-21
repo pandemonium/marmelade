@@ -1,8 +1,10 @@
+use std::marker::PhantomData;
+
 use crate::{
     ast::{Expression, Identifier, Parameter},
     context::InterpretationContext,
-    interpreter::{Environment, Interpretation, RuntimeError, Scalar, Value},
-    types::{TrivialType, Type},
+    interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
+    types::{BaseType, Type, TypeParameter},
 };
 
 pub type CallResult<A> = Result<A, RuntimeError>;
@@ -27,12 +29,40 @@ pub trait Bridge {
     }
 }
 
-pub struct Lambda1<A, R>(fn(A) -> R);
+trait TypeBridge {
+    const TYPE: Type;
+
+    fn lift_type() -> Type {
+        Self::TYPE
+    }
+}
+
+impl TypeBridge for String {
+    const TYPE: Type = Type::Base(BaseType::Text);
+}
+
+impl TypeBridge for () {
+    const TYPE: Type = Type::Base(BaseType::Unit);
+}
+
+impl TypeBridge for i64 {
+    const TYPE: Type = Type::Base(BaseType::Int);
+}
+
+impl TypeBridge for f64 {
+    const TYPE: Type = Type::Base(BaseType::Float);
+}
+
+impl TypeBridge for bool {
+    const TYPE: Type = Type::Base(BaseType::Bool);
+}
+
+pub struct Lambda1<A, R>(pub fn(A) -> R);
 
 impl<A, R> Bridge for Lambda1<A, R>
 where
-    A: TryFrom<Value, Error = RuntimeError>,
-    R: Into<Value>,
+    A: TryFrom<Value, Error = RuntimeError> + TypeBridge,
+    R: Into<Value> + TypeBridge,
 {
     fn arity(&self) -> usize {
         1
@@ -45,7 +75,7 @@ where
 
     fn signature(&self) -> Type {
         // Call into the typer here?
-        todo!()
+        Type::Function(A::lift_type().into(), R::lift_type().into())
     }
 }
 
@@ -53,9 +83,9 @@ pub struct Lambda2<A, B, R>(pub fn(A, B) -> R);
 
 impl<A, B, R> Bridge for Lambda2<A, B, R>
 where
-    A: TryFrom<Value, Error = RuntimeError>,
-    B: TryFrom<Value, Error = RuntimeError>,
-    R: Into<Value>,
+    A: TryFrom<Value, Error = RuntimeError> + TypeBridge,
+    B: TryFrom<Value, Error = RuntimeError> + TypeBridge,
+    R: Into<Value> + TypeBridge,
 {
     fn arity(&self) -> usize {
         2
@@ -72,7 +102,35 @@ where
 
     fn signature(&self) -> Type {
         // Call into the typer here?
-        todo!()
+        Type::Function(
+            A::lift_type().into(),
+            Type::Function(B::lift_type().into(), R::lift_type().into()).into(),
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RawLambda1<R>(pub fn(Value) -> R);
+
+impl<R> Bridge for RawLambda1<R>
+where
+    R: TypeBridge + Into<Value>,
+{
+    fn arity(&self) -> usize {
+        1
+    }
+
+    fn evaluate(&self, e: &Environment) -> CallResult<Value> {
+        let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
+        Ok(self.0.clone()(p0).into())
+    }
+
+    fn signature(&self) -> Type {
+        let ty = TypeParameter::fresh();
+        Type::Forall(
+            ty.clone(),
+            Type::Function(Type::Parameter(ty).into(), R::lift_type().into()).into(),
+        )
     }
 }
 
@@ -81,7 +139,7 @@ where
 // Or could I impl Bridge for all tripples that have Add?
 #[derive(Debug, Clone)]
 pub struct PartialRawLambda2 {
-    pub apply: fn(Scalar, Scalar) -> Option<Scalar>,
+    pub apply: fn(Base, Base) -> Option<Base>,
     pub signature: Type,
 }
 
@@ -97,7 +155,7 @@ impl Bridge for PartialRawLambda2 {
 
         p0.zip(p1)
             .and_then(|(p0, p1)| self.apply.clone()(p0, p1))
-            .map(Value::Scalar)
+            .map(Value::Base)
             .ok_or_else(|| RuntimeError::InapplicableLamda2) // bring in arguments here later
     }
 
@@ -146,21 +204,57 @@ where
     Ok(())
 }
 
+impl TryFrom<Value> for () {
+    type Error = RuntimeError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if let Value::Base(Base::Unit) = value {
+            Ok(())
+        } else {
+            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Unit)))
+        }
+    }
+}
+
+impl From<()> for Value {
+    fn from(_value: ()) -> Self {
+        Value::Base(Base::Unit)
+    }
+}
+
+impl TryFrom<Value> for String {
+    type Error = RuntimeError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if let Value::Base(Base::Text(s)) = value {
+            Ok(s)
+        } else {
+            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Text)))
+        }
+    }
+}
+
+impl From<String> for Value {
+    fn from(value: String) -> Self {
+        Value::Base(Base::Text(value))
+    }
+}
+
 impl TryFrom<Value> for i64 {
     type Error = RuntimeError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if let Value::Scalar(Scalar::Int(x)) = value {
+        if let Value::Base(Base::Int(x)) = value {
             Ok(x)
         } else {
-            Err(RuntimeError::ExpectedType(Type::Trivial(TrivialType::Int)))
+            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Int)))
         }
     }
 }
 
 impl From<i64> for Value {
     fn from(value: i64) -> Self {
-        Self::Scalar(Scalar::Int(value))
+        Self::Base(Base::Int(value))
     }
 }
 
@@ -168,17 +262,17 @@ impl TryFrom<Value> for f64 {
     type Error = RuntimeError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if let Value::Scalar(Scalar::Float(x)) = value {
+        if let Value::Base(Base::Float(x)) = value {
             Ok(x)
         } else {
-            Err(RuntimeError::ExpectedType(Type::Trivial(TrivialType::Int)))
+            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Int)))
         }
     }
 }
 
 impl From<f64> for Value {
     fn from(value: f64) -> Self {
-        Self::Scalar(Scalar::Float(value))
+        Self::Base(Base::Float(value))
     }
 }
 

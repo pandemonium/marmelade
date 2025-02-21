@@ -562,6 +562,7 @@ pub enum Constant {
     Float(f64),
     Text(String),
     Bool(bool),
+    Unit,
 }
 
 impl fmt::Display for Constant {
@@ -571,6 +572,7 @@ impl fmt::Display for Constant {
             Self::Float(x) => write!(f, "{x}"),
             Self::Text(x) => write!(f, "{x}"),
             Self::Bool(x) => write!(f, "{x}"),
+            Self::Unit => write!(f, "()"),
         }
     }
 }
