@@ -457,7 +457,10 @@ mod typer {
     use super::{
         BaseType, ProductType, Type, TypeError, TypeInference, TypeParameter, Typing, TypingContext,
     };
-    use crate::ast::{self, ControlFlow, Expression};
+    use crate::ast::{
+        self, Apply, Binding, Construct, ControlFlow, Expression, Lambda, Project, SelfReferential,
+        Sequence,
+    };
 
     static FRESH_TYPE_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -592,33 +595,35 @@ mod typer {
                 }
             }
             ast::Expression::Literal(constant) => synthesize_type_of_constant(constant, ctx),
-            ast::Expression::SelfReferential {
+            ast::Expression::SelfReferential(SelfReferential {
                 name,
                 parameter,
                 body,
-            } => {
+            }) => {
                 let mut ctx = ctx.clone();
                 ctx.bind(name.clone().into(), Type::fresh());
                 infer_lambda(parameter, body, &ctx)
             }
-            ast::Expression::Lambda { parameter, body } => infer_lambda(parameter, body, ctx),
-            ast::Expression::Apply { function, argument } => {
+            ast::Expression::Lambda(Lambda { parameter, body }) => {
+                infer_lambda(parameter, body, ctx)
+            }
+            ast::Expression::Apply(Apply { function, argument }) => {
                 infer_application(function, argument, ctx)
             }
-            ast::Expression::Binding {
+            ast::Expression::Binding(Binding {
                 binder,
                 bound,
                 body,
                 ..
-            } => infer_binding(binder, bound, body, ctx),
-            ast::Expression::Construct {
+            }) => infer_binding(binder, bound, body, ctx),
+            ast::Expression::Construct(Construct {
                 name,
                 constructor,
                 argument,
-            } => infer_coproduct(name, constructor, argument, ctx),
+            }) => infer_coproduct(name, constructor, argument, ctx),
             ast::Expression::Product(product) => infer_product(product, ctx),
-            ast::Expression::Project { base, index } => infer_projection(base, index, ctx),
-            ast::Expression::Sequence { this, and_then } => {
+            ast::Expression::Project(Project { base, index }) => infer_projection(base, index, ctx),
+            ast::Expression::Sequence(Sequence { this, and_then }) => {
                 infer(this, ctx)?;
                 infer(and_then, ctx)
             }
@@ -830,22 +835,22 @@ mod tests {
 
     use super::{Binding, CoproductType, TypingContext};
     use crate::{
-        ast,
+        ast::{self, Apply, Construct, Lambda, Project},
         types::{BaseType, ProductType, Type, TypeParameter},
     };
 
     fn mk_apply(f: ast::Expression, arg: ast::Expression) -> ast::Expression {
-        ast::Expression::Apply {
+        ast::Expression::Apply(Apply {
             function: f.into(),
             argument: arg.into(),
-        }
+        })
     }
 
     fn mk_identity() -> ast::Expression {
-        ast::Expression::Lambda {
+        ast::Expression::Lambda(Lambda {
             parameter: ast::Parameter::new(ast::Identifier::new("x")),
             body: ast::Expression::Variable(ast::Identifier::new("x")).into(),
-        }
+        })
     }
 
     #[test]
@@ -892,10 +897,10 @@ mod tests {
             ]))
         );
 
-        let e = ast::Expression::Project {
+        let e = ast::Expression::Project(Project {
             base: e.into(),
             index: ast::ProductIndex::Tuple(0),
-        };
+        });
         let t = ctx.infer_type(&e).unwrap();
         assert_eq!(t.inferred_type, Type::Base(BaseType::Int));
     }
@@ -933,13 +938,13 @@ mod tests {
 
         assert_eq!(t.inferred_type, mk_trivial_type(BaseType::Float));
 
-        let abs = ast::Expression::Lambda {
+        let abs = ast::Expression::Lambda(Lambda {
             parameter: ast::Parameter {
                 name: ast::Identifier::new("x"),
                 type_annotation: Some(ast::TypeName::new("builtin::Float")),
             },
             body: ast::Expression::Variable(ast::Identifier::new("x")).into(),
-        };
+        });
 
         let e = mk_apply(abs, mk_constant(ast::Constant::Float(1.0)));
 
@@ -971,11 +976,11 @@ mod tests {
             ),
         );
 
-        let e = ast::Expression::Construct {
+        let e = ast::Expression::Construct(Construct {
             name: ast::TypeName::new("Option"),
             constructor: ast::Identifier::new("The"),
             argument: mk_constant(ast::Constant::Float(1.0)).into(),
-        };
+        });
         let t = ctx.infer_type(&e).unwrap();
 
         assert_eq!(
@@ -1030,26 +1035,26 @@ mod tests {
         let mut gamma = TypingContext::default();
         gamma.bind(Binding::TypeTerm("Id".to_owned()), mk_identity_type());
 
-        let apply_to_five_expr = ast::Expression::Lambda {
+        let apply_to_five_expr = ast::Expression::Lambda(Lambda {
             parameter: ast::Parameter {
                 name: ast::Identifier::new("f"),                 // Parameter `f`
                 type_annotation: Some(ast::TypeName::new("Id")), // Annotate with the type alias
             },
-            body: Box::new(ast::Expression::Apply {
+            body: Box::new(ast::Expression::Apply(Apply {
                 function: ast::Expression::Variable(ast::Identifier::new("f")).into(), // Apply `f`
                 argument: ast::Expression::Literal(ast::Constant::Int(5)).into(), // Argument: 5
-            }),
-        };
+            })),
+        });
 
         let t = gamma.infer_type(&apply_to_five_expr).unwrap();
         println!("t::{t:?}");
 
         gamma.bind(Binding::ValueTerm("id".to_owned()), mk_identity_type());
 
-        let apply_to_five_to_id = ast::Expression::Apply {
+        let apply_to_five_to_id = ast::Expression::Apply(Apply {
             function: apply_to_five_expr.clone().into(), // Use `applyToFive`
             argument: ast::Expression::Variable(ast::Identifier::new("id")).into(), // Apply it to `id`
-        };
+        });
 
         let t = gamma.infer_type(&apply_to_five_to_id).unwrap();
         println!("t::{t:?}");

@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Expression, Identifier, Parameter},
+    ast::{Expression, Identifier, Lambda, Parameter},
     context::CompileState,
     interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
     types::{BaseType, Type, TypeParameter},
@@ -19,10 +19,10 @@ pub trait Bridge {
 
     fn lambda_tree(&self, target: Identifier) -> Expression {
         (0..self.arity()).rfold(Expression::CallBridge(target), |acc, x| {
-            Expression::Lambda {
+            Expression::Lambda(Lambda {
                 parameter: Parameter::new(Identifier::new(&format!("p{x}"))),
                 body: acc.into(),
-            }
+            })
         })
     }
 }

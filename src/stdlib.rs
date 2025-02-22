@@ -64,7 +64,7 @@ fn _import_std_file(_env: &mut Environment) -> Interpretation<()> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{Constant, Expression as E, Identifier},
+        ast::{Apply, Constant, Expression as E, Identifier},
         context::CompileState,
         interpreter::{Base, RuntimeError},
         stdlib,
@@ -75,14 +75,14 @@ mod tests {
         let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
-        let e = E::Apply {
-            function: E::Apply {
+        let e = E::Apply(Apply {
+            function: E::Apply(Apply {
                 function: E::Variable(Identifier::new("+")).into(),
                 argument: E::Literal(Constant::Int(1)).into(),
-            }
+            })
             .into(),
             argument: E::Literal(Constant::Int(2)).into(),
-        };
+        });
 
         assert_eq!(
             Base::Int(3),
@@ -98,14 +98,14 @@ mod tests {
         let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
-        let e = E::Apply {
-            function: E::Apply {
+        let e = E::Apply(Apply {
+            function: E::Apply(Apply {
                 function: E::Variable(Identifier::new("+")).into(),
                 argument: E::Literal(Constant::Float(1.5)).into(),
-            }
+            })
             .into(),
             argument: E::Literal(Constant::Float(2.3)).into(),
-        };
+        });
 
         assert_eq!(
             Base::Float(1.5 + 2.3),
@@ -121,14 +121,14 @@ mod tests {
         let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
-        let e = E::Apply {
-            function: E::Apply {
+        let e = E::Apply(Apply {
+            function: E::Apply(Apply {
                 function: E::Variable(Identifier::new("+")).into(),
                 argument: E::Literal(Constant::Float(1.5)).into(),
-            }
+            })
             .into(),
             argument: E::Literal(Constant::Int(2)).into(),
-        };
+        });
 
         assert_eq!(
             RuntimeError::InapplicableLamda2,
@@ -141,14 +141,14 @@ mod tests {
         let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
-        let e = E::Apply {
-            function: E::Apply {
+        let e = E::Apply(Apply {
+            function: E::Apply(Apply {
                 function: E::Variable(Identifier::new("-")).into(),
                 argument: E::Literal(Constant::Int(1)).into(),
-            }
+            })
             .into(),
             argument: E::Literal(Constant::Int(2)).into(),
-        };
+        });
 
         assert_eq!(
             Base::Int(-1),
@@ -164,14 +164,14 @@ mod tests {
         let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
-        let e = E::Apply {
-            function: E::Apply {
+        let e = E::Apply(Apply {
+            function: E::Apply(Apply {
                 function: E::Variable(Identifier::new("*")).into(),
                 argument: E::Literal(Constant::Int(1)).into(),
-            }
+            })
             .into(),
             argument: E::Literal(Constant::Int(2)).into(),
-        };
+        });
 
         assert_eq!(
             Base::Int(2),
@@ -187,14 +187,14 @@ mod tests {
         let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
-        let e = E::Apply {
-            function: E::Apply {
+        let e = E::Apply(Apply {
+            function: E::Apply(Apply {
                 function: E::Variable(Identifier::new("/")).into(),
                 argument: E::Literal(Constant::Int(1)).into(),
-            }
+            })
             .into(),
             argument: E::Literal(Constant::Int(2)).into(),
-        };
+        });
 
         assert_eq!(
             Base::Int(0),

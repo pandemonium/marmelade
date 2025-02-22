@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    ops::Deref,
 };
 
 use crate::{
@@ -303,10 +302,12 @@ impl FunctionDeclarator {
         self.parameters
             .into_iter()
             .rev()
-            .fold(self.body, |body, parameter| Expression::SelfReferential {
-                name: self_name.clone(),
-                parameter,
-                body: body.into(),
+            .fold(self.body, |body, parameter| {
+                Expression::SelfReferential(SelfReferential {
+                    name: self_name.clone(),
+                    parameter,
+                    body: body.into(),
+                })
             })
     }
 
@@ -379,45 +380,66 @@ pub enum Expression {
     Variable(Identifier),
     CallBridge(Identifier),
     Literal(Constant),
-    SelfReferential {
-        name: Identifier,
-        parameter: Parameter,
-        body: Box<Expression>,
-    },
-    Lambda {
-        parameter: Parameter,
-        body: Box<Expression>,
-    },
-    Apply {
-        function: Box<Expression>,
-        argument: Box<Expression>,
-    },
-    Construct {
-        name: TypeName,
-        constructor: Identifier,
-        argument: Box<Expression>,
-    },
+    SelfReferential(SelfReferential),
+    Lambda(Lambda),
+    Apply(Apply),
+    Construct(Construct),
     Product(Product),
-    Project {
-        base: Box<Expression>,
-        index: ProductIndex,
-    },
-    Binding {
-        postition: lexer::SourcePosition,
-        binder: Identifier,
-        bound: Box<Expression>,
-        body: Box<Expression>,
-    },
-    Sequence {
-        this: Box<Expression>,
-        and_then: Box<Expression>,
-    },
+    Project(Project),
+    Binding(Binding),
+    Sequence(Sequence),
     ControlFlow(ControlFlow),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfReferential {
+    pub name: Identifier,
+    pub parameter: Parameter,
+    pub body: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lambda {
+    pub parameter: Parameter,
+    pub body: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Apply {
+    pub function: Box<Expression>,
+    pub argument: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Construct {
+    pub name: TypeName,
+    pub constructor: Identifier,
+    pub argument: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Project {
+    pub base: Box<Expression>,
+    pub index: ProductIndex,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Binding {
+    pub postition: lexer::SourcePosition,
+    pub binder: Identifier,
+    pub bound: Box<Expression>,
+    pub body: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sequence {
+    pub this: Box<Expression>,
+    pub and_then: Box<Expression>,
 }
 
 impl Expression {
     pub fn position(&self) -> Option<&lexer::SourcePosition> {
-        if let Self::Binding { postition, .. } = self {
+        if let Self::Binding(Binding { postition, .. }) = self {
             Some(postition)
         } else {
             None
@@ -444,17 +466,17 @@ impl Expression {
             Self::CallBridge(id) => {
                 free.insert(id);
             }
-            Self::Lambda { parameter, body } => {
+            Self::Lambda(Lambda { parameter, body }) => {
                 // This is probably not correct
                 // I have to remove this after looking in "body
                 bound.insert(&parameter.name);
                 body.find_unbound(bound, free);
             }
-            Self::Apply { function, argument } => {
+            Self::Apply(Apply { function, argument }) => {
                 function.find_unbound(bound, free);
                 argument.find_unbound(bound, free);
             }
-            Self::Construct { argument, .. } => argument.find_unbound(bound, free),
+            Self::Construct(Construct { argument, .. }) => argument.find_unbound(bound, free),
             Self::Product(Product::Tuple(expressions)) => {
                 for e in expressions {
                     e.find_unbound(bound, free);
@@ -465,18 +487,18 @@ impl Expression {
                     e.find_unbound(bound, free);
                 }
             }
-            Self::Project { base, .. } => base.find_unbound(bound, free),
-            Self::Binding {
+            Self::Project(Project { base, .. }) => base.find_unbound(bound, free),
+            Self::Binding(Binding {
                 binder,
                 bound: bound_expr,
                 body,
                 ..
-            } => {
+            }) => {
                 bound_expr.find_unbound(bound, free);
                 bound.insert(binder);
                 body.find_unbound(bound, free);
             }
-            Self::Sequence { this, and_then } => {
+            Self::Sequence(Sequence { this, and_then }) => {
                 this.find_unbound(bound, free);
                 and_then.find_unbound(bound, free);
             }
@@ -500,23 +522,27 @@ impl fmt::Display for Expression {
             Expression::Variable(id) => write!(f, "{id}"),
             Expression::CallBridge(id) => write!(f, "call {id}"),
             Expression::Literal(c) => write!(f, "{c}"),
-            Expression::SelfReferential { name, body, .. } => write!(f, "-----> {name}->[{body}]"),
-            Expression::Lambda { parameter, body } => write!(f, "lambda \\{parameter}. {body}"),
-            Expression::Apply { function, argument } => write!(f, "{function} {argument}"),
-            Expression::Construct {
+            Expression::SelfReferential(SelfReferential { name, body, .. }) => {
+                write!(f, "-----> {name}->[{body}]")
+            }
+            Expression::Lambda(Lambda { parameter, body }) => {
+                write!(f, "lambda \\{parameter}. {body}")
+            }
+            Expression::Apply(Apply { function, argument }) => write!(f, "{function} {argument}"),
+            Expression::Construct(Construct {
                 name,
                 constructor,
                 argument,
-            } => write!(f, "{name}::{constructor} {argument}"),
+            }) => write!(f, "{name}::{constructor} {argument}"),
             Expression::Product(product) => write!(f, "{product}"),
-            Expression::Project { base, index } => write!(f, "{base}.{index}"),
-            Expression::Binding {
+            Expression::Project(Project { base, index }) => write!(f, "{base}.{index}"),
+            Expression::Binding(Binding {
                 binder,
                 bound,
                 body,
                 ..
-            } => write!(f, "let {binder} = {bound} in {body}"),
-            Expression::Sequence { this, and_then } => writeln!(f, "{this}\n{and_then}"),
+            }) => write!(f, "let {binder} = {bound} in {body}"),
+            Expression::Sequence(Sequence { this, and_then }) => writeln!(f, "{this}\n{and_then}"),
             Expression::ControlFlow(control) => writeln!(f, "{control}"),
         }
     }

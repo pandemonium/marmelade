@@ -2,8 +2,8 @@ use core::panic;
 
 use crate::{
     ast::{
-        CompilationUnit, ConstantDeclarator, ControlFlow, Declaration, Expression,
-        FunctionDeclarator, Identifier, ModuleDeclarator, Parameter, ValueDeclarator,
+        Apply, Binding, CompilationUnit, ConstantDeclarator, ControlFlow, Declaration, Expression,
+        FunctionDeclarator, Identifier, ModuleDeclarator, Parameter, Sequence, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
 };
@@ -286,12 +286,12 @@ fn parse_binding<'a>(
             let (body, remains) = parse_expression(remains, 0)?;
 
             Ok((
-                Expression::Binding {
+                Expression::Binding(Binding {
                     binder: Identifier::new(binder),
                     bound: bound.into(),
                     body: body.into(),
                     postition: position,
-                },
+                }),
                 remains,
             ))
         }
@@ -409,10 +409,10 @@ fn parse_juxtaposed<'a>(
 ) -> ParseResult<'a, Expression> {
     let (rhs, remains) = parse_prefix(tokens)?;
     parse_infix(
-        Expression::Apply {
+        Expression::Apply(Apply {
             function: lhs.into(),
             argument: rhs.into(),
-        },
+        }),
         remains,
         precedence,
     )
@@ -421,10 +421,10 @@ fn parse_juxtaposed<'a>(
 fn parse_sequence<'a>(lhs: Expression, tokens: &'a [Token]) -> ParseResult<'a, Expression> {
     let (rhs, remains) = parse_expression(tokens, 0)?;
 
-    let sequence = Expression::Sequence {
+    let sequence = Expression::Sequence(Sequence {
         this: lhs.into(),
         and_then: rhs.into(),
-    };
+    });
 
     if matches!(
         remains,
@@ -437,14 +437,14 @@ fn parse_sequence<'a>(lhs: Expression, tokens: &'a [Token]) -> ParseResult<'a, E
 }
 
 fn apply_binary_operator(op: Operator, lhs: Expression, rhs: Expression) -> Expression {
-    let apply_lhs = Expression::Apply {
+    let apply_lhs = Expression::Apply(Apply {
         function: Expression::Variable(op.id()).into(),
         argument: lhs.into(),
-    };
-    Expression::Apply {
+    });
+    Expression::Apply(Apply {
         function: apply_lhs.into(),
         argument: rhs.into(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -475,21 +475,21 @@ mod tests {
 
         let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in x + 20"))).unwrap();
         assert_eq!(
-            E::Binding {
+            E::Binding(Binding {
                 postition: SourcePosition::default(),
                 binder: Id::new("x"),
                 bound: E::Literal(Constant::Int(10)).into(),
-                body: E::Apply {
-                    function: E::Apply {
+                body: E::Apply(Apply {
+                    function: E::Apply(Apply {
                         function: E::Variable(Id::new(&Operator::Plus.function_identifier()))
                             .into(),
                         argument: E::Variable(Id::new("x")).into(),
-                    }
+                    })
                     .into(),
                     argument: E::Literal(Constant::Int(20)).into(),
-                }
+                })
                 .into(),
-            },
+            }),
             expr
         );
     }
@@ -499,20 +499,20 @@ mod tests {
         let mut lexer = LexicalAnalyzer::default();
         let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 20"))).unwrap();
         assert_eq!(
-            E::Binding {
+            E::Binding(Binding {
                 postition: SourcePosition::default(),
                 binder: Id::new("x"),
                 bound: E::Literal(Constant::Int(10)).into(),
-                body: E::Apply {
-                    function: E::Apply {
+                body: E::Apply(Apply {
+                    function: E::Apply(Apply {
                         function: E::Variable(Id::new("f")).into(),
                         argument: E::Variable(Id::new("x")).into(),
-                    }
+                    })
                     .into(),
                     argument: E::Literal(Constant::Int(20)).into(),
-                }
+                })
                 .into(),
-            },
+            }),
             expr
         );
     }
@@ -522,24 +522,24 @@ mod tests {
         let mut lexer = LexicalAnalyzer::default();
         let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 1 2"))).unwrap();
         assert_eq!(
-            E::Binding {
+            E::Binding(Binding {
                 postition: SourcePosition::default(),
                 binder: Id::new("x"),
                 bound: E::Literal(Constant::Int(10)).into(),
-                body: E::Apply {
-                    function: E::Apply {
-                        function: E::Apply {
+                body: E::Apply(Apply {
+                    function: E::Apply(Apply {
+                        function: E::Apply(Apply {
                             function: E::Variable(Id::new("f")).into(),
                             argument: E::Variable(Id::new("x")).into(),
-                        }
+                        })
                         .into(),
                         argument: E::Literal(Constant::Int(1)).into(),
-                    }
+                    })
                     .into(),
                     argument: E::Literal(Constant::Int(2)).into()
-                }
+                })
                 .into(),
-            },
+            }),
             expr
         );
     }
@@ -556,48 +556,48 @@ mod tests {
         )))
         .unwrap();
         assert_eq!(
-            E::Binding {
+            E::Binding(Binding {
                 postition: SourcePosition::default(),
                 binder: Id::new("x"),
-                bound: E::Sequence {
-                    this: E::Apply {
+                bound: E::Sequence(Sequence {
+                    this: E::Apply(Apply {
                         function: E::Variable(Id::new("print_endline")).into(),
                         argument: E::Literal(Constant::Text("Hello, world".to_owned())).into(),
-                    }
+                    })
                     .into(),
-                    and_then: E::Apply {
-                        function: E::Apply {
+                    and_then: E::Apply(Apply {
+                        function: E::Apply(Apply {
                             function: E::Variable(Id::new("f")).into(),
                             argument: E::Literal(Constant::Int(1)).into()
-                        }
+                        })
                         .into(),
                         argument: E::Literal(Constant::Int(2)).into()
-                    }
+                    })
                     .into()
-                }
+                })
                 .into(),
-                body: E::Apply {
-                    function: E::Apply {
+                body: E::Apply(Apply {
+                    function: E::Apply(Apply {
                         function: E::Variable(Id::new("+")).into(),
-                        argument: E::Apply {
-                            function: E::Apply {
+                        argument: E::Apply(Apply {
+                            function: E::Apply(Apply {
                                 function: E::Variable(Id::new("*")).into(),
                                 argument: E::Literal(Constant::Int(3)).into()
-                            }
+                            })
                             .into(),
-                            argument: E::Apply {
+                            argument: E::Apply(Apply {
                                 function: E::Variable(Id::new("f")).into(),
                                 argument: E::Literal(Constant::Int(4)).into()
-                            }
+                            })
                             .into()
-                        }
+                        })
                         .into()
-                    }
+                    })
                     .into(),
                     argument: E::Literal(Constant::Int(5)).into()
-                }
+                })
                 .into()
-            },
+            }),
             expr
         );
     }
@@ -610,26 +610,26 @@ mod tests {
                 .unwrap();
 
         assert_eq!(
-            E::Binding {
+            E::Binding(Binding {
                 postition: SourcePosition::default(),
                 binder: Id::new("x"),
                 bound: E::Literal(Constant::Int(10)).into(),
-                body: E::Binding {
+                body: E::Binding(Binding {
                     postition: SourcePosition::new(1, 15),
                     binder: Id::new("y"),
                     bound: E::Literal(Constant::Int(20)).into(),
-                    body: E::Apply {
-                        function: E::Apply {
+                    body: E::Apply(Apply {
+                        function: E::Apply(Apply {
                             function: E::Variable(Id::new("+")).into(),
                             argument: E::Variable(Id::new("x")).into()
-                        }
+                        })
                         .into(),
                         argument: E::Variable(Id::new("y")).into()
-                    }
+                    })
                     .into()
-                }
+                })
                 .into()
-            },
+            }),
             expr
         );
     }
@@ -653,14 +653,14 @@ mod tests {
                         type_annotation: None
                     }],
                     return_type_annotation: None,
-                    body: E::Apply {
-                        function: E::Apply {
+                    body: E::Apply(Apply {
+                        function: E::Apply(Apply {
                             function: E::Variable(Id::new("+")).into(),
                             argument: E::Literal(Constant::Int(1)).into()
-                        }
+                        })
                         .into(),
                         argument: Expression::Variable(Identifier::new("x")).into()
-                    },
+                    }),
                 }),
                 position: SourcePosition::default(),
             },
@@ -702,14 +702,14 @@ mod tests {
                             type_annotation: None
                         }],
                         return_type_annotation: None,
-                        body: E::Apply {
-                            function: E::Apply {
+                        body: E::Apply(Apply {
+                            function: E::Apply(Apply {
                                 function: E::Variable(Id::new("+")).into(),
                                 argument: E::Literal(Constant::Int(1)).into()
-                            }
+                            })
                             .into(),
                             argument: E::Variable(Id::new("x")).into()
-                        },
+                        }),
                     }),
                     position: SourcePosition::default(),
                 },
@@ -722,10 +722,10 @@ mod tests {
                             type_annotation: None
                         }],
                         return_type_annotation: None,
-                        body: E::Apply {
+                        body: E::Apply(Apply {
                             function: E::Variable(Id::new("__print")).into(),
                             argument: E::Variable(Identifier::new("s")).into()
-                        }
+                        })
                     })
                 }
             ],

@@ -1,5 +1,5 @@
 use marmelade::{
-    ast::{Expression, Identifier, Parameter},
+    ast::{Apply, Expression, Identifier, Lambda, Parameter},
     context::CompileState,
     interpreter::{Base, Closure, Environment, Interpreter, Value},
     lexer::LexicalAnalyzer,
@@ -48,34 +48,34 @@ fn _make_fix_value(env: Environment) -> Value {
     Value::Closure(Closure {
         parameter: Identifier::new("f"),
         capture: env.clone(),
-        body: Expression::Apply {
-            function: Box::new(Expression::Lambda {
+        body: Expression::Apply(Apply {
+            function: Box::new(Expression::Lambda(Lambda {
                 parameter: Parameter::new(Identifier::new("x")),
-                body: Box::new(Expression::Apply {
+                body: Box::new(Expression::Apply(Apply {
                     function: Box::new(Expression::Variable(Identifier::new("f"))),
-                    argument: Box::new(Expression::Lambda {
+                    argument: Box::new(Expression::Lambda(Lambda {
                         parameter: Parameter::new(Identifier::new("y")),
-                        body: Box::new(Expression::Apply {
+                        body: Box::new(Expression::Apply(Apply {
                             function: Box::new(Expression::Variable(Identifier::new("x"))),
                             argument: Box::new(Expression::Variable(Identifier::new("x"))),
-                        }),
-                    }),
-                }),
-            }),
-            argument: Box::new(Expression::Lambda {
+                        })),
+                    })),
+                })),
+            })),
+            argument: Box::new(Expression::Lambda(Lambda {
                 parameter: Parameter::new(Identifier::new("x")),
-                body: Box::new(Expression::Apply {
+                body: Box::new(Expression::Apply(Apply {
                     function: Box::new(Expression::Variable(Identifier::new("f"))),
-                    argument: Box::new(Expression::Lambda {
+                    argument: Box::new(Expression::Lambda(Lambda {
                         parameter: Parameter::new(Identifier::new("y")),
-                        body: Box::new(Expression::Apply {
+                        body: Box::new(Expression::Apply(Apply {
                             function: Box::new(Expression::Variable(Identifier::new("x"))),
                             argument: Box::new(Expression::Variable(Identifier::new("x"))),
-                        }),
-                    }),
-                }),
-            }),
-        },
+                        })),
+                    })),
+                })),
+            })),
+        }),
     })
 }
 
