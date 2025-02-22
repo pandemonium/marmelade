@@ -1,13 +1,13 @@
 use crate::{
     bridge,
-    context::InterpretationContext,
+    context::CompileState,
     interpreter::{Base, Interpretation},
     lexer::Operator,
     types::{BaseType, Type, TypeParameter},
 };
 
 // Think about the return type of this
-pub fn import(env: &mut InterpretationContext) -> Interpretation<()> {
+pub fn import(env: &mut CompileState) -> Interpretation<()> {
     bridge::define(
         Operator::Equals.id(),
         bridge::PartialRawLambda2 {

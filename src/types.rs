@@ -578,8 +578,8 @@ mod typer {
         })
     }
 
-    pub fn infer(e: &ast::Expression, ctx: &TypingContext) -> Typing {
-        match e {
+    pub fn infer(expr: &ast::Expression, ctx: &TypingContext) -> Typing {
+        match expr {
             ast::Expression::Variable(binding) | ast::Expression::CallBridge(binding) => {
                 // Ref-variants of Binding too?
                 if let Some(ty) = ctx.lookup(&binding.clone().into()) {

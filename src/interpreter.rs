@@ -8,7 +8,7 @@ use crate::{
         ModuleDeclarator,
     },
     bridge::Bridge,
-    lexer::Location,
+    lexer::SourcePosition,
     types::{BaseType, Type},
 };
 
@@ -65,7 +65,7 @@ impl Interpreter {
 
     fn patch_with_prelude(&self, module: &mut ModuleDeclarator) {
         module.declarations.push(Declaration::ImportModule {
-            position: Location::default(),
+            position: SourcePosition::default(),
             exported_symbols: self
                 .prelude
                 .symbols()
@@ -199,9 +199,9 @@ pub struct Environment {
 }
 
 impl Environment {
-    pub fn make_child(self: Rc<Environment>) -> Self {
+    pub fn make_child(self: Environment) -> Self {
         Self {
-            enclosing: self.into(),
+            enclosing: Rc::new(self).into(),
             leaf: Vec::default(),
         }
     }
@@ -439,9 +439,9 @@ fn make_closure(param: Identifier, body: Expression, env: Environment) -> Interp
 mod tests {
     use crate::{
         ast::{Constant, ControlFlow, Expression, Identifier, Parameter},
-        context::InterpretationContext,
+        context::CompileState,
         interpreter::{Base, Environment, RuntimeError, Value},
-        lexer::Location,
+        lexer::SourcePosition,
         stdlib,
     };
 
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn reduce_literal() {
-        let mut context = InterpretationContext::default();
+        let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
         assert_eq!(
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn reduce_with_variables() {
-        let mut context = InterpretationContext::default();
+        let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
         context
@@ -554,7 +554,7 @@ mod tests {
                 .into(),
                 consequent: Expression::Literal(Constant::Int(1)).into(),
                 alternate: Expression::Binding {
-                    postition: Location::default(), // Placeholder for actual location
+                    postition: SourcePosition::default(), // Placeholder for actual location
                     binder: Identifier::new("xx"),
                     bound: Expression::Apply {
                         function: Expression::Apply {
@@ -605,7 +605,7 @@ mod tests {
                         .into(),
                         consequent: Expression::Literal(Constant::Int(1)).into(),
                         alternate: Expression::Binding {
-                            postition: Location::default(), // Placeholder for actual location
+                            postition: SourcePosition::default(), // Placeholder for actual location
                             binder: Identifier::new("xx"),
                             bound: Expression::Apply {
                                 function: Expression::Apply {
@@ -639,7 +639,7 @@ mod tests {
             .into(),
         };
 
-        let mut context = InterpretationContext::default();
+        let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
         context.interpreter_environment.insert_binding(

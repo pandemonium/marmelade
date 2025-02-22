@@ -1,11 +1,12 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    ops::Deref,
 };
 
 use crate::{
     interpreter::DependencyGraph,
-    lexer::{self, Location},
+    lexer::{self, SourcePosition},
 };
 
 #[derive(Debug)]
@@ -33,7 +34,7 @@ impl fmt::Display for CompilationUnit {
 
 #[derive(Debug, PartialEq)]
 pub struct ModuleDeclarator {
-    pub position: Location,
+    pub position: SourcePosition,
     pub name: Identifier,
     pub declarations: Vec<Declaration>,
     // pub main: Expression,
@@ -117,25 +118,25 @@ impl fmt::Display for TypeName {
 #[derive(Debug, PartialEq)]
 pub enum Declaration {
     Value {
-        position: Location,
+        position: SourcePosition,
         binder: Identifier,
         declarator: ValueDeclarator,
     },
     Type {
-        position: Location,
+        position: SourcePosition,
         binding: Identifier,
         declarator: TypeDeclarator,
     },
     Module(ModuleDeclarator),
     ImportModule {
-        position: Location,
+        position: SourcePosition,
         exported_symbols: Vec<Identifier>,
     },
     // Use()    ??
 }
 
 impl Declaration {
-    pub fn position(&self) -> &Location {
+    pub fn position(&self) -> &SourcePosition {
         match self {
             Self::Value { position, .. }
             | Self::Type { position, .. }
@@ -402,7 +403,7 @@ pub enum Expression {
         index: ProductIndex,
     },
     Binding {
-        postition: lexer::Location,
+        postition: lexer::SourcePosition,
         binder: Identifier,
         bound: Box<Expression>,
         body: Box<Expression>,
@@ -415,7 +416,7 @@ pub enum Expression {
 }
 
 impl Expression {
-    pub fn position(&self) -> Option<&lexer::Location> {
+    pub fn position(&self) -> Option<&lexer::SourcePosition> {
         if let Self::Binding { postition, .. } = self {
             Some(postition)
         } else {
@@ -618,7 +619,7 @@ impl fmt::Display for Product {
 
 #[cfg(test)]
 mod tests {
-    use crate::lexer::Location;
+    use crate::lexer::SourcePosition;
 
     use super::{
         Constant, ConstantDeclarator, Declaration, Expression, Identifier, ModuleDeclarator,
@@ -629,11 +630,11 @@ mod tests {
     fn cyclic_dependencies() {
         // I should parse text instead of this
         let m = ModuleDeclarator {
-            position: Location::default(),
+            position: SourcePosition::default(),
             name: Identifier::new(""),
             declarations: vec![
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
@@ -641,7 +642,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("foo")),
@@ -649,7 +650,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("quux")),
@@ -666,11 +667,11 @@ mod tests {
     #[test]
     fn satisfiable() {
         let m = ModuleDeclarator {
-            position: Location::default(),
+            position: SourcePosition::default(),
             name: Identifier::new(""),
             declarations: vec![
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
@@ -678,7 +679,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
@@ -686,7 +687,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("frobnicator")),
@@ -694,7 +695,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("frobnicator"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Literal(Constant::Int(1)),
@@ -712,11 +713,11 @@ mod tests {
     #[test]
     fn unsatisfiable() {
         let m = ModuleDeclarator {
-            position: Location::default(),
+            position: SourcePosition::default(),
             name: Identifier::new(""),
             declarations: vec![
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
@@ -724,7 +725,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
@@ -732,7 +733,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("frobnicator")),
@@ -750,11 +751,11 @@ mod tests {
     #[test]
     fn top_of_the_day() {
         let m = ModuleDeclarator {
-            position: Location::default(),
+            position: SourcePosition::default(),
             name: Identifier::new(""),
             declarations: vec![
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
@@ -762,7 +763,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("bar")),
@@ -770,7 +771,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Variable(Identifier::new("frobnicator")),
@@ -778,7 +779,7 @@ mod tests {
                     }),
                 },
                 Declaration::Value {
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                     binder: Identifier::new("frobnicator"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
                         initializer: Expression::Literal(Constant::Int(1)),

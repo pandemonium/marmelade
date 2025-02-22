@@ -5,7 +5,7 @@ use crate::{
         CompilationUnit, ConstantDeclarator, ControlFlow, Declaration, Expression,
         FunctionDeclarator, Identifier, ModuleDeclarator, Parameter, ValueDeclarator,
     },
-    lexer::{Keyword, Layout, Location, Operator, Token, TokenType},
+    lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
 };
 
 pub type ParseResult<'a, A> = Result<(A, &'a [Token]), ParseError>;
@@ -15,7 +15,7 @@ pub enum ParseError {
     UnexpectedToken(Token),
     UnexpectedRemains(Vec<Token>),
     ExpectedTokenType(TokenType),
-    DeclarationOffside(Location, Vec<Token>),
+    DeclarationOffside(SourcePosition, Vec<Token>),
 }
 
 use Keyword::*;
@@ -26,7 +26,7 @@ pub fn parse_compilation_unit<'a>(input: &'a [Token]) -> Result<CompilationUnit,
     let (declarations, ..) = parse_declarations(input)?;
 
     Ok(CompilationUnit::Implicit(ModuleDeclarator {
-        position: Location::default(),
+        position: SourcePosition::default(),
         name: Identifier::new("main"),
         declarations,
     }))
@@ -52,7 +52,7 @@ pub fn parse_declarations<'a>(input: &'a [Token]) -> ParseResult<'a, Vec<Declara
 }
 
 pub fn find_next_in_block<'a>(
-    current_block: Location,
+    current_block: SourcePosition,
     input: &'a [Token],
     is_next_start_token_type: fn(&TT) -> bool,
 ) -> Result<&'a [Token], ParseError> {
@@ -94,7 +94,7 @@ pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration>
 
 fn parse_value_binding<'a>(
     binder: &String,
-    position: &Location,
+    position: &SourcePosition,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration> {
     let (declarator, remains) =
@@ -207,7 +207,7 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
 }
 
 fn parse_if_expression<'a>(
-    _position: Location,
+    _position: SourcePosition,
     remains: &'a [Token],
 ) -> ParseResult<'a, Expression> {
     let (predicate, remains) = parse_expression(remains, 0)?;
@@ -269,7 +269,7 @@ fn strip_first_if<'a>(condition: bool, input: &'a [Token]) -> &'a [Token] {
 }
 
 fn parse_binding<'a>(
-    position: Location,
+    position: SourcePosition,
     binder: &str,
     input: &'a [Token],
 ) -> ParseResult<'a, Expression> {
@@ -344,12 +344,9 @@ fn parse_infix<'a>(
         // ( <Newline> | <;> ) <expr>
         // -- an expression sequence, e.g.: <statement>* <expr>
         [T(TT::Layout(Layout::Newline) | TT::Semicolon, ..), lookahead @ ..] if input.len() > 0 => {
-            println!("parse_infix3: {:?}", &input[..5]);
-
             if !starts_with(TT::End, &input[1..]) && !is_toplevel(lookahead) {
                 parse_sequence(lhs, &input[1..])
             } else {
-                println!("parse_infix2: {:?}", &input[..5]);
                 Ok((lhs, input))
             }
         }
@@ -479,7 +476,7 @@ mod tests {
         let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in x + 20"))).unwrap();
         assert_eq!(
             E::Binding {
-                postition: Location::default(),
+                postition: SourcePosition::default(),
                 binder: Id::new("x"),
                 bound: E::Literal(Constant::Int(10)).into(),
                 body: E::Apply {
@@ -503,7 +500,7 @@ mod tests {
         let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 20"))).unwrap();
         assert_eq!(
             E::Binding {
-                postition: Location::default(),
+                postition: SourcePosition::default(),
                 binder: Id::new("x"),
                 bound: E::Literal(Constant::Int(10)).into(),
                 body: E::Apply {
@@ -526,7 +523,7 @@ mod tests {
         let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 1 2"))).unwrap();
         assert_eq!(
             E::Binding {
-                postition: Location::default(),
+                postition: SourcePosition::default(),
                 binder: Id::new("x"),
                 bound: E::Literal(Constant::Int(10)).into(),
                 body: E::Apply {
@@ -560,7 +557,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             E::Binding {
-                postition: Location::default(),
+                postition: SourcePosition::default(),
                 binder: Id::new("x"),
                 bound: E::Sequence {
                     this: E::Apply {
@@ -614,11 +611,11 @@ mod tests {
 
         assert_eq!(
             E::Binding {
-                postition: Location::default(),
+                postition: SourcePosition::default(),
                 binder: Id::new("x"),
                 bound: E::Literal(Constant::Int(10)).into(),
                 body: E::Binding {
-                    postition: Location::new(1, 15),
+                    postition: SourcePosition::new(1, 15),
                     binder: Id::new("y"),
                     bound: E::Literal(Constant::Int(20)).into(),
                     body: E::Apply {
@@ -665,7 +662,7 @@ mod tests {
                         argument: Expression::Variable(Identifier::new("x")).into()
                     },
                 }),
-                position: Location::default(),
+                position: SourcePosition::default(),
             },
             decl
         );
@@ -714,10 +711,10 @@ mod tests {
                             argument: E::Variable(Id::new("x")).into()
                         },
                     }),
-                    position: Location::default(),
+                    position: SourcePosition::default(),
                 },
                 Declaration::Value {
-                    position: Location::new(5, 1),
+                    position: SourcePosition::new(5, 1),
                     binder: Id::new("print_endline"),
                     declarator: ValueDeclarator::Function(FunctionDeclarator {
                         parameters: vec![Parameter {

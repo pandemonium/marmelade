@@ -1,8 +1,6 @@
-use std::marker::PhantomData;
-
 use crate::{
     ast::{Expression, Identifier, Parameter},
-    context::InterpretationContext,
+    context::CompileState,
     interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
     types::{BaseType, Type, TypeParameter},
 };
@@ -182,10 +180,11 @@ impl Bridge for PartialRawLambda2 {
 pub fn define<B>(
     surface_name: Identifier,
     bridge: B,
-    InterpretationContext {
+    CompileState {
         typing_context,
         interpreter_environment,
-    }: &mut InterpretationContext,
+        ..
+    }: &mut CompileState,
 ) -> Interpretation<()>
 where
     B: Bridge + 'static,
@@ -291,7 +290,7 @@ mod test {
         let _x = define(
             Identifier::new("open_file"),
             Lambda1(open_file),
-            &mut InterpretationContext::default(),
+            &mut CompileState::default(),
         )
         .unwrap();
     }

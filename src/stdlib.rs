@@ -1,14 +1,11 @@
 use crate::{
-    bridge,
-    context::InterpretationContext,
+    context::CompileState,
     interpreter::{Environment, Interpretation},
-    lexer::Operator,
-    types::{BaseType, Type, TypeParameter},
 };
 
 mod operators;
 
-pub fn import(context: &mut InterpretationContext) -> Interpretation<()> {
+pub fn import(context: &mut CompileState) -> Interpretation<()> {
     //    import_std_file(env)?;
     operators::import(context)?;
     stdio::import(context)?;
@@ -18,9 +15,7 @@ pub fn import(context: &mut InterpretationContext) -> Interpretation<()> {
 }
 
 mod stdio {
-    use crate::{
-        ast::Identifier, bridge, context::InterpretationContext, interpreter::Interpretation,
-    };
+    use crate::{ast::Identifier, bridge, context::CompileState, interpreter::Interpretation};
 
     pub fn print_endline(text: String) {
         println!("{text}");
@@ -30,7 +25,7 @@ mod stdio {
         print!("{text}");
     }
 
-    pub fn import(context: &mut InterpretationContext) -> Interpretation<()> {
+    pub fn import(context: &mut CompileState) -> Interpretation<()> {
         bridge::define(
             Identifier::new("print_endline"),
             bridge::Lambda1(print_endline),
@@ -47,7 +42,7 @@ mod conversions {
     use crate::{
         ast::Identifier,
         bridge,
-        context::InterpretationContext,
+        context::CompileState,
         interpreter::{Interpretation, Value},
     };
 
@@ -55,7 +50,7 @@ mod conversions {
         format!("{value}")
     }
 
-    pub fn import(context: &mut InterpretationContext) -> Interpretation<()> {
+    pub fn import(context: &mut CompileState) -> Interpretation<()> {
         bridge::define(Identifier::new("show"), bridge::RawLambda1(show), context)?;
 
         Ok(())
@@ -70,14 +65,14 @@ fn _import_std_file(_env: &mut Environment) -> Interpretation<()> {
 mod tests {
     use crate::{
         ast::{Constant, Expression as E, Identifier},
-        context::InterpretationContext,
+        context::CompileState,
         interpreter::{Base, RuntimeError},
         stdlib,
     };
 
     #[test]
     fn plus_i64() {
-        let mut context = InterpretationContext::default();
+        let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -100,7 +95,7 @@ mod tests {
 
     #[test]
     fn plus_f64() {
-        let mut context = InterpretationContext::default();
+        let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -123,7 +118,7 @@ mod tests {
 
     #[test]
     fn plus_wrong_types() {
-        let mut context = InterpretationContext::default();
+        let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -143,7 +138,7 @@ mod tests {
 
     #[test]
     fn minus() {
-        let mut context = InterpretationContext::default();
+        let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -166,7 +161,7 @@ mod tests {
 
     #[test]
     fn times() {
-        let mut context = InterpretationContext::default();
+        let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {
@@ -189,7 +184,7 @@ mod tests {
 
     #[test]
     fn divides() {
-        let mut context = InterpretationContext::default();
+        let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply {

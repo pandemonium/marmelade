@@ -36,7 +36,6 @@ impl<'a> ModuleLoader<'a> {
 
     pub fn resolve_dependencies(mut self) -> Loaded<Environment> {
         for dependency in self.dependency_graph.compute_resolution_order().drain(..) {
-            println!("resolve_dependencies: {dependency}");
             self.try_resolving(dependency)?
         }
 
@@ -48,7 +47,6 @@ impl<'a> ModuleLoader<'a> {
         {
             self.resolve_value_binding(id, declarator)
         } else if self.resolved.is_defined(id) {
-            println!("try_resolve: {id} is already resolved.");
             Ok(())
         } else {
             panic!("Unable to resolve declaration: `{id}` - not implemented")
@@ -94,8 +92,6 @@ impl<'a> DependencyGraph<'a> {
                 Declaration::ImportModule {
                     exported_symbols, ..
                 } => {
-                    println!("from_declarations: {exported_symbols:?}");
-
                     for dep in exported_symbols {
                         outbound.entry(dep).or_default();
                     }

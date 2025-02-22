@@ -2,13 +2,272 @@ use std::fmt;
 
 use crate::ast::Identifier;
 
+// // For this type to be worthwhile, it would have to still
+// // retain the whole slice, otherwise it cannot be used in
+// // an error reporting context anyway
+// #[derive(Debug, Copy, Clone)]
+// pub struct SourceText<'a> {
+//     offset: usize,
+//     text: &'a [char],
+// }
+//
+// impl<'a> SourceText<'a> {
+//     fn split_at(self, position: usize) -> (Self, Self) {
+//         let (lhs, rhs) = self.0.split_at(position);
+//         (Self(lhs), Self(rhs))
+//     }
+//
+//     fn empty(self) -> Self {
+//         Self(&self.0[..0])
+//     }
+// }
+//
+// impl<'a> IntoIterator for SourceText<'a> {
+//     type Item = &'a char;
+//     type IntoIter = Iter<'a, char>;
+//
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.0.iter()
+//     }
+// }
+//
+// impl<'a> Deref for SourceText<'a> {
+//     type Target = [char];
+//
+//     fn deref(&self) -> &Self::Target {
+//         self.0
+//     }
+// }
+
+#[derive(Debug)]
+pub struct LexicalAnalyzer {
+    location: SourcePosition,
+    indentation_level: u32,
+    output: Vec<Token>,
+}
+
+impl LexicalAnalyzer {
+    pub fn tokens(&self) -> &[Token] {
+        &self.output
+    }
+
+    pub fn untokenize(&self) -> String {
+        let mut buf = String::with_capacity(self.output.len() * 2);
+        let mut indentation = 1;
+        let mut spaces = " ".repeat(indentation);
+        let mut row = 0;
+        for t in &self.output {
+            if let TokenType::Layout(layout) = t.token_type() {
+                match layout {
+                    Layout::Indent => {
+                        indentation = t.location().column as usize;
+                        spaces = " ".repeat(indentation)
+                    }
+                    Layout::Dedent => {
+                        indentation = t.location().column as usize;
+                        spaces = " ".repeat(indentation)
+                    }
+                    _otherwise => (),
+                }
+            } else {
+                if row != t.location().row {
+                    row = t.location().row;
+                    buf.push_str(&format!("\n{row:>3}{spaces}"));
+                }
+                buf.push_str(&format!("{} ", t.token_type()));
+            }
+        }
+        buf
+    }
+
+    pub fn tokenize(&mut self, input: &[char]) -> &[Token] {
+        let mut input = input;
+        loop {
+            input = match input {
+                remains @ [c, ..] if c.is_whitespace() => self.scan_whitespace(remains),
+                prefix @ [c, ..] if is_identifier_prefix(*c) => self.scan_identifier(prefix),
+                prefix @ [c, ..] if is_number_prefix(*c) => self.scan_number(prefix),
+                ['"', remains @ ..] => self.scan_text_literal(remains),
+
+                [':', ':', '=', remains @ ..] => self.emit(3, TokenType::TypeAssign, remains),
+                [':', ':', remains @ ..] => self.emit(2, TokenType::TypeAscribe, remains),
+                ['-', '>', remains @ ..] => self.emit(2, TokenType::Arrow, remains),
+                ['=', '=', remains @ ..] => self.emit_operator(2, Operator::Equals, remains),
+
+                ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
+                [',', remains @ ..] => self.emit(1, TokenType::Comma, remains),
+                ['(', remains @ ..] => self.emit(1, TokenType::LeftParen, remains),
+                [')', remains @ ..] => self.emit(1, TokenType::RightParen, remains),
+                ['_', remains @ ..] => self.emit(1, TokenType::Underscore, remains),
+                ['|', remains @ ..] => self.emit(1, TokenType::Pipe, remains),
+                [';', remains @ ..] => self.emit(1, TokenType::Semicolon, remains),
+
+                ['+', remains @ ..] => self.emit_operator(1, Operator::Plus, remains),
+                ['-', remains @ ..] => self.emit_operator(1, Operator::Minus, remains),
+                ['*', remains @ ..] => self.emit_operator(1, Operator::Times, remains),
+                ['/', remains @ ..] => self.emit_operator(1, Operator::Divides, remains),
+                ['%', remains @ ..] => self.emit_operator(1, Operator::Modulo, remains),
+
+                [c, ..] => panic!("{c}"),
+
+                [] => {
+                    self.emit(0, TokenType::End, &[]);
+                    break &self.output;
+                }
+            };
+        }
+    }
+
+    pub fn into_token_type_stream(&self) -> Vec<TokenType> {
+        self.output.iter().map(|t| t.token_type().clone()).collect()
+    }
+
+    fn scan_identifier<'a>(&mut self, input: &'a [char]) -> &'a [char] {
+        let (prefix, remains) = if let Some(end) = input[1..]
+            .iter()
+            .position(|c| !is_identifier_continuation(*c))
+        {
+            (&input[..(end + 1)], &input[(end + 1)..])
+        } else {
+            (input, &input[..0])
+        };
+
+        let identifier = prefix.into_iter().collect::<String>();
+        self.emit(
+            identifier.len() as u32,
+            TokenType::decode_identifier(identifier),
+            remains,
+        )
+    }
+
+    fn scan_text_literal<'a>(&mut self, input: &'a [char]) -> &'a [char] {
+        let (prefix, remains) = if let Some(end) = input.iter().position(|&c| c == '"') {
+            (&input[..end], &input[end + 1..])
+        } else {
+            (input, &input[..0])
+        };
+
+        let image = prefix.into_iter().collect::<String>();
+        self.emit(
+            image.len() as u32,
+            TokenType::Literal(Literal::Text(image)),
+            remains,
+        )
+    }
+
+    fn emit_operator<'a>(&mut self, length: u32, op: Operator, remains: &'a [char]) -> &'a [char] {
+        self.emit(length, TokenType::Operator(op), remains)
+    }
+
+    fn emit<'a>(&mut self, length: u32, token_type: TokenType, remains: &'a [char]) -> &'a [char] {
+        self.output.push(Token(token_type, self.location.clone()));
+        self.location.move_right(length);
+        remains
+    }
+
+    fn scan_whitespace<'a>(&mut self, input: &'a [char]) -> &'a [char] {
+        let (whitespace_prefix, remains) =
+            if let Some(end) = input.iter().position(|c| !c.is_whitespace()) {
+                (&input[..end], &input[end..])
+            } else {
+                (input, &input[..0])
+            };
+
+        let next_location = self.compute_new_location(whitespace_prefix);
+
+        self.update_location(next_location);
+
+        remains
+    }
+
+    fn compute_new_location(&mut self, whitespace: &[char]) -> SourcePosition {
+        let mut next_location = self.location.clone();
+
+        for c in whitespace {
+            match c {
+                ' ' => next_location.move_right(1),
+                '\n' => next_location.new_line(),
+                otherwise => {
+                    println!("process_whitespace: {}", *otherwise as u32);
+                    ()
+                }
+            }
+        }
+
+        next_location
+    }
+
+    fn update_location(&mut self, next: SourcePosition) {
+        if next.is_below(&self.location) {
+            if next.is_left_of(self.indentation_level) {
+                self.emit_layout(next, Layout::Dedent);
+            } else if next.is_right_of(self.indentation_level) {
+                self.emit_layout(next, Layout::Indent);
+            } else {
+                self.emit_layout(next, Layout::Newline);
+            }
+            self.indentation_level = next.column;
+        }
+
+        self.location = next;
+    }
+
+    // Which location is the location of an Indent or Dedent?
+    fn emit_layout(&mut self, location: SourcePosition, indentation: Layout) {
+        self.output
+            .push(Token(TokenType::Layout(indentation), location));
+    }
+
+    fn scan_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {
+        let (prefix, remains) = if let Some(end) = prefix.iter().position(|c| !c.is_ascii_digit()) {
+            (&prefix[..end], &prefix[end..])
+        } else {
+            (prefix, &prefix[..0])
+        };
+
+        // This has to be able to fail the tokenization here
+        let num = prefix.iter().collect::<String>().parse().unwrap();
+
+        self.emit(
+            prefix.len() as u32,
+            TokenType::Literal(Literal::Integer(num)),
+            remains,
+        );
+
+        remains
+    }
+}
+
+fn is_number_prefix(c: char) -> bool {
+    c.is_digit(10) // Improved
+}
+
+fn is_identifier_prefix(c: char) -> bool {
+    c.is_alphabetic() || c == '_'
+}
+
+fn is_identifier_continuation(c: char) -> bool {
+    c.is_alphabetic() || c == '_' || c.is_numeric()
+}
+
+impl Default for LexicalAnalyzer {
+    fn default() -> Self {
+        let location = SourcePosition::default();
+        Self {
+            location,
+            indentation_level: location.column,
+            output: Vec::default(), // This could actually be something a lot bigger.
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Location {
+pub struct SourcePosition {
     pub row: u32,
     pub column: u32,
 }
 
-impl Location {
+impl SourcePosition {
     pub fn new(row: u32, column: u32) -> Self {
         Self { row, column }
     }
@@ -39,13 +298,13 @@ impl Location {
     }
 }
 
-impl Default for Location {
+impl Default for SourcePosition {
     fn default() -> Self {
         Self { row: 1, column: 1 }
     }
 }
 
-impl fmt::Display for Location {
+impl fmt::Display for SourcePosition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { row, column } = self;
         write!(f, "({},{})", row, column)
@@ -231,14 +490,14 @@ impl fmt::Display for Literal {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Token(pub TokenType, pub Location);
+pub struct Token(pub TokenType, pub SourcePosition);
 
 impl Token {
     pub fn token_type(&self) -> &TokenType {
         &self.0
     }
 
-    pub fn location(&self) -> &Location {
+    pub fn location(&self) -> &SourcePosition {
         &self.1
     }
 
@@ -268,228 +527,6 @@ impl fmt::Display for TokenType {
             Self::Operator(operator) => write!(f, "{operator}"),
             Self::Layout(layout) => write!(f, "{layout}"),
             Self::End => write!(f, "°"),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct LexicalAnalyzer {
-    location: Location,
-    indentation_level: u32,
-    output: Vec<Token>,
-}
-
-impl LexicalAnalyzer {
-    pub fn tokens(&self) -> &[Token] {
-        &self.output
-    }
-
-    pub fn untokenize(&self) -> String {
-        let mut buf = String::with_capacity(self.output.len() * 2);
-        let mut indentation = 1;
-        let mut spaces = " ".repeat(indentation);
-        let mut row = 0;
-        for t in &self.output {
-            if let TokenType::Layout(layout) = t.token_type() {
-                match layout {
-                    Layout::Indent => {
-                        indentation = t.location().column as usize;
-                        spaces = " ".repeat(indentation)
-                    }
-                    Layout::Dedent => {
-                        indentation = t.location().column as usize;
-                        spaces = " ".repeat(indentation)
-                    }
-                    _otherwise => (),
-                }
-            } else {
-                if row != t.location().row {
-                    row = t.location().row;
-                    buf.push_str(&format!("\n{row:>3}{spaces}"));
-                }
-                buf.push_str(&format!("{} ", t.token_type()));
-            }
-        }
-        buf
-    }
-
-    pub fn tokenize(&mut self, input: &[char]) -> &[Token] {
-        let mut input = input;
-        loop {
-            input = match input {
-                remains @ [c, ..] if c.is_whitespace() => self.scan_whitespace(remains),
-                prefix @ [c, ..] if is_identifier_prefix(*c) => self.scan_identifier(prefix),
-                prefix @ [c, ..] if is_number_prefix(*c) => self.scan_number(prefix),
-                ['"', remains @ ..] => self.scan_text_literal(remains),
-
-                [':', ':', '=', remains @ ..] => self.emit(3, TokenType::TypeAssign, remains),
-                [':', ':', remains @ ..] => self.emit(2, TokenType::TypeAscribe, remains),
-                ['-', '>', remains @ ..] => self.emit(2, TokenType::Arrow, remains),
-                ['=', '=', remains @ ..] => self.emit_operator(2, Operator::Equals, remains),
-
-                ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
-                [',', remains @ ..] => self.emit(1, TokenType::Comma, remains),
-                ['(', remains @ ..] => self.emit(1, TokenType::LeftParen, remains),
-                [')', remains @ ..] => self.emit(1, TokenType::RightParen, remains),
-                ['_', remains @ ..] => self.emit(1, TokenType::Underscore, remains),
-                ['|', remains @ ..] => self.emit(1, TokenType::Pipe, remains),
-                [';', remains @ ..] => self.emit(1, TokenType::Semicolon, remains),
-
-                ['+', remains @ ..] => self.emit_operator(1, Operator::Plus, remains),
-                ['-', remains @ ..] => self.emit_operator(1, Operator::Minus, remains),
-                ['*', remains @ ..] => self.emit_operator(1, Operator::Times, remains),
-                ['/', remains @ ..] => self.emit_operator(1, Operator::Divides, remains),
-                ['%', remains @ ..] => self.emit_operator(1, Operator::Modulo, remains),
-
-                [c, ..] => panic!("{c}"),
-
-                [] => {
-                    self.emit(0, TokenType::End, &[]);
-                    break &self.output;
-                }
-            };
-        }
-    }
-
-    pub fn into_token_type_stream(&self) -> Vec<TokenType> {
-        self.output.iter().map(|t| t.token_type().clone()).collect()
-    }
-
-    fn scan_identifier<'a>(&mut self, input: &'a [char]) -> &'a [char] {
-        let (prefix, remains) = if let Some(end) = input[1..]
-            .iter()
-            .position(|c| !is_identifier_continuation(*c))
-        {
-            (&input[..(end + 1)], &input[(end + 1)..])
-        } else {
-            (input, &input[..0])
-        };
-
-        let identifier = prefix.into_iter().collect::<String>();
-        self.emit(
-            identifier.len() as u32,
-            TokenType::decode_identifier(identifier),
-            remains,
-        )
-    }
-
-    fn scan_text_literal<'a>(&mut self, input: &'a [char]) -> &'a [char] {
-        let (prefix, remains) = if let Some(end) = input.iter().position(|&c| c == '"') {
-            (&input[..end], &input[end + 1..])
-        } else {
-            (input, &input[..0])
-        };
-
-        let image = prefix.into_iter().collect::<String>();
-        self.emit(
-            image.len() as u32,
-            TokenType::Literal(Literal::Text(image)),
-            remains,
-        )
-    }
-
-    fn emit_operator<'a>(&mut self, length: u32, op: Operator, remains: &'a [char]) -> &'a [char] {
-        self.emit(length, TokenType::Operator(op), remains)
-    }
-
-    fn emit<'a>(&mut self, length: u32, token_type: TokenType, remains: &'a [char]) -> &'a [char] {
-        self.output.push(Token(token_type, self.location.clone()));
-        self.location.move_right(length);
-        remains
-    }
-
-    fn scan_whitespace<'a>(&mut self, input: &'a [char]) -> &'a [char] {
-        let (whitespace_prefix, remains) =
-            if let Some(end) = input.iter().position(|c| !c.is_whitespace()) {
-                (&input[..end], &input[end..])
-            } else {
-                (input, &input[..0])
-            };
-
-        let next_location = self.compute_new_location(whitespace_prefix);
-
-        self.update_location(next_location);
-
-        remains
-    }
-
-    fn compute_new_location(&mut self, whitespace: &[char]) -> Location {
-        let mut next_location = self.location.clone();
-
-        for c in whitespace {
-            match c {
-                ' ' => next_location.move_right(1),
-                '\n' => next_location.new_line(),
-                otherwise => {
-                    println!("process_whitespace: {}", *otherwise as u32);
-                    ()
-                }
-            }
-        }
-
-        next_location
-    }
-
-    fn update_location(&mut self, next: Location) {
-        if next.is_below(&self.location) {
-            if next.is_left_of(self.indentation_level) {
-                self.emit_layout(next, Layout::Dedent);
-            } else if next.is_right_of(self.indentation_level) {
-                self.emit_layout(next, Layout::Indent);
-            } else {
-                self.emit_layout(next, Layout::Newline);
-            }
-            self.indentation_level = next.column;
-        }
-
-        self.location = next;
-    }
-
-    // Which location is the location of an Indent or Dedent?
-    fn emit_layout(&mut self, location: Location, indentation: Layout) {
-        self.output
-            .push(Token(TokenType::Layout(indentation), location));
-    }
-
-    fn scan_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {
-        let (prefix, remains) = if let Some(end) = prefix.iter().position(|c| !c.is_ascii_digit()) {
-            (&prefix[..end], &prefix[end..])
-        } else {
-            (prefix, &prefix[..0])
-        };
-
-        // This has to be able to fail the tokenization here
-        let num = prefix.iter().collect::<String>().parse().unwrap();
-
-        self.emit(
-            prefix.len() as u32,
-            TokenType::Literal(Literal::Integer(num)),
-            remains,
-        );
-
-        remains
-    }
-}
-
-fn is_number_prefix(c: char) -> bool {
-    c.is_digit(10) // Improved
-}
-
-fn is_identifier_prefix(c: char) -> bool {
-    c.is_alphabetic() || c == '_'
-}
-
-fn is_identifier_continuation(c: char) -> bool {
-    c.is_alphabetic() || c == '_' || c.is_numeric()
-}
-
-impl Default for LexicalAnalyzer {
-    fn default() -> Self {
-        let location = Location::default();
-        Self {
-            location,
-            indentation_level: location.column,
-            output: Vec::default(), // This could actually be something a lot bigger.
         }
     }
 }
