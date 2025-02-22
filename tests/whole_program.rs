@@ -38,7 +38,7 @@ fn main1() {
     stdlib::import(&mut prelude).unwrap();
 
     let return_value = Interpreter::new(prelude.interpreter_environment)
-        .load_and_run(program)
+        .load_and_run(program.map(|_| ()))
         .unwrap();
 
     assert_eq!(Base::Int(327), return_value.try_into_scalar().unwrap());
@@ -48,34 +48,73 @@ fn _make_fix_value(env: Environment) -> Value {
     Value::Closure(Closure {
         parameter: Identifier::new("f"),
         capture: env.clone(),
-        body: Expression::Apply(Apply {
-            function: Box::new(Expression::Lambda(Lambda {
-                parameter: Parameter::new(Identifier::new("x")),
-                body: Box::new(Expression::Apply(Apply {
-                    function: Box::new(Expression::Variable(Identifier::new("f"))),
-                    argument: Box::new(Expression::Lambda(Lambda {
-                        parameter: Parameter::new(Identifier::new("y")),
-                        body: Box::new(Expression::Apply(Apply {
-                            function: Box::new(Expression::Variable(Identifier::new("x"))),
-                            argument: Box::new(Expression::Variable(Identifier::new("x"))),
-                        })),
-                    })),
-                })),
-            })),
-            argument: Box::new(Expression::Lambda(Lambda {
-                parameter: Parameter::new(Identifier::new("x")),
-                body: Box::new(Expression::Apply(Apply {
-                    function: Box::new(Expression::Variable(Identifier::new("f"))),
-                    argument: Box::new(Expression::Lambda(Lambda {
-                        parameter: Parameter::new(Identifier::new("y")),
-                        body: Box::new(Expression::Apply(Apply {
-                            function: Box::new(Expression::Variable(Identifier::new("x"))),
-                            argument: Box::new(Expression::Variable(Identifier::new("x"))),
-                        })),
-                    })),
-                })),
-            })),
-        }),
+        body: Expression::Apply(
+            (),
+            Apply {
+                function: Box::new(Expression::Lambda(
+                    (),
+                    Lambda {
+                        parameter: Parameter::new(Identifier::new("x")),
+                        body: Box::new(Expression::Apply(
+                            (),
+                            Apply {
+                                function: Box::new(Expression::Variable((), Identifier::new("f"))),
+                                argument: Box::new(Expression::Lambda(
+                                    (),
+                                    Lambda {
+                                        parameter: Parameter::new(Identifier::new("y")),
+                                        body: Box::new(Expression::Apply(
+                                            (),
+                                            Apply {
+                                                function: Box::new(Expression::Variable(
+                                                    (),
+                                                    Identifier::new("x"),
+                                                )),
+                                                argument: Box::new(Expression::Variable(
+                                                    (),
+                                                    Identifier::new("x"),
+                                                )),
+                                            },
+                                        )),
+                                    },
+                                )),
+                            },
+                        )),
+                    },
+                )),
+                argument: Box::new(Expression::Lambda(
+                    (),
+                    Lambda {
+                        parameter: Parameter::new(Identifier::new("x")),
+                        body: Box::new(Expression::Apply(
+                            (),
+                            Apply {
+                                function: Box::new(Expression::Variable((), Identifier::new("f"))),
+                                argument: Box::new(Expression::Lambda(
+                                    (),
+                                    Lambda {
+                                        parameter: Parameter::new(Identifier::new("y")),
+                                        body: Box::new(Expression::Apply(
+                                            (),
+                                            Apply {
+                                                function: Box::new(Expression::Variable(
+                                                    (),
+                                                    Identifier::new("x"),
+                                                )),
+                                                argument: Box::new(Expression::Variable(
+                                                    (),
+                                                    Identifier::new("x"),
+                                                )),
+                                            },
+                                        )),
+                                    },
+                                )),
+                            },
+                        )),
+                    },
+                )),
+            },
+        ),
     })
 }
 
@@ -101,7 +140,7 @@ fn factorial20() {
 
     let program_environment = Environment::make_child(prelude.interpreter_environment);
 
-    let return_value = Interpreter::new(program_environment).load_and_run(program);
+    let return_value = Interpreter::new(program_environment).load_and_run(program.map(|_| ()));
     assert_eq!(
         Base::Int(2432902008176640000),
         return_value.unwrap().try_into_scalar().unwrap()

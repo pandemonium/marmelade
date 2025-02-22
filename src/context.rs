@@ -1,6 +1,7 @@
 use crate::{
     ast::CompilationUnit,
     interpreter::{Environment, Interpreter, Loaded, Value},
+    parser::ParsingInfo,
     types::TypingContext,
 };
 
@@ -19,7 +20,7 @@ impl<'a> CompileState<'a> {
         }
     }
 
-    pub fn typecheck_and_interpret(self, program: CompilationUnit) -> Loaded<Value> {
+    pub fn typecheck_and_interpret(self, program: CompilationUnit<ParsingInfo>) -> Loaded<Value> {
         //        if let CompilationUnit::Implicit(module) = &program {
         //            if let Declaration::Value { declarator, .. } = module
         //                .find_value_declaration(&Identifier::new("fibonacci"))
@@ -40,6 +41,6 @@ impl<'a> CompileState<'a> {
         //        }
         //
         Interpreter::new(Environment::make_child(self.interpreter_environment))
-            .load_and_run(program)
+            .load_and_run(program.map(|_| ()))
     }
 }

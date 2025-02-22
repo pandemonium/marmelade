@@ -209,7 +209,7 @@ impl Type {
 
             let mut substitutions = Substitutions::default();
             for ((lhs_id, lhs_ty), (rhs_id, rhs_ty)) in
-                lhs_fields.into_iter().zip(rhs_fields.into_iter())
+                lhs_fields.drain(..).zip(rhs_fields.drain(..))
             {
                 if lhs_id == rhs_id {
                     substitutions = substitutions.compose(lhs_ty.unify(rhs_ty)?)
@@ -273,12 +273,12 @@ pub enum ProductType {
 impl ProductType {
     fn apply(self, subs: &Substitutions) -> ProductType {
         match self {
-            ProductType::Tuple(elements) => {
-                ProductType::Tuple(elements.into_iter().map(|ty| ty.apply(subs)).collect())
+            ProductType::Tuple(mut elements) => {
+                ProductType::Tuple(elements.drain(..).map(|ty| ty.apply(subs)).collect())
             }
-            ProductType::Struct(elements) => ProductType::Struct(
+            ProductType::Struct(mut elements) => ProductType::Struct(
                 elements
-                    .into_iter()
+                    .drain()
                     .map(|(label, ty)| (label, ty.apply(subs)))
                     .collect(),
             ),
@@ -330,10 +330,10 @@ impl CoproductType {
     }
 
     fn apply(self, subs: &Substitutions) -> Self {
-        let Self(constructors) = self;
+        let Self(mut constructors) = self;
         Self(
             constructors
-                .into_iter()
+                .drain(..)
                 .map(|(constructor, parameter_type)| (constructor, parameter_type.apply(subs)))
                 .collect(),
         )
@@ -425,7 +425,7 @@ impl TypingContext {
         map.get(binding)
     }
 
-    pub fn infer_type(&self, e: &Expression) -> Typing {
+    pub fn infer_type<A>(&self, e: &Expression<A>) -> Typing {
         typer::infer(e, self)
     }
 
@@ -514,12 +514,12 @@ mod typer {
     }
 
     // revisit this function
-    fn infer_lambda(
+    fn infer_lambda<A>(
         ast::Parameter {
             name,
             type_annotation,
         }: &ast::Parameter,
-        body: &Expression,
+        body: &Expression<A>,
         ctx: &TypingContext,
     ) -> Typing {
         let expected_param_type = if let Some(param_type) = type_annotation {
@@ -551,9 +551,9 @@ mod typer {
         })
     }
 
-    fn infer_application(
-        function: &ast::Expression,
-        argument: &ast::Expression,
+    fn infer_application<A>(
+        function: &ast::Expression<A>,
+        argument: &ast::Expression<A>,
         ctx: &TypingContext,
     ) -> Typing {
         let function = infer(function, ctx)?;
@@ -581,9 +581,9 @@ mod typer {
         })
     }
 
-    pub fn infer(expr: &ast::Expression, ctx: &TypingContext) -> Typing {
+    pub fn infer<A>(expr: &ast::Expression<A>, ctx: &TypingContext) -> Typing {
         match expr {
-            ast::Expression::Variable(binding) | ast::Expression::CallBridge(binding) => {
+            ast::Expression::Variable(_, binding) | ast::Expression::CallBridge(_, binding) => {
                 // Ref-variants of Binding too?
                 if let Some(ty) = ctx.lookup(&binding.clone().into()) {
                     Ok(TypeInference {
@@ -594,44 +594,55 @@ mod typer {
                     Err(TypeError::UndefinedSymbol(binding.clone()))
                 }
             }
-            ast::Expression::Literal(constant) => synthesize_type_of_constant(constant, ctx),
-            ast::Expression::SelfReferential(SelfReferential {
-                name,
-                parameter,
-                body,
-            }) => {
+            ast::Expression::Literal(_, constant) => synthesize_type_of_constant(constant, ctx),
+            ast::Expression::SelfReferential(
+                _,
+                SelfReferential {
+                    name,
+                    parameter,
+                    body,
+                },
+            ) => {
                 let mut ctx = ctx.clone();
                 ctx.bind(name.clone().into(), Type::fresh());
                 infer_lambda(parameter, body, &ctx)
             }
-            ast::Expression::Lambda(Lambda { parameter, body }) => {
+            ast::Expression::Lambda(_, Lambda { parameter, body }) => {
                 infer_lambda(parameter, body, ctx)
             }
-            ast::Expression::Apply(Apply { function, argument }) => {
+            ast::Expression::Apply(_, Apply { function, argument }) => {
                 infer_application(function, argument, ctx)
             }
-            ast::Expression::Binding(Binding {
-                binder,
-                bound,
-                body,
-                ..
-            }) => infer_binding(binder, bound, body, ctx),
-            ast::Expression::Construct(Construct {
-                name,
-                constructor,
-                argument,
-            }) => infer_coproduct(name, constructor, argument, ctx),
-            ast::Expression::Product(product) => infer_product(product, ctx),
-            ast::Expression::Project(Project { base, index }) => infer_projection(base, index, ctx),
-            ast::Expression::Sequence(Sequence { this, and_then }) => {
+            ast::Expression::Binding(
+                _,
+                Binding {
+                    binder,
+                    bound,
+                    body,
+                    ..
+                },
+            ) => infer_binding(binder, bound, body, ctx),
+            ast::Expression::Construct(
+                _,
+                Construct {
+                    name,
+                    constructor,
+                    argument,
+                },
+            ) => infer_coproduct(name, constructor, argument, ctx),
+            ast::Expression::Product(_, product) => infer_product(product, ctx),
+            ast::Expression::Project(_, Project { base, index }) => {
+                infer_projection(base, index, ctx)
+            }
+            ast::Expression::Sequence(_, Sequence { this, and_then }) => {
                 infer(this, ctx)?;
                 infer(and_then, ctx)
             }
-            ast::Expression::ControlFlow(control) => infer_control_flow(control, ctx),
+            ast::Expression::ControlFlow(_, control) => infer_control_flow(control, ctx),
         }
     }
 
-    fn infer_control_flow(control: &ControlFlow, ctx: &TypingContext) -> Typing {
+    fn infer_control_flow<A>(control: &ControlFlow<A>, ctx: &TypingContext) -> Typing {
         match control {
             ControlFlow::If {
                 predicate,
@@ -641,10 +652,10 @@ mod typer {
         }
     }
 
-    fn infer_if_expression(
-        predicate: &Expression,
-        consequent: &Expression,
-        alternate: &Expression,
+    fn infer_if_expression<A>(
+        predicate: &Expression<A>,
+        consequent: &Expression<A>,
+        alternate: &Expression<A>,
         ctx: &TypingContext,
     ) -> Typing {
         let predicate_type = infer(predicate, ctx)?;
@@ -671,10 +682,10 @@ mod typer {
         })
     }
 
-    fn infer_binding(
+    fn infer_binding<A>(
         binding: &ast::Identifier,
-        bound: &ast::Expression,
-        body: &ast::Expression,
+        bound: &ast::Expression<A>,
+        body: &ast::Expression<A>,
         ctx: &TypingContext,
     ) -> Typing {
         let bound = infer(bound, ctx)?;
@@ -694,8 +705,8 @@ mod typer {
         })
     }
 
-    fn infer_projection(
-        base: &Expression,
+    fn infer_projection<A>(
+        base: &Expression<A>,
         index: &ast::ProductIndex,
         ctx: &TypingContext,
     ) -> Typing {
@@ -735,10 +746,10 @@ mod typer {
         }
     }
 
-    fn infer_coproduct(
+    fn infer_coproduct<A>(
         name: &ast::TypeName,
         constructor: &ast::Identifier,
-        argument: &Expression,
+        argument: &Expression<A>,
         ctx: &TypingContext,
     ) -> Result<TypeInference, TypeError> {
         if let Some(constructed_type @ Type::Coproduct(coproduct)) = ctx
@@ -768,15 +779,15 @@ mod typer {
         }
     }
 
-    fn infer_product(product: &ast::Product, ctx: &TypingContext) -> Typing {
+    fn infer_product<A>(product: &ast::Product<A>, ctx: &TypingContext) -> Typing {
         match product {
             ast::Product::Tuple(elements) => infer_tuple(elements, ctx),
             ast::Product::Struct { bindings } => infer_struct(bindings, ctx),
         }
     }
 
-    fn infer_struct(
-        elements: &HashMap<ast::Identifier, ast::Expression>,
+    fn infer_struct<A>(
+        elements: &HashMap<ast::Identifier, ast::Expression<A>>,
         ctx: &TypingContext,
     ) -> Typing {
         let mut substitutions = Substitutions::default();
@@ -791,11 +802,11 @@ mod typer {
 
         Ok(TypeInference {
             substitutions,
-            inferred_type: Type::Product(ProductType::Struct(types.into_iter().collect())),
+            inferred_type: Type::Product(ProductType::Struct(types.drain(..).collect())),
         })
     }
 
-    fn infer_tuple(elements: &[ast::Expression], ctx: &TypingContext) -> Typing {
+    fn infer_tuple<A>(elements: &[ast::Expression<A>], ctx: &TypingContext) -> Typing {
         let mut substitutions = Substitutions::default();
         let mut types = Vec::with_capacity(elements.len());
 
@@ -839,18 +850,24 @@ mod tests {
         types::{BaseType, ProductType, Type, TypeParameter},
     };
 
-    fn mk_apply(f: ast::Expression, arg: ast::Expression) -> ast::Expression {
-        ast::Expression::Apply(Apply {
-            function: f.into(),
-            argument: arg.into(),
-        })
+    fn mk_apply(f: ast::Expression<()>, arg: ast::Expression<()>) -> ast::Expression<()> {
+        ast::Expression::Apply(
+            (),
+            Apply {
+                function: f.into(),
+                argument: arg.into(),
+            },
+        )
     }
 
-    fn mk_identity() -> ast::Expression {
-        ast::Expression::Lambda(Lambda {
-            parameter: ast::Parameter::new(ast::Identifier::new("x")),
-            body: ast::Expression::Variable(ast::Identifier::new("x")).into(),
-        })
+    fn mk_identity() -> ast::Expression<()> {
+        ast::Expression::Lambda(
+            (),
+            Lambda {
+                parameter: ast::Parameter::new(ast::Identifier::new("x")),
+                body: ast::Expression::Variable((), ast::Identifier::new("x")).into(),
+            },
+        )
     }
 
     #[test]
@@ -859,16 +876,22 @@ mod tests {
 
         let ctx = TypingContext::default();
 
-        let e = mk_apply(id.clone(), ast::Expression::Literal(ast::Constant::Int(10)));
+        let e = mk_apply(
+            id.clone(),
+            ast::Expression::Literal((), ast::Constant::Int(10)),
+        );
         let t = ctx.infer_type(&e).unwrap();
         assert_eq!(t.inferred_type, Type::Base(BaseType::Int));
 
         let e = mk_apply(
             id.clone(),
-            ast::Expression::Product(ast::Product::Tuple(vec![
-                ast::Expression::Literal(ast::Constant::Int(10)),
-                ast::Expression::Literal(ast::Constant::Float(1.0)),
-            ])),
+            ast::Expression::Product(
+                (),
+                ast::Product::Tuple(vec![
+                    ast::Expression::Literal((), ast::Constant::Int(10)),
+                    ast::Expression::Literal((), ast::Constant::Float(1.0)),
+                ]),
+            ),
         );
         let t = ctx.infer_type(&e).unwrap();
         assert_eq!(
@@ -883,10 +906,13 @@ mod tests {
     #[test]
     fn tuples() {
         let ctx = TypingContext::default();
-        let e = ast::Expression::Product(ast::Product::Tuple(vec![
-            ast::Expression::Literal(ast::Constant::Int(1)),
-            ast::Expression::Literal(ast::Constant::Float(1.0)),
-        ]));
+        let e = ast::Expression::Product(
+            (),
+            ast::Product::Tuple(vec![
+                ast::Expression::Literal((), ast::Constant::Int(1)),
+                ast::Expression::Literal((), ast::Constant::Float(1.0)),
+            ]),
+        );
 
         let t = ctx.infer_type(&e).unwrap();
         assert_eq!(
@@ -897,10 +923,13 @@ mod tests {
             ]))
         );
 
-        let e = ast::Expression::Project(Project {
-            base: e.into(),
-            index: ast::ProductIndex::Tuple(0),
-        });
+        let e = ast::Expression::Project(
+            (),
+            Project {
+                base: e.into(),
+                index: ast::ProductIndex::Tuple(0),
+            },
+        );
         let t = ctx.infer_type(&e).unwrap();
         assert_eq!(t.inferred_type, Type::Base(BaseType::Int));
     }
@@ -910,19 +939,22 @@ mod tests {
         let mut ctx = TypingContext::default();
         let e = mk_apply(
             mk_identity(),
-            ast::Expression::Product(ast::Product::Struct {
-                bindings: HashMap::from([
-                    (ast::Identifier::new("id"), mk_identity()),
-                    (
-                        ast::Identifier::new("x"),
-                        mk_constant(ast::Constant::Int(1)),
-                    ),
-                    (
-                        ast::Identifier::new("y"),
-                        mk_constant(ast::Constant::Float(1.0)),
-                    ),
-                ]),
-            }),
+            ast::Expression::Product(
+                (),
+                ast::Product::Struct {
+                    bindings: HashMap::from([
+                        (ast::Identifier::new("id"), mk_identity()),
+                        (
+                            ast::Identifier::new("x"),
+                            mk_constant(ast::Constant::Int(1)),
+                        ),
+                        (
+                            ast::Identifier::new("y"),
+                            mk_constant(ast::Constant::Float(1.0)),
+                        ),
+                    ]),
+                },
+            ),
         );
         let t = ctx.infer_type(&e).unwrap();
         let expected_type = Type::Product(ProductType::Struct(HashMap::from([
@@ -938,13 +970,16 @@ mod tests {
 
         assert_eq!(t.inferred_type, mk_trivial_type(BaseType::Float));
 
-        let abs = ast::Expression::Lambda(Lambda {
-            parameter: ast::Parameter {
-                name: ast::Identifier::new("x"),
-                type_annotation: Some(ast::TypeName::new("builtin::Float")),
+        let abs = ast::Expression::Lambda(
+            (),
+            Lambda {
+                parameter: ast::Parameter {
+                    name: ast::Identifier::new("x"),
+                    type_annotation: Some(ast::TypeName::new("builtin::Float")),
+                },
+                body: ast::Expression::Variable((), ast::Identifier::new("x")).into(),
             },
-            body: ast::Expression::Variable(ast::Identifier::new("x")).into(),
-        });
+        );
 
         let e = mk_apply(abs, mk_constant(ast::Constant::Float(1.0)));
 
@@ -976,11 +1011,14 @@ mod tests {
             ),
         );
 
-        let e = ast::Expression::Construct(Construct {
-            name: ast::TypeName::new("Option"),
-            constructor: ast::Identifier::new("The"),
-            argument: mk_constant(ast::Constant::Float(1.0)).into(),
-        });
+        let e = ast::Expression::Construct(
+            (),
+            Construct {
+                name: ast::TypeName::new("Option"),
+                constructor: ast::Identifier::new("The"),
+                argument: mk_constant(ast::Constant::Float(1.0)).into(),
+            },
+        );
         let t = ctx.infer_type(&e).unwrap();
 
         assert_eq!(
@@ -1006,19 +1044,22 @@ mod tests {
         );
 
         let e = mk_apply(
-            ast::Expression::Variable(ast::Identifier::new("id")),
-            ast::Expression::Product(ast::Product::Struct {
-                bindings: HashMap::from([
-                    (
-                        ast::Identifier::new("x"),
-                        mk_apply(mk_identity(), mk_constant(ast::Constant::Int(1))),
-                    ),
-                    (
-                        ast::Identifier::new("y"),
-                        mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0))),
-                    ),
-                ]),
-            }),
+            ast::Expression::Variable((), ast::Identifier::new("id")),
+            ast::Expression::Product(
+                (),
+                ast::Product::Struct {
+                    bindings: HashMap::from([
+                        (
+                            ast::Identifier::new("x"),
+                            mk_apply(mk_identity(), mk_constant(ast::Constant::Int(1))),
+                        ),
+                        (
+                            ast::Identifier::new("y"),
+                            mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0))),
+                        ),
+                    ]),
+                },
+            ),
         );
         let t = ctx.infer_type(&e).unwrap();
         assert_eq!(
@@ -1035,26 +1076,35 @@ mod tests {
         let mut gamma = TypingContext::default();
         gamma.bind(Binding::TypeTerm("Id".to_owned()), mk_identity_type());
 
-        let apply_to_five_expr = ast::Expression::Lambda(Lambda {
-            parameter: ast::Parameter {
-                name: ast::Identifier::new("f"),                 // Parameter `f`
-                type_annotation: Some(ast::TypeName::new("Id")), // Annotate with the type alias
+        let apply_to_five_expr = ast::Expression::Lambda(
+            (),
+            Lambda {
+                parameter: ast::Parameter {
+                    name: ast::Identifier::new("f"),                 // Parameter `f`
+                    type_annotation: Some(ast::TypeName::new("Id")), // Annotate with the type alias
+                },
+                body: Box::new(ast::Expression::Apply(
+                    (),
+                    Apply {
+                        function: ast::Expression::Variable((), ast::Identifier::new("f")).into(), // Apply `f`
+                        argument: ast::Expression::Literal((), ast::Constant::Int(5)).into(), // Argument: 5
+                    },
+                )),
             },
-            body: Box::new(ast::Expression::Apply(Apply {
-                function: ast::Expression::Variable(ast::Identifier::new("f")).into(), // Apply `f`
-                argument: ast::Expression::Literal(ast::Constant::Int(5)).into(), // Argument: 5
-            })),
-        });
+        );
 
         let t = gamma.infer_type(&apply_to_five_expr).unwrap();
         println!("t::{t:?}");
 
         gamma.bind(Binding::ValueTerm("id".to_owned()), mk_identity_type());
 
-        let apply_to_five_to_id = ast::Expression::Apply(Apply {
-            function: apply_to_five_expr.clone().into(), // Use `applyToFive`
-            argument: ast::Expression::Variable(ast::Identifier::new("id")).into(), // Apply it to `id`
-        });
+        let apply_to_five_to_id = ast::Expression::Apply(
+            (),
+            Apply {
+                function: apply_to_five_expr.clone().into(), // Use `applyToFive`
+                argument: ast::Expression::Variable((), ast::Identifier::new("id")).into(), // Apply it to `id`
+            },
+        );
 
         let t = gamma.infer_type(&apply_to_five_to_id).unwrap();
         println!("t::{t:?}");
@@ -1069,7 +1119,7 @@ mod tests {
         Type::Base(ty)
     }
 
-    fn mk_constant(int: ast::Constant) -> ast::Expression {
-        ast::Expression::Literal(int)
+    fn mk_constant(int: ast::Constant) -> ast::Expression<()> {
+        ast::Expression::Literal((), int)
     }
 }

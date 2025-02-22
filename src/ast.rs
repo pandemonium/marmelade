@@ -6,18 +6,33 @@ use std::{
 use crate::{
     interpreter::DependencyGraph,
     lexer::{self, SourcePosition},
+    parser::ParsingInfo,
 };
 
 #[derive(Debug)]
-pub enum CompilationUnit {
-    Implicit(ModuleDeclarator),
+pub enum CompilationUnit<A> {
+    Implicit(ModuleDeclarator<A>),
     Library {
-        modules: Vec<ModuleDeclarator>,
-        main: ModuleDeclarator,
+        modules: Vec<ModuleDeclarator<A>>,
+        main: ModuleDeclarator<A>,
     },
 }
+impl<A> CompilationUnit<A>
+where
+    A: Clone,
+{
+    pub fn map<B>(self, f: fn(A) -> B) -> CompilationUnit<B> {
+        match self {
+            Self::Implicit(module) => CompilationUnit::<B>::Implicit(module.map(f)),
+            Self::Library { mut modules, main } => CompilationUnit::<B>::Library {
+                modules: modules.drain(..).map(|m| m.map(f)).collect(),
+                main: main.map(f),
+            },
+        }
+    }
+}
 
-impl fmt::Display for CompilationUnit {
+impl<A> fmt::Display for CompilationUnit<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Implicit(module) => writeln!(f, "{module}"),
@@ -32,16 +47,19 @@ impl fmt::Display for CompilationUnit {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct ModuleDeclarator {
+pub struct ModuleDeclarator<A> {
     pub position: SourcePosition,
     pub name: Identifier,
-    pub declarations: Vec<Declaration>,
+    pub declarations: Vec<Declaration<A>>,
     // pub main: Expression,
     // I would like this, but I have to think a little more about it
 }
 
-impl ModuleDeclarator {
-    pub fn find_value_declaration<'a>(&'a self, id: &'a Identifier) -> Option<&'a Declaration> {
+impl<A> ModuleDeclarator<A>
+where
+    A: Clone,
+{
+    pub fn find_value_declaration<'a>(&'a self, id: &'a Identifier) -> Option<&'a Declaration<A>> {
         self.declarations
             .iter()
             .find(|decl| matches!(decl, Declaration::Value { binder, .. } if binder == id))
@@ -50,9 +68,17 @@ impl ModuleDeclarator {
     pub fn dependency_graph(&self) -> DependencyGraph {
         DependencyGraph::from_declarations(&self.declarations)
     }
+
+    fn map<B>(mut self, f: fn(A) -> B) -> ModuleDeclarator<B> {
+        ModuleDeclarator::<B> {
+            position: self.position,
+            name: self.name,
+            declarations: self.declarations.drain(..).map(|d| d.map(f)).collect(),
+        }
+    }
 }
 
-impl fmt::Display for ModuleDeclarator {
+impl<A> fmt::Display for ModuleDeclarator<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             name, declarations, ..
@@ -115,18 +141,18 @@ impl fmt::Display for TypeName {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Declaration {
+pub enum Declaration<A> {
     Value {
         position: SourcePosition,
         binder: Identifier,
-        declarator: ValueDeclarator,
+        declarator: ValueDeclarator<A>,
     },
     Type {
         position: SourcePosition,
         binding: Identifier,
         declarator: TypeDeclarator,
     },
-    Module(ModuleDeclarator),
+    Module(ModuleDeclarator<A>),
     ImportModule {
         position: SourcePosition,
         exported_symbols: Vec<Identifier>,
@@ -134,7 +160,10 @@ pub enum Declaration {
     // Use()    ??
 }
 
-impl Declaration {
+impl<A> Declaration<A>
+where
+    A: Clone,
+{
     pub fn position(&self) -> &SourcePosition {
         match self {
             Self::Value { position, .. }
@@ -143,9 +172,40 @@ impl Declaration {
             | Self::ImportModule { position, .. } => position,
         }
     }
+
+    pub fn map<B>(self, f: fn(A) -> B) -> Declaration<B> {
+        match self {
+            Self::Value {
+                position,
+                binder,
+                declarator,
+            } => Declaration::<B>::Value {
+                position,
+                binder,
+                declarator: declarator.map(f),
+            },
+            Self::Type {
+                position,
+                binding,
+                declarator,
+            } => Declaration::<B>::Type {
+                position,
+                binding,
+                declarator,
+            },
+            Self::Module(declarator) => Declaration::<B>::Module(declarator.map(f)),
+            Self::ImportModule {
+                position,
+                exported_symbols,
+            } => Declaration::<B>::ImportModule {
+                position,
+                exported_symbols,
+            },
+        }
+    }
 }
 
-impl fmt::Display for Declaration {
+impl<A> fmt::Display for Declaration<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Value {
@@ -237,12 +297,15 @@ impl fmt::Display for Constructor {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ValueDeclarator {
-    Constant(ConstantDeclarator),
-    Function(FunctionDeclarator),
+pub enum ValueDeclarator<A> {
+    Constant(ConstantDeclarator<A>),
+    Function(FunctionDeclarator<A>),
 }
 
-impl ValueDeclarator {
+impl<A> ValueDeclarator<A>
+where
+    A: Clone,
+{
     pub fn dependencies(&self) -> HashSet<&Identifier> {
         let mut free = match self {
             Self::Constant(decl) => decl.free_identifiers(),
@@ -250,9 +313,16 @@ impl ValueDeclarator {
         };
         free.drain().collect()
     }
+
+    fn map<B>(self, f: fn(A) -> B) -> ValueDeclarator<B> {
+        match self {
+            Self::Constant(constant) => ValueDeclarator::<B>::Constant(constant.map(f)),
+            Self::Function(function) => ValueDeclarator::<B>::Function(function.map(f)),
+        }
+    }
 }
 
-impl fmt::Display for ValueDeclarator {
+impl<A> fmt::Display for ValueDeclarator<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Constant(constant) => write!(f, "{constant}"),
@@ -262,18 +332,25 @@ impl fmt::Display for ValueDeclarator {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ConstantDeclarator {
-    pub initializer: Expression,
+pub struct ConstantDeclarator<A> {
+    pub initializer: Expression<A>,
     pub type_annotation: Option<TypeName>,
 }
 
-impl ConstantDeclarator {
+impl<A> ConstantDeclarator<A> {
     pub fn free_identifiers(&self) -> HashSet<&Identifier> {
         self.initializer.free_identifiers()
     }
+
+    fn map<B>(self, f: fn(A) -> B) -> ConstantDeclarator<B> {
+        ConstantDeclarator::<B> {
+            initializer: self.initializer.map(f),
+            type_annotation: self.type_annotation,
+        }
+    }
 }
 
-impl fmt::Display for ConstantDeclarator {
+impl<A> fmt::Display for ConstantDeclarator<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             initializer,
@@ -290,24 +367,30 @@ impl fmt::Display for ConstantDeclarator {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDeclarator {
+pub struct FunctionDeclarator<A> {
     pub parameters: Vec<Parameter>,
     pub return_type_annotation: Option<TypeName>,
-    pub body: Expression,
+    pub body: Expression<A>,
 }
 
-impl FunctionDeclarator {
+impl<A> FunctionDeclarator<A>
+where
+    A: Clone,
+{
     // does this function really go here?
-    pub fn into_lambda_tree(self, self_name: Identifier) -> Expression {
+    pub fn into_lambda_tree(mut self, self_name: Identifier) -> Expression<A> {
         self.parameters
-            .into_iter()
+            .drain(..)
             .rev()
             .fold(self.body, |body, parameter| {
-                Expression::SelfReferential(SelfReferential {
-                    name: self_name.clone(),
-                    parameter,
-                    body: body.into(),
-                })
+                Expression::SelfReferential(
+                    body.annotation().clone(),
+                    SelfReferential {
+                        name: self_name.clone(),
+                        parameter,
+                        body: body.into(),
+                    },
+                )
             })
     }
 
@@ -318,9 +401,17 @@ impl FunctionDeclarator {
         }
         free
     }
+
+    fn map<B>(self, f: fn(A) -> B) -> FunctionDeclarator<B> {
+        FunctionDeclarator::<B> {
+            parameters: self.parameters,
+            return_type_annotation: self.return_type_annotation,
+            body: self.body.map(f),
+        }
+    }
 }
 
-impl fmt::Display for FunctionDeclarator {
+impl<A> fmt::Display for FunctionDeclarator<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             parameters,
@@ -376,73 +467,152 @@ impl fmt::Display for Parameter {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expression {
-    Variable(Identifier),
-    CallBridge(Identifier),
-    Literal(Constant),
-    SelfReferential(SelfReferential),
-    Lambda(Lambda),
-    Apply(Apply),
-    Construct(Construct),
-    Product(Product),
-    Project(Project),
-    Binding(Binding),
-    Sequence(Sequence),
-    ControlFlow(ControlFlow),
+pub enum Expression<A> {
+    Variable(A, Identifier),
+    CallBridge(A, Identifier),
+    Literal(A, Constant),
+    SelfReferential(A, SelfReferential<A>),
+    Lambda(A, Lambda<A>),
+    Apply(A, Apply<A>),
+    Construct(A, Construct<A>),
+    Product(A, Product<A>),
+    Project(A, Project<A>),
+    Binding(A, Binding<A>),
+    Sequence(A, Sequence<A>),
+    ControlFlow(A, ControlFlow<A>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SelfReferential {
+pub struct SelfReferential<A> {
     pub name: Identifier,
     pub parameter: Parameter,
-    pub body: Box<Expression>,
+    pub body: Box<Expression<A>>,
+}
+impl<A> SelfReferential<A> {
+    fn map<B>(self, f: fn(A) -> B) -> SelfReferential<B> {
+        SelfReferential::<B> {
+            name: self.name,
+            parameter: self.parameter,
+            body: self.body.map(f).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Lambda {
+pub struct Lambda<A> {
     pub parameter: Parameter,
-    pub body: Box<Expression>,
+    pub body: Box<Expression<A>>,
+}
+impl<A> Lambda<A> {
+    fn map<B>(self, f: fn(A) -> B) -> Lambda<B> {
+        Lambda::<B> {
+            parameter: self.parameter,
+            body: self.body.map(f).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Apply {
-    pub function: Box<Expression>,
-    pub argument: Box<Expression>,
+pub struct Apply<A> {
+    pub function: Box<Expression<A>>,
+    pub argument: Box<Expression<A>>,
+}
+impl<A> Apply<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> Apply<B> {
+        Apply::<B> {
+            function: self.function.map(f).into(),
+            argument: self.argument.map(f).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Construct {
+pub struct Construct<A> {
     pub name: TypeName,
     pub constructor: Identifier,
-    pub argument: Box<Expression>,
+    pub argument: Box<Expression<A>>,
+}
+impl<A> Construct<A> {
+    fn map<B>(self, f: fn(A) -> B) -> Construct<B> {
+        Construct::<B> {
+            name: self.name,
+            constructor: self.constructor,
+            argument: self.argument.map(f).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Project {
-    pub base: Box<Expression>,
+pub struct Project<A> {
+    pub base: Box<Expression<A>>,
     pub index: ProductIndex,
 }
+impl<A> Project<A> {
+    fn map<B>(self, f: fn(A) -> B) -> Project<B> {
+        Project::<B> {
+            base: self.base.map(f).into(),
+            index: self.index,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Binding {
+pub struct Binding<A> {
     pub postition: lexer::SourcePosition,
     pub binder: Identifier,
-    pub bound: Box<Expression>,
-    pub body: Box<Expression>,
+    pub bound: Box<Expression<A>>,
+    pub body: Box<Expression<A>>,
+}
+impl<A> Binding<A> {
+    fn map<B>(self, f: fn(A) -> B) -> Binding<B> {
+        Binding::<B> {
+            postition: self.postition,
+            binder: self.binder,
+            bound: self.bound.map(f).into(),
+            body: self.body.map(f).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Sequence {
-    pub this: Box<Expression>,
-    pub and_then: Box<Expression>,
+pub struct Sequence<A> {
+    pub this: Box<Expression<A>>,
+    pub and_then: Box<Expression<A>>,
+}
+impl<A> Sequence<A> {
+    fn map<B>(self, f: fn(A) -> B) -> Sequence<B> {
+        Sequence::<B> {
+            this: self.this.map(f).into(),
+            and_then: self.and_then.map(f).into(),
+        }
+    }
 }
 
-impl Expression {
-    pub fn position(&self) -> Option<&lexer::SourcePosition> {
-        if let Self::Binding(Binding { postition, .. }) = self {
-            Some(postition)
-        } else {
-            None
+impl Expression<ParsingInfo> {
+    pub fn position(&self) -> &lexer::SourcePosition {
+        &self.parsing_info().position
+    }
+
+    pub fn parsing_info(&self) -> &ParsingInfo {
+        self.annotation()
+    }
+}
+
+impl<A> Expression<A> {
+    pub fn annotation(&self) -> &A {
+        match self {
+            Self::Variable(annotation, ..) => annotation,
+            Self::CallBridge(annotation, ..) => annotation,
+            Self::Literal(annotation, ..) => annotation,
+            Self::SelfReferential(annotation, ..) => annotation,
+            Self::Lambda(annotation, ..) => annotation,
+            Self::Apply(annotation, ..) => annotation,
+            Self::Construct(annotation, ..) => annotation,
+            Self::Product(annotation, ..) => annotation,
+            Self::Project(annotation, ..) => annotation,
+            Self::Binding(annotation, ..) => annotation,
+            Self::Sequence(annotation, ..) => annotation,
+            Self::ControlFlow(annotation, ..) => annotation,
         }
     }
 
@@ -458,55 +628,61 @@ impl Expression {
         free: &mut HashSet<&'a Identifier>,
     ) {
         match self {
-            Self::Variable(id) => {
+            Self::Variable(_, id) => {
                 if !bound.contains(id) {
                     free.insert(id);
                 }
             }
-            Self::CallBridge(id) => {
+            Self::CallBridge(_, id) => {
                 free.insert(id);
             }
-            Self::Lambda(Lambda { parameter, body }) => {
+            Self::Lambda(_, Lambda { parameter, body }) => {
                 // This is probably not correct
                 // I have to remove this after looking in "body
                 bound.insert(&parameter.name);
                 body.find_unbound(bound, free);
             }
-            Self::Apply(Apply { function, argument }) => {
+            Self::Apply(_, Apply { function, argument }) => {
                 function.find_unbound(bound, free);
                 argument.find_unbound(bound, free);
             }
-            Self::Construct(Construct { argument, .. }) => argument.find_unbound(bound, free),
-            Self::Product(Product::Tuple(expressions)) => {
+            Self::Construct(_, Construct { argument, .. }) => argument.find_unbound(bound, free),
+            Self::Product(_, Product::Tuple(expressions)) => {
                 for e in expressions {
                     e.find_unbound(bound, free);
                 }
             }
-            Self::Product(Product::Struct { bindings }) => {
+            Self::Product(_, Product::Struct { bindings }) => {
                 for e in bindings.values() {
                     e.find_unbound(bound, free);
                 }
             }
-            Self::Project(Project { base, .. }) => base.find_unbound(bound, free),
-            Self::Binding(Binding {
-                binder,
-                bound: bound_expr,
-                body,
-                ..
-            }) => {
+            Self::Project(_, Project { base, .. }) => base.find_unbound(bound, free),
+            Self::Binding(
+                _,
+                Binding {
+                    binder,
+                    bound: bound_expr,
+                    body,
+                    ..
+                },
+            ) => {
                 bound_expr.find_unbound(bound, free);
                 bound.insert(binder);
                 body.find_unbound(bound, free);
             }
-            Self::Sequence(Sequence { this, and_then }) => {
+            Self::Sequence(_, Sequence { this, and_then }) => {
                 this.find_unbound(bound, free);
                 and_then.find_unbound(bound, free);
             }
-            Self::ControlFlow(ControlFlow::If {
-                predicate,
-                consequent,
-                alternate,
-            }) => {
+            Self::ControlFlow(
+                _,
+                ControlFlow::If {
+                    predicate,
+                    consequent,
+                    alternate,
+                },
+            ) => {
                 predicate.find_unbound(bound, free);
                 consequent.find_unbound(bound, free);
                 alternate.find_unbound(bound, free);
@@ -514,50 +690,92 @@ impl Expression {
             _otherwise => (),
         }
     }
+
+    pub fn map<B>(self, f: fn(A) -> B) -> Expression<B> {
+        match self {
+            Self::Variable(x, info) => Expression::<B>::Variable(f(x), info),
+            Self::CallBridge(x, info) => Expression::<B>::CallBridge(f(x), info),
+            Self::Literal(x, info) => Expression::<B>::Literal(f(x), info),
+            Self::SelfReferential(x, info) => Expression::<B>::SelfReferential(f(x), info.map(f)),
+            Self::Lambda(x, info) => Expression::<B>::Lambda(f(x), info.map(f)),
+            Self::Apply(x, info) => Expression::<B>::Apply(f(x), info.map(f)),
+            Self::Construct(x, info) => Expression::<B>::Construct(f(x), info.map(f)),
+            Self::Product(x, info) => Expression::<B>::Product(f(x), info.map(f)),
+            Self::Project(x, info) => Expression::<B>::Project(f(x), info.map(f)),
+            Self::Binding(x, info) => Expression::<B>::Binding(f(x), info.map(f)),
+            Self::Sequence(x, info) => Expression::<B>::Sequence(f(x), info.map(f)),
+            Self::ControlFlow(x, info) => Expression::<B>::ControlFlow(f(x), info.map(f)),
+        }
+    }
 }
 
-impl fmt::Display for Expression {
+impl<A> fmt::Display for Expression<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expression::Variable(id) => write!(f, "{id}"),
-            Expression::CallBridge(id) => write!(f, "call {id}"),
-            Expression::Literal(c) => write!(f, "{c}"),
-            Expression::SelfReferential(SelfReferential { name, body, .. }) => {
+            Expression::Variable(_, id) => write!(f, "{id}"),
+            Expression::CallBridge(_, id) => write!(f, "call {id}"),
+            Expression::Literal(_, c) => write!(f, "{c}"),
+            Expression::SelfReferential(_, SelfReferential { name, body, .. }) => {
                 write!(f, "-----> {name}->[{body}]")
             }
-            Expression::Lambda(Lambda { parameter, body }) => {
+            Expression::Lambda(_, Lambda { parameter, body }) => {
                 write!(f, "lambda \\{parameter}. {body}")
             }
-            Expression::Apply(Apply { function, argument }) => write!(f, "{function} {argument}"),
-            Expression::Construct(Construct {
-                name,
-                constructor,
-                argument,
-            }) => write!(f, "{name}::{constructor} {argument}"),
-            Expression::Product(product) => write!(f, "{product}"),
-            Expression::Project(Project { base, index }) => write!(f, "{base}.{index}"),
-            Expression::Binding(Binding {
-                binder,
-                bound,
-                body,
-                ..
-            }) => write!(f, "let {binder} = {bound} in {body}"),
-            Expression::Sequence(Sequence { this, and_then }) => writeln!(f, "{this}\n{and_then}"),
-            Expression::ControlFlow(control) => writeln!(f, "{control}"),
+            Expression::Apply(_, Apply { function, argument }) => {
+                write!(f, "{function} {argument}")
+            }
+            Expression::Construct(
+                _,
+                Construct {
+                    name,
+                    constructor,
+                    argument,
+                },
+            ) => write!(f, "{name}::{constructor} {argument}"),
+            Expression::Product(_, product) => write!(f, "{product}"),
+            Expression::Project(_, Project { base, index }) => write!(f, "{base}.{index}"),
+            Expression::Binding(
+                _,
+                Binding {
+                    binder,
+                    bound,
+                    body,
+                    ..
+                },
+            ) => write!(f, "let {binder} = {bound} in {body}"),
+            Expression::Sequence(_, Sequence { this, and_then }) => {
+                writeln!(f, "{this}\n{and_then}")
+            }
+            Expression::ControlFlow(_, control) => writeln!(f, "{control}"),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ControlFlow {
+pub enum ControlFlow<A> {
     If {
-        predicate: Box<Expression>,
-        consequent: Box<Expression>,
-        alternate: Box<Expression>,
+        predicate: Box<Expression<A>>,
+        consequent: Box<Expression<A>>,
+        alternate: Box<Expression<A>>,
     },
 }
+impl<A> ControlFlow<A> {
+    fn map<B>(self, f: fn(A) -> B) -> ControlFlow<B> {
+        match self {
+            Self::If {
+                predicate,
+                consequent,
+                alternate,
+            } => ControlFlow::<B>::If {
+                predicate: predicate.map(f).into(),
+                consequent: consequent.map(f).into(),
+                alternate: alternate.map(f).into(),
+            },
+        }
+    }
+}
 
-impl fmt::Display for ControlFlow {
+impl<A> fmt::Display for ControlFlow<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self::If {
             predicate,
@@ -615,14 +833,26 @@ impl From<lexer::Literal> for Constant {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Product {
-    Tuple(Vec<Expression>),
+pub enum Product<A> {
+    Tuple(Vec<Expression<A>>),
     Struct {
-        bindings: HashMap<Identifier, Expression>,
+        bindings: HashMap<Identifier, Expression<A>>,
     },
 }
+impl<A> Product<A> {
+    fn map<B>(self, f: fn(A) -> B) -> Product<B> {
+        match self {
+            Self::Tuple(mut expressions) => {
+                Product::<B>::Tuple(expressions.drain(..).map(|x| x.map(f)).collect())
+            }
+            Self::Struct { mut bindings } => Product::<B>::Struct {
+                bindings: bindings.drain().map(|(k, v)| (k, v.map(f))).collect(),
+            },
+        }
+    }
+}
 
-impl fmt::Display for Product {
+impl<A> fmt::Display for Product<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Tuple(expressions) => {
@@ -663,7 +893,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("bar")),
+                        initializer: Expression::Variable((), Identifier::new("bar")),
                         type_annotation: None,
                     }),
                 },
@@ -671,7 +901,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("foo")),
+                        initializer: Expression::Variable((), Identifier::new("foo")),
                         type_annotation: None,
                     }),
                 },
@@ -679,7 +909,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("quux")),
+                        initializer: Expression::Variable((), Identifier::new("quux")),
                         type_annotation: None,
                     }),
                 },
@@ -700,7 +930,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("bar")),
+                        initializer: Expression::Variable((), Identifier::new("bar")),
                         type_annotation: None,
                     }),
                 },
@@ -708,7 +938,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("bar")),
+                        initializer: Expression::Variable((), Identifier::new("bar")),
                         type_annotation: None,
                     }),
                 },
@@ -716,7 +946,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("frobnicator")),
+                        initializer: Expression::Variable((), Identifier::new("frobnicator")),
                         type_annotation: None,
                     }),
                 },
@@ -724,7 +954,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("frobnicator"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Literal(Constant::Int(1)),
+                        initializer: Expression::Literal((), Constant::Int(1)),
                         type_annotation: None,
                     }),
                 },
@@ -746,7 +976,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("bar")),
+                        initializer: Expression::Variable((), Identifier::new("bar")),
                         type_annotation: None,
                     }),
                 },
@@ -754,7 +984,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("bar")),
+                        initializer: Expression::Variable((), Identifier::new("bar")),
                         type_annotation: None,
                     }),
                 },
@@ -762,7 +992,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("frobnicator")),
+                        initializer: Expression::Variable((), Identifier::new("frobnicator")),
                         type_annotation: None,
                     }),
                 },
@@ -784,7 +1014,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("foo"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("bar")),
+                        initializer: Expression::Variable((), Identifier::new("bar")),
                         type_annotation: None,
                     }),
                 },
@@ -792,7 +1022,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("quux"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("bar")),
+                        initializer: Expression::Variable((), Identifier::new("bar")),
                         type_annotation: None,
                     }),
                 },
@@ -800,7 +1030,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("bar"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable(Identifier::new("frobnicator")),
+                        initializer: Expression::Variable((), Identifier::new("frobnicator")),
                         type_annotation: None,
                     }),
                 },
@@ -808,7 +1038,7 @@ mod tests {
                     position: SourcePosition::default(),
                     binder: Identifier::new("frobnicator"),
                     declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Literal(Constant::Int(1)),
+                        initializer: Expression::Literal((), Constant::Int(1)),
                         type_annotation: None,
                     }),
                 },

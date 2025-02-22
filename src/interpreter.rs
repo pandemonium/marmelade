@@ -43,7 +43,7 @@ impl Interpreter {
         Self { prelude }
     }
 
-    pub fn load_and_run(self, program: CompilationUnit) -> Loaded<Value> {
+    pub fn load_and_run(self, program: CompilationUnit<()>) -> Loaded<Value> {
         match program {
             CompilationUnit::Implicit(module) => {
                 // Typing has to happen for this to feel nice. TBD.
@@ -58,18 +58,18 @@ impl Interpreter {
         }
     }
 
-    fn load_module(self, mut module: ModuleDeclarator) -> Loaded<Environment> {
+    fn load_module(self, mut module: ModuleDeclarator<()>) -> Loaded<Environment> {
         self.patch_with_prelude(&mut module);
         ModuleLoader::try_initializing(&module, self.prelude)?.resolve_dependencies()
     }
 
-    fn patch_with_prelude(&self, module: &mut ModuleDeclarator) {
+    fn patch_with_prelude(&self, module: &mut ModuleDeclarator<()>) {
         module.declarations.push(Declaration::ImportModule {
             position: SourcePosition::default(),
             exported_symbols: self
                 .prelude
                 .symbols()
-                .into_iter()
+                .drain(..)
                 .cloned()
                 .collect::<Vec<_>>(),
         });
@@ -132,7 +132,7 @@ impl fmt::Display for RecursiveClosure {
 pub struct Closure {
     pub parameter: Identifier,
     pub capture: Environment,
-    pub body: Expression,
+    pub body: Expression<()>,
 }
 
 impl fmt::Display for Closure {
@@ -286,46 +286,54 @@ pub enum RuntimeError {
 
 pub type Interpretation<A = Value> = Result<A, RuntimeError>;
 
-impl Expression {
+impl<A> Expression<A> {
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
-            Self::Variable(id) => env.lookup(&id).cloned(),
-            Self::CallBridge(id) => evaluate_bridge(id, env),
-            Self::Literal(constant) => immediate(constant),
-            Self::SelfReferential(SelfReferential {
-                name,
-                parameter,
-                body,
-            }) => make_recursive_closure(name, parameter.name, *body, env.clone()),
-            Self::Lambda(Lambda { parameter, body }) => {
+            Self::Variable(_, id) => env.lookup(&id).cloned(),
+            Self::CallBridge(_, id) => evaluate_bridge(id, env),
+            Self::Literal(_, constant) => immediate(constant),
+            Self::SelfReferential(
+                _,
+                SelfReferential {
+                    name,
+                    parameter,
+                    body,
+                },
+            ) => make_recursive_closure(name, parameter.name, *body, env.clone()),
+            Self::Lambda(_, Lambda { parameter, body }) => {
                 make_closure(parameter.name, *body, env.clone())
             }
-            Self::Apply(Apply { function, argument }) => apply_function(*function, *argument, env),
-            Self::Construct(Construct { .. }) => todo!(),
+            Self::Apply(_, Apply { function, argument }) => {
+                apply_function(*function, *argument, env)
+            }
+            Self::Construct(_, Construct { .. }) => todo!(),
             Self::Product(..) => todo!(),
-            Self::Project(Project { .. }) => todo!(),
-            Self::Binding(Binding {
-                binder,
-                bound,
-                body,
-                ..
-            }) => reduce_binding(binder, *bound, *body, env),
-            Self::Sequence(Sequence { this, and_then }) => sequence(this, and_then, env),
-            Self::ControlFlow(control) => reduce_control_flow(control, env),
+            Self::Project(_, Project { .. }) => todo!(),
+            Self::Binding(
+                _,
+                Binding {
+                    binder,
+                    bound,
+                    body,
+                    ..
+                },
+            ) => reduce_binding(binder, *bound, *body, env),
+            Self::Sequence(_, Sequence { this, and_then }) => sequence(this, and_then, env),
+            Self::ControlFlow(_, control) => reduce_control_flow(control, env),
         }
     }
 }
 
-fn make_recursive_closure(
+fn make_recursive_closure<A>(
     name: Identifier,
     parameter: Identifier,
-    body: Expression,
+    body: Expression<A>,
     capture: Environment,
 ) -> Result<Value, RuntimeError> {
     let closure = Rc::new(RefCell::new(Closure {
         parameter,
         capture,
-        body,
+        body: body.map(|_| ()), // Erase information.
     }));
 
     closure.borrow_mut().capture.insert_binding(
@@ -344,9 +352,9 @@ fn immediate(constant: Constant) -> Interpretation {
     Ok(Value::Base(constant.into()))
 }
 
-fn sequence(
-    this: Box<Expression>,
-    and_then: Box<Expression>,
+fn sequence<A>(
+    this: Box<Expression<A>>,
+    and_then: Box<Expression<A>>,
     env: &mut Environment,
 ) -> Interpretation {
     this.reduce(env)?;
@@ -365,7 +373,7 @@ fn evaluate_bridge(id: Identifier, env: &mut Environment) -> Interpretation {
     }
 }
 
-fn reduce_control_flow(control: ControlFlow, env: &mut Environment) -> Interpretation {
+fn reduce_control_flow<A>(control: ControlFlow<A>, env: &mut Environment) -> Interpretation {
     match control {
         ControlFlow::If {
             predicate,
@@ -385,10 +393,10 @@ fn reduce_control_flow(control: ControlFlow, env: &mut Environment) -> Interpret
     }
 }
 
-fn reduce_binding(
+fn reduce_binding<A>(
     binder: Identifier,
-    bound: Expression,
-    body: Expression,
+    bound: Expression<A>,
+    body: Expression<A>,
     env: &mut Environment,
 ) -> Interpretation {
     let bound = bound.reduce(env)?;
@@ -398,9 +406,9 @@ fn reduce_binding(
     retval
 }
 
-fn apply_function(
-    function: Expression,
-    argument: Expression,
+fn apply_function<A>(
+    function: Expression<A>,
+    argument: Expression<A>,
     env: &mut Environment,
 ) -> Interpretation {
     match function.reduce(env)? {
@@ -429,11 +437,11 @@ fn apply_function(
     }
 }
 
-fn make_closure(param: Identifier, body: Expression, env: Environment) -> Interpretation {
+fn make_closure<A>(param: Identifier, body: Expression<A>, env: Environment) -> Interpretation {
     Ok(Value::Closure(Closure {
         parameter: param,
         capture: env,
-        body,
+        body: body.map(|_| ()), // Erase parse and lexing annotation
     }))
 }
 
@@ -456,7 +464,7 @@ mod tests {
 
         assert_eq!(
             Base::Int(1),
-            Expression::Literal(Constant::Int(1))
+            Expression::Literal((), Constant::Int(1))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()
@@ -475,7 +483,7 @@ mod tests {
 
         assert_eq!(
             Base::Int(1),
-            Expression::Variable(Identifier::new("x"))
+            Expression::Variable((), Identifier::new("x"))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_scalar()
@@ -484,162 +492,347 @@ mod tests {
 
         assert_eq!(
             RuntimeError::UndefinedSymbol(Identifier::new("y")),
-            Expression::Variable(Identifier::new("y"))
+            Expression::Variable((), Identifier::new("y"))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap_err()
         )
     }
 
-    fn _make_fix() -> Expression {
-        Expression::Apply(Apply {
-            function: Box::new(Expression::Lambda(Lambda {
-                parameter: Parameter::new(Identifier::new("x")),
-                body: Box::new(Expression::Apply(Apply {
-                    function: Box::new(Expression::Variable(Identifier::new("x"))),
-                    argument: Box::new(Expression::Variable(Identifier::new("x"))),
-                })),
-            })),
-            argument: Box::new(Expression::Lambda(Lambda {
-                parameter: Parameter::new(Identifier::new("x")),
-                body: Box::new(Expression::Apply(Apply {
-                    function: Box::new(Expression::Variable(Identifier::new("x"))),
-                    argument: Box::new(Expression::Variable(Identifier::new("x"))),
-                })),
-            })),
-        })
+    fn _make_fix() -> Expression<()> {
+        Expression::Apply(
+            (),
+            Apply {
+                function: Box::new(Expression::Lambda(
+                    (),
+                    Lambda {
+                        parameter: Parameter::new(Identifier::new("x")),
+                        body: Box::new(Expression::Apply(
+                            (),
+                            Apply {
+                                function: Box::new(Expression::Variable((), Identifier::new("x"))),
+                                argument: Box::new(Expression::Variable((), Identifier::new("x"))),
+                            },
+                        )),
+                    },
+                )),
+                argument: Box::new(Expression::Lambda(
+                    (),
+                    Lambda {
+                        parameter: Parameter::new(Identifier::new("x")),
+                        body: Box::new(Expression::Apply(
+                            (),
+                            Apply {
+                                function: Box::new(Expression::Variable((), Identifier::new("x"))),
+                                argument: Box::new(Expression::Variable((), Identifier::new("x"))),
+                            },
+                        )),
+                    },
+                )),
+            },
+        )
     }
 
     fn _make_fix_value(env: Environment) -> Value {
         Value::Closure(Closure {
             parameter: Identifier::new("f"),
             capture: env.clone(),
-            body: Expression::Apply(Apply {
-                function: Box::new(Expression::Lambda(Lambda {
-                    parameter: Parameter::new(Identifier::new("x")),
-                    body: Box::new(Expression::Apply(Apply {
-                        function: Box::new(Expression::Variable(Identifier::new("f"))),
-                        argument: Box::new(Expression::Lambda(Lambda {
-                            parameter: Parameter::new(Identifier::new("y")),
-                            body: Box::new(Expression::Apply(Apply {
-                                function: Box::new(Expression::Variable(Identifier::new("x"))),
-                                argument: Box::new(Expression::Variable(Identifier::new("x"))),
-                            })),
-                        })),
-                    })),
-                })),
-                argument: Box::new(Expression::Lambda(Lambda {
-                    parameter: Parameter::new(Identifier::new("x")),
-                    body: Box::new(Expression::Apply(Apply {
-                        function: Box::new(Expression::Variable(Identifier::new("f"))),
-                        argument: Box::new(Expression::Lambda(Lambda {
-                            parameter: Parameter::new(Identifier::new("y")),
-                            body: Box::new(Expression::Apply(Apply {
-                                function: Box::new(Expression::Variable(Identifier::new("x"))),
-                                argument: Box::new(Expression::Variable(Identifier::new("x"))),
-                            })),
-                        })),
-                    })),
-                })),
-            }),
+            body: Expression::Apply(
+                (),
+                Apply {
+                    function: Box::new(Expression::Lambda(
+                        (),
+                        Lambda {
+                            parameter: Parameter::new(Identifier::new("x")),
+                            body: Box::new(Expression::Apply(
+                                (),
+                                Apply {
+                                    function: Box::new(Expression::Variable(
+                                        (),
+                                        Identifier::new("f"),
+                                    )),
+                                    argument: Box::new(Expression::Lambda(
+                                        (),
+                                        Lambda {
+                                            parameter: Parameter::new(Identifier::new("y")),
+                                            body: Box::new(Expression::Apply(
+                                                (),
+                                                Apply {
+                                                    function: Box::new(Expression::Variable(
+                                                        (),
+                                                        Identifier::new("x"),
+                                                    )),
+                                                    argument: Box::new(Expression::Variable(
+                                                        (),
+                                                        Identifier::new("x"),
+                                                    )),
+                                                },
+                                            )),
+                                        },
+                                    )),
+                                },
+                            )),
+                        },
+                    )),
+                    argument: Box::new(Expression::Lambda(
+                        (),
+                        Lambda {
+                            parameter: Parameter::new(Identifier::new("x")),
+                            body: Box::new(Expression::Apply(
+                                (),
+                                Apply {
+                                    function: Box::new(Expression::Variable(
+                                        (),
+                                        Identifier::new("f"),
+                                    )),
+                                    argument: Box::new(Expression::Lambda(
+                                        (),
+                                        Lambda {
+                                            parameter: Parameter::new(Identifier::new("y")),
+                                            body: Box::new(Expression::Apply(
+                                                (),
+                                                Apply {
+                                                    function: Box::new(Expression::Variable(
+                                                        (),
+                                                        Identifier::new("x"),
+                                                    )),
+                                                    argument: Box::new(Expression::Variable(
+                                                        (),
+                                                        Identifier::new("x"),
+                                                    )),
+                                                },
+                                            )),
+                                        },
+                                    )),
+                                },
+                            )),
+                        },
+                    )),
+                },
+            ),
         })
     }
 
     #[test]
     fn eval_fix() {
-        let _factorial = Expression::Lambda(Lambda {
-            parameter: Parameter::new(Identifier::new("x")),
-            body: Expression::ControlFlow(ControlFlow::If {
-                predicate: Expression::Apply(Apply {
-                    function: Expression::Variable(Identifier::new("==")).into(),
-                    argument: Expression::Variable(Identifier::new("x")).into(),
-                })
+        let _factorial = Expression::Lambda(
+            (),
+            Lambda {
+                parameter: Parameter::new(Identifier::new("x")),
+                body: Expression::ControlFlow(
+                    (),
+                    ControlFlow::If {
+                        predicate: Expression::Apply(
+                            (),
+                            Apply {
+                                function: Expression::Variable((), Identifier::new("==")).into(),
+                                argument: Expression::Variable((), Identifier::new("x")).into(),
+                            },
+                        )
+                        .into(),
+                        consequent: Expression::Literal((), Constant::Int(1)).into(),
+                        alternate: Expression::Binding(
+                            (),
+                            Binding {
+                                postition: SourcePosition::default(), // Placeholder for actual location
+                                binder: Identifier::new("xx"),
+                                bound: Expression::Apply(
+                                    (),
+                                    Apply {
+                                        function: Expression::Apply(
+                                            (),
+                                            Apply {
+                                                function: Expression::Variable(
+                                                    (),
+                                                    Identifier::new("-"),
+                                                )
+                                                .into(),
+                                                argument: Expression::Variable(
+                                                    (),
+                                                    Identifier::new("x"),
+                                                )
+                                                .into(),
+                                            },
+                                        )
+                                        .into(),
+                                        argument: Expression::Literal((), Constant::Int(1)).into(),
+                                    },
+                                )
+                                .into(),
+                                body: Expression::Apply(
+                                    (),
+                                    Apply {
+                                        function: Expression::Apply(
+                                            (),
+                                            Apply {
+                                                function: Expression::Variable(
+                                                    (),
+                                                    Identifier::new("*"),
+                                                )
+                                                .into(),
+                                                argument: Expression::Variable(
+                                                    (),
+                                                    Identifier::new("x"),
+                                                )
+                                                .into(),
+                                            },
+                                        )
+                                        .into(),
+                                        argument: Expression::Apply(
+                                            (),
+                                            Apply {
+                                                function: Expression::Variable(
+                                                    (),
+                                                    Identifier::new("factorial"),
+                                                )
+                                                .into(),
+                                                argument: Expression::Variable(
+                                                    (),
+                                                    Identifier::new("xx"),
+                                                )
+                                                .into(),
+                                            },
+                                        )
+                                        .into(),
+                                    },
+                                )
+                                .into(),
+                            },
+                        )
+                        .into(),
+                    },
+                )
                 .into(),
-                consequent: Expression::Literal(Constant::Int(1)).into(),
-                alternate: Expression::Binding(Binding {
-                    postition: SourcePosition::default(), // Placeholder for actual location
-                    binder: Identifier::new("xx"),
-                    bound: Expression::Apply(Apply {
-                        function: Expression::Apply(Apply {
-                            function: Expression::Variable(Identifier::new("-")).into(),
-                            argument: Expression::Variable(Identifier::new("x")).into(),
-                        })
-                        .into(),
-                        argument: Expression::Literal(Constant::Int(1)).into(),
-                    })
-                    .into(),
-                    body: Expression::Apply(Apply {
-                        function: Expression::Apply(Apply {
-                            function: Expression::Variable(Identifier::new("*")).into(),
-                            argument: Expression::Variable(Identifier::new("x")).into(),
-                        })
-                        .into(),
-                        argument: Expression::Apply(Apply {
-                            function: Expression::Variable(Identifier::new("factorial")).into(),
-                            argument: Expression::Variable(Identifier::new("xx")).into(),
-                        })
-                        .into(),
-                    })
-                    .into(),
-                })
-                .into(),
-            })
-            .into(),
-        });
+            },
+        );
     }
 
     //    #[test]
     fn _fixed_factorial() {
-        let factorial = Expression::Apply(Apply {
-            function: Expression::Variable(Identifier::new("fix")).into(),
-            argument: Expression::Lambda(Lambda {
-                parameter: Parameter::new(Identifier::new("fact")),
-                body: Expression::Lambda(Lambda {
-                    parameter: Parameter::new(Identifier::new("x")),
-                    body: Expression::ControlFlow(ControlFlow::If {
-                        predicate: Expression::Apply(Apply {
-                            function: Expression::Apply(Apply {
-                                function: Expression::Variable(Identifier::new("==")).into(),
-                                argument: Expression::Variable(Identifier::new("x")).into(),
-                            })
-                            .into(),
-                            argument: Expression::Literal(Constant::Int(0)).into(),
-                        })
+        let factorial = Expression::Apply(
+            (),
+            Apply {
+                function: Expression::Variable((), Identifier::new("fix")).into(),
+                argument: Expression::Lambda(
+                    (),
+                    Lambda {
+                        parameter: Parameter::new(Identifier::new("fact")),
+                        body: Expression::Lambda(
+                            (),
+                            Lambda {
+                                parameter: Parameter::new(Identifier::new("x")),
+                                body: Expression::ControlFlow(
+                                    (),
+                                    ControlFlow::If {
+                                        predicate: Expression::Apply(
+                                            (),
+                                            Apply {
+                                                function: Expression::Apply(
+                                                    (),
+                                                    Apply {
+                                                        function: Expression::Variable(
+                                                            (),
+                                                            Identifier::new("=="),
+                                                        )
+                                                        .into(),
+                                                        argument: Expression::Variable(
+                                                            (),
+                                                            Identifier::new("x"),
+                                                        )
+                                                        .into(),
+                                                    },
+                                                )
+                                                .into(),
+                                                argument: Expression::Literal((), Constant::Int(0))
+                                                    .into(),
+                                            },
+                                        )
+                                        .into(),
+                                        consequent: Expression::Literal((), Constant::Int(1))
+                                            .into(),
+                                        alternate: Expression::Binding(
+                                            (),
+                                            Binding {
+                                                postition: SourcePosition::default(), // Placeholder for actual location
+                                                binder: Identifier::new("xx"),
+                                                bound: Expression::Apply(
+                                                    (),
+                                                    Apply {
+                                                        function: Expression::Apply(
+                                                            (),
+                                                            Apply {
+                                                                function: Expression::Variable(
+                                                                    (),
+                                                                    Identifier::new("-"),
+                                                                )
+                                                                .into(),
+                                                                argument: Expression::Variable(
+                                                                    (),
+                                                                    Identifier::new("x"),
+                                                                )
+                                                                .into(),
+                                                            },
+                                                        )
+                                                        .into(),
+                                                        argument: Expression::Literal(
+                                                            (),
+                                                            Constant::Int(1),
+                                                        )
+                                                        .into(),
+                                                    },
+                                                )
+                                                .into(),
+                                                body: Expression::Apply(
+                                                    (),
+                                                    Apply {
+                                                        function: Expression::Apply(
+                                                            (),
+                                                            Apply {
+                                                                function: Expression::Variable(
+                                                                    (),
+                                                                    Identifier::new("*"),
+                                                                )
+                                                                .into(),
+                                                                argument: Expression::Variable(
+                                                                    (),
+                                                                    Identifier::new("x"),
+                                                                )
+                                                                .into(),
+                                                            },
+                                                        )
+                                                        .into(),
+                                                        argument: Expression::Apply(
+                                                            (),
+                                                            Apply {
+                                                                function: Expression::Variable(
+                                                                    (),
+                                                                    Identifier::new("fact"),
+                                                                )
+                                                                .into(),
+                                                                argument: Expression::Variable(
+                                                                    (),
+                                                                    Identifier::new("xx"),
+                                                                )
+                                                                .into(),
+                                                            },
+                                                        )
+                                                        .into(),
+                                                    },
+                                                )
+                                                .into(),
+                                            },
+                                        )
+                                        .into(),
+                                    },
+                                )
+                                .into(),
+                            },
+                        )
                         .into(),
-                        consequent: Expression::Literal(Constant::Int(1)).into(),
-                        alternate: Expression::Binding(Binding {
-                            postition: SourcePosition::default(), // Placeholder for actual location
-                            binder: Identifier::new("xx"),
-                            bound: Expression::Apply(Apply {
-                                function: Expression::Apply(Apply {
-                                    function: Expression::Variable(Identifier::new("-")).into(),
-                                    argument: Expression::Variable(Identifier::new("x")).into(),
-                                })
-                                .into(),
-                                argument: Expression::Literal(Constant::Int(1)).into(),
-                            })
-                            .into(),
-                            body: Expression::Apply(Apply {
-                                function: Expression::Apply(Apply {
-                                    function: Expression::Variable(Identifier::new("*")).into(),
-                                    argument: Expression::Variable(Identifier::new("x")).into(),
-                                })
-                                .into(),
-                                argument: Expression::Apply(Apply {
-                                    function: Expression::Variable(Identifier::new("fact")).into(),
-                                    argument: Expression::Variable(Identifier::new("xx")).into(),
-                                })
-                                .into(),
-                            })
-                            .into(),
-                        })
-                        .into(),
-                    })
-                    .into(),
-                })
+                    },
+                )
                 .into(),
-            })
-            .into(),
-        });
+            },
+        );
 
         let mut context = CompileState::default();
         stdlib::import(&mut context).unwrap();
@@ -656,10 +849,13 @@ mod tests {
             .interpreter_environment
             .insert_binding(Identifier::new("factorial"), reduced_fact);
 
-        let e = Expression::Apply(Apply {
-            function: Expression::Variable(Identifier::new("factorial")).into(),
-            argument: Expression::Literal(Constant::Int(1)).into(),
-        });
+        let e = Expression::Apply(
+            (),
+            Apply {
+                function: Expression::Variable((), Identifier::new("factorial")).into(),
+                argument: Expression::Literal((), Constant::Int(1)).into(),
+            },
+        );
 
         assert_eq!(
             Base::Int(127),

@@ -3,14 +3,17 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use super::{Environment, LoadError, Loaded};
 use crate::ast::{Declaration, Identifier, ModuleDeclarator, ValueDeclarator};
 
-pub struct ModuleLoader<'a> {
-    module: &'a ModuleDeclarator,
+pub struct ModuleLoader<'a, A> {
+    module: &'a ModuleDeclarator<A>,
     dependency_graph: DependencyGraph<'a>,
     resolved: Environment,
 }
 
-impl<'a> ModuleLoader<'a> {
-    pub fn try_initializing(module: &'a ModuleDeclarator, prelude: Environment) -> Loaded<Self> {
+impl<'a, A> ModuleLoader<'a, A>
+where
+    A: Clone,
+{
+    pub fn try_initializing(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Loaded<Self> {
         let resolver = |id: &Identifier| prelude.is_defined(id);
 
         // How do I unite this with the prelude?
@@ -56,7 +59,7 @@ impl<'a> ModuleLoader<'a> {
     fn resolve_value_binding(
         &mut self,
         id: &Identifier,
-        declarator: &ValueDeclarator,
+        declarator: &ValueDeclarator<A>,
     ) -> Result<(), LoadError> {
         // That this has to clone the Expressions is not ideal
 
@@ -79,7 +82,10 @@ pub struct DependencyGraph<'a> {
 }
 
 impl<'a> DependencyGraph<'a> {
-    pub fn from_declarations(decls: &'a [Declaration]) -> Self {
+    pub fn from_declarations<A>(decls: &'a [Declaration<A>]) -> Self
+    where
+        A: Clone,
+    {
         let mut outbound = HashMap::with_capacity(decls.len());
 
         for decl in decls {
@@ -87,7 +93,7 @@ impl<'a> DependencyGraph<'a> {
                 Declaration::Value {
                     binder, declarator, ..
                 } => {
-                    outbound.insert(binder, declarator.dependencies().into_iter().collect());
+                    outbound.insert(binder, declarator.dependencies().drain().collect());
                 }
                 Declaration::ImportModule {
                     exported_symbols, ..

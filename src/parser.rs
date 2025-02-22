@@ -22,7 +22,21 @@ use Keyword::*;
 use Token as T;
 use TokenType as TT;
 
-pub fn parse_compilation_unit<'a>(input: &'a [Token]) -> Result<CompilationUnit, ParseError> {
+#[derive(Copy, Clone, Debug, Default)]
+pub struct ParsingInfo {
+    pub position: SourcePosition,
+}
+
+impl ParsingInfo {
+    pub fn new(position: SourcePosition) -> Self {
+        Self { position }
+    }
+}
+
+// What do I annotate it with?
+pub fn parse_compilation_unit<'a>(
+    input: &'a [Token],
+) -> Result<CompilationUnit<ParsingInfo>, ParseError> {
     let (declarations, ..) = parse_declarations(input)?;
 
     Ok(CompilationUnit::Implicit(ModuleDeclarator {
@@ -32,7 +46,9 @@ pub fn parse_compilation_unit<'a>(input: &'a [Token]) -> Result<CompilationUnit,
     }))
 }
 
-pub fn parse_declarations<'a>(input: &'a [Token]) -> ParseResult<'a, Vec<Declaration>> {
+pub fn parse_declarations<'a>(
+    input: &'a [Token],
+) -> ParseResult<'a, Vec<Declaration<ParsingInfo>>> {
     let mut declarations = Vec::default();
     let mut input = input;
 
@@ -82,7 +98,7 @@ pub fn find_next_in_block<'a>(
     }
 }
 
-pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration> {
+pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration<ParsingInfo>> {
     match input {
         [T(TT::Identifier(id), pos), T(TT::Equals, ..), remains @ ..] => {
             parse_value_binding(id, pos, remains)
@@ -96,7 +112,7 @@ fn parse_value_binding<'a>(
     binder: &String,
     position: &SourcePosition,
     remains: &'a [Token],
-) -> ParseResult<'a, Declaration> {
+) -> ParseResult<'a, Declaration<ParsingInfo>> {
     let (declarator, remains) =
         parse_value_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
 
@@ -112,7 +128,7 @@ fn parse_value_binding<'a>(
 
 // These can have type annotations
 // let foo :: Int -> String -> String = fun i s -> s
-fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclarator> {
+fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclarator<ParsingInfo>> {
     match input {
         [T(TT::Keyword(Fun), ..), remains @ ..] => {
             let (parameters, remains) = parse_parameter_list(remains)?;
@@ -178,7 +194,7 @@ fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Paramet
     ))
 }
 
-pub fn parse_expr_phrase<'a>(tokens: &'a [Token]) -> Result<Expression, ParseError> {
+pub fn parse_expr_phrase<'a>(tokens: &'a [Token]) -> Result<Expression<ParsingInfo>, ParseError> {
     let (expression, remains) = parse_expression(tokens, 0)?;
 
     if let &[T(TT::End, ..)] = remains {
@@ -188,7 +204,7 @@ pub fn parse_expr_phrase<'a>(tokens: &'a [Token]) -> Result<Expression, ParseErr
     }
 }
 
-fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
+fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression<ParsingInfo>> {
     match tokens {
         [T(TT::Keyword(Let), position), T(TT::Identifier(binder), ..), T(TT::Equals, ..), remains @ ..] => {
             parse_binding(position.clone(), binder, remains)
@@ -196,20 +212,22 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression> {
         [T(TT::Keyword(If), position), remains @ ..] => {
             parse_if_expression(position.clone(), remains)
         }
-        [T(TT::Literal(literal), ..), remains @ ..] => {
-            Ok((Expression::Literal(literal.clone().into()), remains))
-        }
-        [T(TT::Identifier(id), ..), remains @ ..] => {
-            Ok((Expression::Variable(Identifier::new(&id)), remains))
-        }
+        [T(TT::Literal(literal), pos), remains @ ..] => Ok((
+            Expression::Literal(ParsingInfo::new(*pos), literal.clone().into()),
+            remains,
+        )),
+        [T(TT::Identifier(id), pos), remains @ ..] => Ok((
+            Expression::Variable(ParsingInfo::new(*pos), Identifier::new(&id)),
+            remains,
+        )),
         otherwise => panic!("{otherwise:?}"),
     }
 }
 
 fn parse_if_expression<'a>(
-    _position: SourcePosition,
+    position: SourcePosition,
     remains: &'a [Token],
-) -> ParseResult<'a, Expression> {
+) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (predicate, remains) = parse_expression(remains, 0)?;
 
     let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
@@ -233,11 +251,14 @@ fn parse_if_expression<'a>(
             let (alternate, remains) = parse_expression(&remains[0..], 0)?;
 
             Ok((
-                Expression::ControlFlow(ControlFlow::If {
-                    predicate: predicate.into(),
-                    consequent: consequent.into(),
-                    alternate: alternate.into(),
-                }),
+                Expression::ControlFlow(
+                    ParsingInfo::new(position),
+                    ControlFlow::If {
+                        predicate: predicate.into(),
+                        consequent: consequent.into(),
+                        alternate: alternate.into(),
+                    },
+                ),
                 remains,
             ))
         } else {
@@ -272,7 +293,7 @@ fn parse_binding<'a>(
     position: SourcePosition,
     binder: &str,
     input: &'a [Token],
-) -> ParseResult<'a, Expression> {
+) -> ParseResult<'a, Expression<ParsingInfo>> {
     let indented = starts_with(TokenType::Layout(Layout::Indent), input);
     let (bound, remains) = parse_expression(strip_first_if(indented, input), 0)?;
 
@@ -286,12 +307,15 @@ fn parse_binding<'a>(
             let (body, remains) = parse_expression(remains, 0)?;
 
             Ok((
-                Expression::Binding(Binding {
-                    binder: Identifier::new(binder),
-                    bound: bound.into(),
-                    body: body.into(),
-                    postition: position,
-                }),
+                Expression::Binding(
+                    ParsingInfo::new(position),
+                    Binding {
+                        binder: Identifier::new(binder),
+                        bound: bound.into(),
+                        body: body.into(),
+                        postition: position,
+                    },
+                ),
                 remains,
             ))
         }
@@ -301,7 +325,10 @@ fn parse_binding<'a>(
     }
 }
 
-fn parse_expression<'a>(tokens: &'a [Token], precedence: usize) -> ParseResult<'a, Expression> {
+fn parse_expression<'a>(
+    tokens: &'a [Token],
+    precedence: usize,
+) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (prefix, remains) = parse_prefix(tokens)?;
 
     // An initial Indent could occur here, right?
@@ -310,10 +337,10 @@ fn parse_expression<'a>(tokens: &'a [Token], precedence: usize) -> ParseResult<'
 
 // Infixes end with End and In
 fn parse_infix<'a>(
-    lhs: Expression,
+    lhs: Expression<ParsingInfo>,
     input: &'a [Token],
     precedence: usize,
-) -> ParseResult<'a, Expression> {
+) -> ParseResult<'a, Expression<ParsingInfo>> {
     let is_done = |t: &Token| {
         //        println!("is_done: {t:?}");
         matches!(
@@ -331,14 +358,14 @@ fn parse_infix<'a>(
         [T(TT::Layout(..), ..), u, ..] if is_done(u) => Ok((lhs, input)),
 
         // <op> <expr>
-        [T(TT::Operator(op), ..), remains @ ..] => {
-            parse_operator(lhs, input, precedence, op, remains)
+        [T(TT::Operator(op), pos), remains @ ..] => {
+            parse_operator(lhs, input, precedence, op, remains, *pos)
         }
 
         // ( <Newline> | <Indent> ) <op> <expr>
         // -- a continuation of the infix operator sequence on the next line (possibly indented.)
-        [T(TT::Layout(Layout::Newline | Layout::Indent), ..), T(TT::Operator(op), ..), remains @ ..] => {
-            parse_operator(lhs, input, precedence, op, remains)
+        [T(TT::Layout(Layout::Newline | Layout::Indent), ..), T(TT::Operator(op), pos), remains @ ..] => {
+            parse_operator(lhs, input, precedence, op, remains, *pos)
         }
 
         // ( <Newline> | <;> ) <expr>
@@ -382,18 +409,19 @@ fn is_toplevel<'a>(prefix: &'a [Token]) -> bool {
 }
 
 fn parse_operator<'a>(
-    lhs: Expression,
+    lhs: Expression<ParsingInfo>,
     input: &'a [Token],
     context_precedence: usize,
     operator: &Operator,
     remains: &'a [Token],
-) -> ParseResult<'a, Expression> {
+    position: SourcePosition,
+) -> ParseResult<'a, Expression<ParsingInfo>> {
     let operator_precedence = operator.precedence();
     if operator_precedence > context_precedence {
         let (rhs, remains) = parse_expression(remains, operator_precedence)?;
 
         parse_infix(
-            apply_binary_operator(*operator, lhs, rhs),
+            apply_binary_operator(*operator, lhs, rhs, position),
             remains,
             context_precedence,
         )
@@ -403,28 +431,37 @@ fn parse_operator<'a>(
 }
 
 fn parse_juxtaposed<'a>(
-    lhs: Expression,
+    lhs: Expression<ParsingInfo>,
     tokens: &'a [Token],
     precedence: usize,
-) -> ParseResult<'a, Expression> {
+) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (rhs, remains) = parse_prefix(tokens)?;
     parse_infix(
-        Expression::Apply(Apply {
-            function: lhs.into(),
-            argument: rhs.into(),
-        }),
+        Expression::Apply(
+            ParsingInfo::new(*lhs.position()),
+            Apply {
+                function: lhs.into(),
+                argument: rhs.into(),
+            },
+        ),
         remains,
         precedence,
     )
 }
 
-fn parse_sequence<'a>(lhs: Expression, tokens: &'a [Token]) -> ParseResult<'a, Expression> {
+fn parse_sequence<'a>(
+    lhs: Expression<ParsingInfo>,
+    tokens: &'a [Token],
+) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (rhs, remains) = parse_expression(tokens, 0)?;
 
-    let sequence = Expression::Sequence(Sequence {
-        this: lhs.into(),
-        and_then: rhs.into(),
-    });
+    let sequence = Expression::Sequence(
+        ParsingInfo::new(*rhs.position()),
+        Sequence {
+            this: lhs.into(),
+            and_then: rhs.into(),
+        },
+    );
 
     if matches!(
         remains,
@@ -436,15 +473,26 @@ fn parse_sequence<'a>(lhs: Expression, tokens: &'a [Token]) -> ParseResult<'a, E
     }
 }
 
-fn apply_binary_operator(op: Operator, lhs: Expression, rhs: Expression) -> Expression {
-    let apply_lhs = Expression::Apply(Apply {
-        function: Expression::Variable(op.id()).into(),
-        argument: lhs.into(),
-    });
-    Expression::Apply(Apply {
-        function: apply_lhs.into(),
-        argument: rhs.into(),
-    })
+fn apply_binary_operator(
+    op: Operator,
+    lhs: Expression<ParsingInfo>,
+    rhs: Expression<ParsingInfo>,
+    position: SourcePosition,
+) -> Expression<ParsingInfo> {
+    let apply_lhs = Expression::Apply(
+        ParsingInfo::new(position),
+        Apply {
+            function: Expression::Variable(ParsingInfo::new(position), op.id()).into(),
+            argument: lhs.into(),
+        },
+    );
+    Expression::Apply(
+        ParsingInfo::new(position),
+        Apply {
+            function: apply_lhs.into(),
+            argument: rhs.into(),
+        },
+    )
 }
 
 #[cfg(test)]
@@ -475,22 +523,34 @@ mod tests {
 
         let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in x + 20"))).unwrap();
         assert_eq!(
-            E::Binding(Binding {
-                postition: SourcePosition::default(),
-                binder: Id::new("x"),
-                bound: E::Literal(Constant::Int(10)).into(),
-                body: E::Apply(Apply {
-                    function: E::Apply(Apply {
-                        function: E::Variable(Id::new(&Operator::Plus.function_identifier()))
+            E::Binding(
+                (),
+                Binding {
+                    postition: SourcePosition::default(),
+                    binder: Id::new("x"),
+                    bound: E::Literal((), Constant::Int(10)).into(),
+                    body: E::Apply(
+                        (),
+                        Apply {
+                            function: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Variable(
+                                        (),
+                                        Id::new(&Operator::Plus.function_identifier())
+                                    )
+                                    .into(),
+                                    argument: E::Variable((), Id::new("x")).into(),
+                                }
+                            )
                             .into(),
-                        argument: E::Variable(Id::new("x")).into(),
-                    })
+                            argument: E::Literal((), Constant::Int(20)).into(),
+                        }
+                    )
                     .into(),
-                    argument: E::Literal(Constant::Int(20)).into(),
-                })
-                .into(),
-            }),
-            expr
+                }
+            ),
+            expr.map(|_| ())
         );
     }
 
@@ -499,21 +559,30 @@ mod tests {
         let mut lexer = LexicalAnalyzer::default();
         let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 20"))).unwrap();
         assert_eq!(
-            E::Binding(Binding {
-                postition: SourcePosition::default(),
-                binder: Id::new("x"),
-                bound: E::Literal(Constant::Int(10)).into(),
-                body: E::Apply(Apply {
-                    function: E::Apply(Apply {
-                        function: E::Variable(Id::new("f")).into(),
-                        argument: E::Variable(Id::new("x")).into(),
-                    })
+            E::Binding(
+                (),
+                Binding {
+                    postition: SourcePosition::default(),
+                    binder: Id::new("x"),
+                    bound: E::Literal((), Constant::Int(10)).into(),
+                    body: E::Apply(
+                        (),
+                        Apply {
+                            function: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Variable((), Id::new("f")).into(),
+                                    argument: E::Variable((), Id::new("x")).into(),
+                                }
+                            )
+                            .into(),
+                            argument: E::Literal((), Constant::Int(20)).into(),
+                        }
+                    )
                     .into(),
-                    argument: E::Literal(Constant::Int(20)).into(),
-                })
-                .into(),
-            }),
-            expr
+                }
+            ),
+            expr.map(|_| ())
         );
     }
 
@@ -522,25 +591,37 @@ mod tests {
         let mut lexer = LexicalAnalyzer::default();
         let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 1 2"))).unwrap();
         assert_eq!(
-            E::Binding(Binding {
-                postition: SourcePosition::default(),
-                binder: Id::new("x"),
-                bound: E::Literal(Constant::Int(10)).into(),
-                body: E::Apply(Apply {
-                    function: E::Apply(Apply {
-                        function: E::Apply(Apply {
-                            function: E::Variable(Id::new("f")).into(),
-                            argument: E::Variable(Id::new("x")).into(),
-                        })
-                        .into(),
-                        argument: E::Literal(Constant::Int(1)).into(),
-                    })
+            E::Binding(
+                (),
+                Binding {
+                    postition: SourcePosition::default(),
+                    binder: Id::new("x"),
+                    bound: E::Literal((), Constant::Int(10)).into(),
+                    body: E::Apply(
+                        (),
+                        Apply {
+                            function: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Apply(
+                                        (),
+                                        Apply {
+                                            function: E::Variable((), Id::new("f")).into(),
+                                            argument: E::Variable((), Id::new("x")).into(),
+                                        }
+                                    )
+                                    .into(),
+                                    argument: E::Literal((), Constant::Int(1)).into(),
+                                }
+                            )
+                            .into(),
+                            argument: E::Literal((), Constant::Int(2)).into()
+                        }
+                    )
                     .into(),
-                    argument: E::Literal(Constant::Int(2)).into()
-                })
-                .into(),
-            }),
-            expr
+                }
+            ),
+            expr.map(|_| ())
         );
     }
 
@@ -556,49 +637,85 @@ mod tests {
         )))
         .unwrap();
         assert_eq!(
-            E::Binding(Binding {
-                postition: SourcePosition::default(),
-                binder: Id::new("x"),
-                bound: E::Sequence(Sequence {
-                    this: E::Apply(Apply {
-                        function: E::Variable(Id::new("print_endline")).into(),
-                        argument: E::Literal(Constant::Text("Hello, world".to_owned())).into(),
-                    })
-                    .into(),
-                    and_then: E::Apply(Apply {
-                        function: E::Apply(Apply {
-                            function: E::Variable(Id::new("f")).into(),
-                            argument: E::Literal(Constant::Int(1)).into()
-                        })
-                        .into(),
-                        argument: E::Literal(Constant::Int(2)).into()
-                    })
-                    .into()
-                })
-                .into(),
-                body: E::Apply(Apply {
-                    function: E::Apply(Apply {
-                        function: E::Variable(Id::new("+")).into(),
-                        argument: E::Apply(Apply {
-                            function: E::Apply(Apply {
-                                function: E::Variable(Id::new("*")).into(),
-                                argument: E::Literal(Constant::Int(3)).into()
-                            })
+            E::Binding(
+                (),
+                Binding {
+                    postition: SourcePosition::default(),
+                    binder: Id::new("x"),
+                    bound: E::Sequence(
+                        (),
+                        Sequence {
+                            this: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Variable((), Id::new("print_endline")).into(),
+                                    argument: E::Literal(
+                                        (),
+                                        Constant::Text("Hello, world".to_owned())
+                                    )
+                                    .into(),
+                                }
+                            )
                             .into(),
-                            argument: E::Apply(Apply {
-                                function: E::Variable(Id::new("f")).into(),
-                                argument: E::Literal(Constant::Int(4)).into()
-                            })
+                            and_then: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Apply(
+                                        (),
+                                        Apply {
+                                            function: E::Variable((), Id::new("f")).into(),
+                                            argument: E::Literal((), Constant::Int(1)).into()
+                                        }
+                                    )
+                                    .into(),
+                                    argument: E::Literal((), Constant::Int(2)).into()
+                                }
+                            )
                             .into()
-                        })
-                        .into()
-                    })
+                        }
+                    )
                     .into(),
-                    argument: E::Literal(Constant::Int(5)).into()
-                })
-                .into()
-            }),
-            expr
+                    body: E::Apply(
+                        (),
+                        Apply {
+                            function: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Variable((), Id::new("+")).into(),
+                                    argument: E::Apply(
+                                        (),
+                                        Apply {
+                                            function: E::Apply(
+                                                (),
+                                                Apply {
+                                                    function: E::Variable((), Id::new("*")).into(),
+                                                    argument: E::Literal((), Constant::Int(3))
+                                                        .into()
+                                                }
+                                            )
+                                            .into(),
+                                            argument: E::Apply(
+                                                (),
+                                                Apply {
+                                                    function: E::Variable((), Id::new("f")).into(),
+                                                    argument: E::Literal((), Constant::Int(4))
+                                                        .into()
+                                                }
+                                            )
+                                            .into()
+                                        }
+                                    )
+                                    .into()
+                                }
+                            )
+                            .into(),
+                            argument: E::Literal((), Constant::Int(5)).into()
+                        }
+                    )
+                    .into()
+                }
+            ),
+            expr.map(|_| ())
         );
     }
 
@@ -610,27 +727,39 @@ mod tests {
                 .unwrap();
 
         assert_eq!(
-            E::Binding(Binding {
-                postition: SourcePosition::default(),
-                binder: Id::new("x"),
-                bound: E::Literal(Constant::Int(10)).into(),
-                body: E::Binding(Binding {
-                    postition: SourcePosition::new(1, 15),
-                    binder: Id::new("y"),
-                    bound: E::Literal(Constant::Int(20)).into(),
-                    body: E::Apply(Apply {
-                        function: E::Apply(Apply {
-                            function: E::Variable(Id::new("+")).into(),
-                            argument: E::Variable(Id::new("x")).into()
-                        })
-                        .into(),
-                        argument: E::Variable(Id::new("y")).into()
-                    })
+            E::Binding(
+                (),
+                Binding {
+                    postition: SourcePosition::default(),
+                    binder: Id::new("x"),
+                    bound: E::Literal((), Constant::Int(10)).into(),
+                    body: E::Binding(
+                        (),
+                        Binding {
+                            postition: SourcePosition::new(1, 15),
+                            binder: Id::new("y"),
+                            bound: E::Literal((), Constant::Int(20)).into(),
+                            body: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Apply(
+                                        (),
+                                        Apply {
+                                            function: E::Variable((), Id::new("+")).into(),
+                                            argument: E::Variable((), Id::new("x")).into()
+                                        }
+                                    )
+                                    .into(),
+                                    argument: E::Variable((), Id::new("y")).into()
+                                }
+                            )
+                            .into()
+                        }
+                    )
                     .into()
-                })
-                .into()
-            }),
-            expr
+                }
+            ),
+            expr.map(|_| ())
         );
     }
 
@@ -653,18 +782,24 @@ mod tests {
                         type_annotation: None
                     }],
                     return_type_annotation: None,
-                    body: E::Apply(Apply {
-                        function: E::Apply(Apply {
-                            function: E::Variable(Id::new("+")).into(),
-                            argument: E::Literal(Constant::Int(1)).into()
-                        })
-                        .into(),
-                        argument: Expression::Variable(Identifier::new("x")).into()
-                    }),
+                    body: E::Apply(
+                        (),
+                        Apply {
+                            function: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Variable((), Id::new("+")).into(),
+                                    argument: E::Literal((), Constant::Int(1)).into()
+                                }
+                            )
+                            .into(),
+                            argument: Expression::Variable((), Identifier::new("x")).into()
+                        }
+                    ),
                 }),
                 position: SourcePosition::default(),
             },
-            decl
+            decl.map(|_| ())
         );
     }
 
@@ -681,7 +816,7 @@ mod tests {
     #[test]
     fn module_function_decls() {
         let mut lexer = LexicalAnalyzer::default();
-        let (decls, _) = parse_declarations(lexer.tokenize(&into_input(
+        let (mut decls, _) = parse_declarations(lexer.tokenize(&into_input(
             r#"|create_window =
                |    fun x ->
                |        1 + x
@@ -691,6 +826,11 @@ mod tests {
                |"#,
         )))
         .unwrap();
+
+        let decls = decls
+            .drain(..)
+            .map(|decl| decl.map(|_| ()))
+            .collect::<Vec<_>>();
 
         assert_eq!(
             vec![
@@ -702,14 +842,20 @@ mod tests {
                             type_annotation: None
                         }],
                         return_type_annotation: None,
-                        body: E::Apply(Apply {
-                            function: E::Apply(Apply {
-                                function: E::Variable(Id::new("+")).into(),
-                                argument: E::Literal(Constant::Int(1)).into()
-                            })
-                            .into(),
-                            argument: E::Variable(Id::new("x")).into()
-                        }),
+                        body: E::Apply(
+                            (),
+                            Apply {
+                                function: E::Apply(
+                                    (),
+                                    Apply {
+                                        function: E::Variable((), Id::new("+")).into(),
+                                        argument: E::Literal((), Constant::Int(1)).into()
+                                    }
+                                )
+                                .into(),
+                                argument: E::Variable((), Id::new("x")).into()
+                            }
+                        ),
                     }),
                     position: SourcePosition::default(),
                 },
@@ -722,10 +868,13 @@ mod tests {
                             type_annotation: None
                         }],
                         return_type_annotation: None,
-                        body: E::Apply(Apply {
-                            function: E::Variable(Id::new("__print")).into(),
-                            argument: E::Variable(Identifier::new("s")).into()
-                        })
+                        body: E::Apply(
+                            (),
+                            Apply {
+                                function: E::Variable((), Id::new("__print")).into(),
+                                argument: E::Variable((), Identifier::new("s")).into()
+                            }
+                        )
                     })
                 }
             ],

@@ -7,22 +7,35 @@ use crate::{
 
 pub type CallResult<A> = Result<A, RuntimeError>;
 
-// This thing works well for regular functions but it does not solve
-// operators. Is it type check and then monomorphisation that is
-// required here? How would it know which symbol to put in there
-// base off of types?
-// I could always mangle the type signature into its name.
+#[derive(Debug, Clone)]
+pub struct BridgingInfo {
+    pub intended_target: Identifier,
+}
+
+impl BridgingInfo {
+    pub fn new(id: Identifier) -> Self {
+        Self {
+            intended_target: id,
+        }
+    }
+}
+
 pub trait Bridge {
     fn arity(&self) -> usize;
     fn evaluate(&self, e: &Environment) -> CallResult<Value>;
     fn signature(&self) -> Type;
 
-    fn lambda_tree(&self, target: Identifier) -> Expression {
-        (0..self.arity()).rfold(Expression::CallBridge(target), |acc, x| {
-            Expression::Lambda(Lambda {
-                parameter: Parameter::new(Identifier::new(&format!("p{x}"))),
-                body: acc.into(),
-            })
+    // What to put in Expression here? They are synthetic
+    fn lambda_tree(&self, target: Identifier) -> Expression<BridgingInfo> {
+        let info = BridgingInfo::new(target.clone());
+        (0..self.arity()).rfold(Expression::CallBridge(info.clone(), target), |acc, x| {
+            Expression::Lambda(
+                info.clone(),
+                Lambda {
+                    parameter: Parameter::new(Identifier::new(&format!("p{x}"))),
+                    body: acc.into(),
+                },
+            )
         })
     }
 }
@@ -279,17 +292,17 @@ impl From<f64> for Value {
 mod test {
     use super::*;
 
-    fn open_file(x: i64) -> i64 {
+    fn _open_file(x: i64) -> i64 {
         println!("open_file: {x}");
         1
     }
 
     // Bring this test back, but fix Lambda1::signature and Lambda2::signature first
     //    #[test]
-    fn playtime() {
+    fn _playtime() {
         let _x = define(
             Identifier::new("open_file"),
-            Lambda1(open_file),
+            Lambda1(_open_file),
             &mut CompileState::default(),
         )
         .unwrap();
