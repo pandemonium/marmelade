@@ -1,22 +1,25 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{Environment, LoadError, Loaded};
-use crate::ast::{Declaration, Identifier, ModuleDeclarator, ValueDeclarator};
+use crate::{
+    ast::{Declaration, FunctionDeclarator, Identifier, ModuleDeclarator, ValueDeclarator},
+    parser::ParsingInfo,
+    types::{TypeError, TypeInference, Typing, TypingContext},
+};
 
 pub struct ModuleLoader<'a, A> {
     module: &'a ModuleDeclarator<A>,
     dependency_graph: DependencyGraph<'a>,
-    resolved: Environment,
+    //    type_dependencies: DependencyGraph<'a>,
+    initialized: Environment,
 }
 
 impl<'a, A> ModuleLoader<'a, A>
 where
     A: Clone,
 {
-    pub fn try_initializing(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Loaded<Self> {
+    pub fn try_loading(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Loaded<Self> {
         let resolver = |id: &Identifier| prelude.is_defined(id);
-
-        // How do I unite this with the prelude?
 
         let dependency_graph = module.dependency_graph();
 
@@ -32,35 +35,57 @@ where
             Ok(Self {
                 module,
                 dependency_graph,
-                resolved: prelude,
+                initialized: prelude,
             })
         }
     }
 
-    pub fn resolve_dependencies(mut self) -> Loaded<Environment> {
-        for dependency in self.dependency_graph.compute_resolution_order().drain(..) {
-            self.try_resolving(dependency)?
+    pub fn type_check(self, mut typing_context: TypingContext) -> Loaded<Self> {
+        for id in self.dependency_graph.compute_resolution_order().drain(..) {
+            if self.module.find_value_declaration(id).is_some() {
+                let ty = self
+                    .infer_declaration_type(id, &typing_context)?
+                    .inferred_type;
+                println!("type_check: {id}::{ty}");
+                typing_context.bind(
+                    id.clone().into(),
+                    // What about the substitutions?
+                    // Can I build a huge Substitutions table for
+                    // all symbols here?
+                    ty,
+                );
+            }
         }
 
-        Ok(self.resolved)
+        // Make sure main exists and has the correct type
+
+        Ok(self)
     }
 
-    fn try_resolving(&mut self, id: &Identifier) -> Loaded<()> {
+    pub fn initialize(mut self) -> Loaded<Environment> {
+        for id in self.dependency_graph.compute_resolution_order().drain(..) {
+            self.initialize_declaration(id)?
+        }
+
+        Ok(self.initialized)
+    }
+
+    fn initialize_declaration(&mut self, id: &Identifier) -> Loaded<()> {
         if let Some(Declaration::Value { declarator, .. }) = self.module.find_value_declaration(id)
         {
-            self.resolve_value_binding(id, declarator)
-        } else if self.resolved.is_defined(id) {
+            self.initialize_binding(id, declarator)
+        } else if self.initialized.is_defined(id) {
             Ok(())
         } else {
             panic!("Unable to resolve declaration: `{id}` - not implemented")
         }
     }
 
-    fn resolve_value_binding(
+    fn initialize_binding(
         &mut self,
         id: &Identifier,
         declarator: &ValueDeclarator<A>,
-    ) -> Result<(), LoadError> {
+    ) -> Loaded<()> {
         // That this has to clone the Expressions is not ideal
 
         let expression = match declarator.clone() {
@@ -68,11 +93,51 @@ where
             ValueDeclarator::Function(function) => function.into_lambda_tree(id.clone()),
         };
 
-        let env = &mut self.resolved;
+        let env = &mut self.initialized;
         let value = expression.reduce(env)?;
         env.insert_binding(id.clone(), value);
 
         Ok(())
+    }
+
+    fn infer_declaration_type(
+        &self,
+        id: &Identifier,
+        typing_context: &TypingContext,
+    ) -> Loaded<TypeInference> {
+        let declaration = self
+            .module
+            .find_value_declaration(id)
+            .ok_or_else(|| TypeError::UndefinedSymbol(id.clone()))?;
+
+        match declaration {
+            Declaration::Value {
+                binder, declarator, ..
+            } => Ok(self.infer_declarator_type(binder, declarator, typing_context)?),
+            // I have to have a different Dependency Graph for the types
+            Declaration::Type { .. } => todo!(),
+            _otherwise => todo!(),
+        }
+    }
+
+    // Change into ParsingInfo
+    // A TypeInference contains substitutions. Can I use these?
+    fn infer_declarator_type(
+        &self,
+        binder: &Identifier,
+        declarator: &ValueDeclarator<A>,
+        typing_context: &TypingContext,
+    ) -> Typing {
+        let expression = match declarator.clone() {
+            ValueDeclarator::Constant(constant) => constant.initializer,
+            ValueDeclarator::Function(function) => {
+                // The fact that this has to always happen means that it ought
+                // not be duplicated.
+                function.into_lambda_tree(binder.clone())
+            }
+        };
+
+        typing_context.infer_type(&expression)
     }
 }
 

@@ -26,7 +26,7 @@ pub trait Bridge {
     fn signature(&self) -> Type;
 
     // What to put in Expression here? They are synthetic
-    fn lambda_tree(&self, target: Identifier) -> Expression<BridgingInfo> {
+    fn generate_lambda_tree(&self, target: Identifier) -> Expression<BridgingInfo> {
         let info = BridgingInfo::new(target.clone());
         (0..self.arity()).rfold(Expression::CallBridge(info.clone(), target), |acc, x| {
             Expression::Lambda(
@@ -170,28 +170,13 @@ impl Bridge for PartialRawLambda2 {
             .ok_or_else(|| RuntimeError::InapplicableLamda2) // bring in arguments here later
     }
 
-    // Can I implement this?
-    // let t = Type::fresh();
-    // Type::Function(t.into(), t.into())
-    // and then generalize_type lifts a Forall?
-    // But these are not forall a. a -> a -> a, though.
-    // Because there are hidden constraints.
-    // Can I type these without introducing constraints?
-    // Should I just say that all three types are fresh?
-    // But should I check it, then?
     fn signature(&self) -> Type {
         self.signature.clone()
     }
 }
 
-// This function must take something like or otherwise named CompilationContext instead.
-// Because it has to insert a type binding.
-// struct CompilationContext {
-//     env: Environment,
-//     ctx: TypingContext,
-// }
 pub fn define<B>(
-    surface_name: Identifier,
+    syntactical_name: Identifier,
     bridge: B,
     CompileState {
         typing_context,
@@ -202,16 +187,16 @@ pub fn define<B>(
 where
     B: Bridge + 'static,
 {
-    let bridge_name = surface_name.scoped_with("bridge");
+    let bridge_name = syntactical_name.scoped_with("bridge");
 
     typing_context.bind(bridge_name.clone().into(), bridge.signature());
-    typing_context.bind(surface_name.clone().into(), bridge.signature());
+    typing_context.bind(syntactical_name.clone().into(), bridge.signature());
 
-    let tree = bridge.lambda_tree(bridge_name.clone());
+    let tree = bridge.generate_lambda_tree(bridge_name.clone());
     interpreter_environment.insert_binding(bridge_name, Value::bridge(bridge));
 
     let tree = tree.reduce(interpreter_environment)?;
-    interpreter_environment.insert_binding(surface_name, tree);
+    interpreter_environment.insert_binding(syntactical_name, tree);
 
     Ok(())
 }

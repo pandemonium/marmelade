@@ -9,7 +9,7 @@ use crate::{
     },
     bridge::Bridge,
     lexer::SourcePosition,
-    types::{BaseType, Type},
+    types::{BaseType, Type, TypeError, TypingContext},
 };
 
 mod module;
@@ -32,6 +32,9 @@ pub enum LoadError {
 
     #[error("Dependency resolution failed")]
     DependencyResolutionFailed,
+
+    #[error("Type error {0}")]
+    TypeError(#[from] TypeError),
 }
 
 pub struct Interpreter {
@@ -43,11 +46,15 @@ impl Interpreter {
         Self { prelude }
     }
 
-    pub fn load_and_run(self, program: CompilationUnit<()>) -> Loaded<Value> {
+    pub fn load_and_run(
+        self,
+        typing_context: TypingContext,
+        program: CompilationUnit<()>,
+    ) -> Loaded<Value> {
         match program {
             CompilationUnit::Implicit(module) => {
                 // Typing has to happen for this to feel nice. TBD.
-                let env = self.load_module(module)?;
+                let env = self.load_module(typing_context, module)?;
                 match env.lookup(&Identifier::new("main"))? {
                     Value::Closure { .. } => todo!(),
                     Value::Bridge { .. } => todo!(),
@@ -58,9 +65,15 @@ impl Interpreter {
         }
     }
 
-    fn load_module(self, mut module: ModuleDeclarator<()>) -> Loaded<Environment> {
+    fn load_module(
+        self,
+        typing_context: TypingContext,
+        mut module: ModuleDeclarator<()>,
+    ) -> Loaded<Environment> {
         self.patch_with_prelude(&mut module);
-        ModuleLoader::try_initializing(&module, self.prelude)?.resolve_dependencies()
+        ModuleLoader::try_loading(&module, self.prelude)?
+            .type_check(typing_context)?
+            .initialize()
     }
 
     fn patch_with_prelude(&self, module: &mut ModuleDeclarator<()>) {
@@ -194,14 +207,14 @@ impl fmt::Display for Base {
 
 #[derive(Debug, Clone, Default)]
 pub struct Environment {
-    enclosing: Option<Rc<Environment>>,
+    parent: Option<Rc<Environment>>,
     leaf: Vec<(Identifier, Value)>,
 }
 
 impl Environment {
-    pub fn make_child(self: Environment) -> Self {
+    pub fn into_parent(self: Environment) -> Self {
         Self {
-            enclosing: Rc::new(self).into(),
+            parent: Rc::new(self).into(),
             leaf: Vec::default(),
         }
     }
@@ -217,7 +230,7 @@ impl Environment {
             .find_map(|(binder, bound)| (binder == id).then_some(bound))
             .map(Ok)
             .unwrap_or_else(|| {
-                self.enclosing.as_ref().map_or_else(
+                self.parent.as_ref().map_or_else(
                     || Err(RuntimeError::UndefinedSymbol(id.clone())),
                     |env| env.lookup(id),
                 )
@@ -236,7 +249,7 @@ impl Environment {
             .map(|(id, ..)| id)
             .collect::<Vec<_>>();
 
-        if let Some(enclosing) = self.enclosing.as_ref() {
+        if let Some(enclosing) = self.parent.as_ref() {
             boofer.extend(enclosing.symbols());
         }
 
@@ -257,7 +270,7 @@ impl fmt::Display for Environment {
             write!(f, "{binder} = {binding},")?;
         }
 
-        if let Some(enclosing) = self.enclosing.as_ref() {
+        if let Some(enclosing) = self.parent.as_ref() {
             writeln!(f, "")?;
             write!(f, "{enclosing}")?;
         }

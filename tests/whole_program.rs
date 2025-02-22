@@ -34,11 +34,11 @@ fn main1() {
     );
     let program = parser::parse_compilation_unit(lexer.tokenize(&source_text)).unwrap();
 
-    let mut prelude = CompileState::new(&source_text);
-    stdlib::import(&mut prelude).unwrap();
+    let mut compilation = CompileState::new(&source_text);
+    stdlib::import(&mut compilation).unwrap();
 
-    let return_value = Interpreter::new(prelude.interpreter_environment)
-        .load_and_run(program.map(|_| ()))
+    let return_value = Interpreter::new(compilation.interpreter_environment)
+        .load_and_run(compilation.typing_context, program.map(|_| ()))
         .unwrap();
 
     assert_eq!(Base::Int(327), return_value.try_into_scalar().unwrap());
@@ -135,12 +135,13 @@ fn factorial20() {
     );
     let program = parser::parse_compilation_unit(lexer.tokenize(&source_text)).unwrap();
 
-    let mut prelude = CompileState::new(&source_text);
-    stdlib::import(&mut prelude).unwrap();
+    let mut compilation = CompileState::new(&source_text);
+    stdlib::import(&mut compilation).unwrap();
 
-    let program_environment = Environment::make_child(prelude.interpreter_environment);
+    let program_environment = compilation.interpreter_environment.into_parent();
 
-    let return_value = Interpreter::new(program_environment).load_and_run(program.map(|_| ()));
+    let return_value = Interpreter::new(program_environment)
+        .load_and_run(compilation.typing_context, program.map(|_| ()));
     assert_eq!(
         Base::Int(2432902008176640000),
         return_value.unwrap().try_into_scalar().unwrap()
@@ -152,13 +153,12 @@ fn fibonacci23() {
     let mut lexer = LexicalAnalyzer::default();
     let source_text = into_input(
         r#"|fibonacci = fun x ->
-           |  if x == 0 then
-           |    1
+           |  if 0 == x then
+           |    0
            |  else
-           |    if x == 1
-           |    then
+           |    if 1 == x then
            |      1
-           |     else
+           |    else
            |      let a = x - 1 in
            |      let b =
            |        x - 2
@@ -168,15 +168,21 @@ fn fibonacci23() {
     );
     let program = parser::parse_compilation_unit(lexer.tokenize(&source_text)).unwrap();
 
-    let mut host = CompileState::new(&source_text);
-    stdlib::import(&mut host).unwrap();
+    let mut compilation = CompileState::new(&source_text);
+    stdlib::import(&mut compilation).unwrap();
+
+    //    HMm, so it will correctly find type errors in a lot
+    //    of places, but not if I put == "1"
+
+    // This program must not type-check successfully because
+    // the type of the apply does not type-check
 
     // Check that main is either a function that takes args
     // or a value. Both returning the Int type.
-    let return_value = host.typecheck_and_interpret(program);
+    let return_value = compilation.typecheck_and_interpret(program);
 
     assert_eq!(
-        Base::Int(121393),
+        Base::Int(75025),
         return_value.unwrap().try_into_scalar().unwrap()
     );
 }

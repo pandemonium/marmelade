@@ -4,6 +4,8 @@ use std::{
     slice::Iter,
 };
 
+use thiserror::Error;
+
 use crate::{
     ast::{self, Expression, Identifier},
     types::typer::Substitutions,
@@ -361,30 +363,36 @@ pub struct TypeInference {
     pub inferred_type: Type,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum TypeError {
+    #[error("Undefined symbol {0}")]
     UndefinedSymbol(ast::Identifier),
+
+    #[error("{base} has no member {index}")]
     BadProjection {
         base: Type,
         index: ast::ProductIndex,
     },
-    InfiniteType {
-        param: TypeParameter,
-        ty: Type,
-    },
-    BadTupleArity {
-        lhs: ProductType,
-        rhs: ProductType,
-    },
+
+    #[error("{param} is in {ty} which makes it infinite")]
+    InfiniteType { param: TypeParameter, ty: Type },
+
+    #[error("{lhs} and {rhs} are different product types")]
+    BadTupleArity { lhs: ProductType, rhs: ProductType },
+
+    #[error("{lhs} and {rhs} are different co-product types")]
     IncompatibleCoproducts {
         lhs: CoproductType,
         rhs: CoproductType,
     },
-    UnifyImpossible {
-        lhs: Type,
-        rhs: Type,
-    },
+
+    #[error("{lhs} and {rhs} do not unify")]
+    UnifyImpossible { lhs: Type, rhs: Type },
+
+    #[error("No such type {0}")]
     UndefinedType(ast::TypeName),
+
+    #[error("{coproduct} does not have a constructor {constructor}")]
     UndefinedCoproductConstructor {
         coproduct: ast::TypeName,
         constructor: ast::Identifier,
@@ -426,7 +434,7 @@ impl TypingContext {
     }
 
     pub fn infer_type<A>(&self, e: &Expression<A>) -> Typing {
-        typer::infer(e, self)
+        typer::synthesize_type(e, self)
     }
 
     fn free_variables(&self) -> HashSet<TypeParameter> {
@@ -441,6 +449,19 @@ impl TypingContext {
         map.values_mut().for_each(|ty| *ty = ty.clone().apply(subs));
 
         Self(map)
+    }
+}
+
+impl fmt::Display for TypingContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (binding, ty) in &self.0 {
+            match binding {
+                Binding::TypeTerm(id) => writeln!(f, "{id} ::= {ty}")?,
+                Binding::ValueTerm(id) => writeln!(f, "{id} :: {ty}")?,
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -531,10 +552,9 @@ mod typer {
         };
 
         let mut ctx = ctx.clone();
-        println!("Binding {} to {}", name, expected_param_type);
         ctx.bind(name.clone().into(), expected_param_type.clone());
 
-        let body = infer(body, &ctx)?;
+        let body = synthesize_type(body, &ctx)?;
 
         let inferred_param_type = expected_param_type.clone().apply(&body.substitutions);
 
@@ -556,8 +576,8 @@ mod typer {
         argument: &ast::Expression<A>,
         ctx: &TypingContext,
     ) -> Typing {
-        let function = infer(function, ctx)?;
-        let argument = infer(argument, &ctx.apply(&function.substitutions))?;
+        let function = synthesize_type(function, ctx)?;
+        let argument = synthesize_type(argument, &ctx.apply(&function.substitutions))?;
 
         let return_type = Type::fresh();
 
@@ -581,7 +601,7 @@ mod typer {
         })
     }
 
-    pub fn infer<A>(expr: &ast::Expression<A>, ctx: &TypingContext) -> Typing {
+    pub fn synthesize_type<A>(expr: &ast::Expression<A>, ctx: &TypingContext) -> Typing {
         match expr {
             ast::Expression::Variable(_, binding) | ast::Expression::CallBridge(_, binding) => {
                 // Ref-variants of Binding too?
@@ -635,8 +655,8 @@ mod typer {
                 infer_projection(base, index, ctx)
             }
             ast::Expression::Sequence(_, Sequence { this, and_then }) => {
-                infer(this, ctx)?;
-                infer(and_then, ctx)
+                synthesize_type(this, ctx)?;
+                synthesize_type(and_then, ctx)
             }
             ast::Expression::ControlFlow(_, control) => infer_control_flow(control, ctx),
         }
@@ -658,13 +678,13 @@ mod typer {
         alternate: &Expression<A>,
         ctx: &TypingContext,
     ) -> Typing {
-        let predicate_type = infer(predicate, ctx)?;
+        let predicate_type = synthesize_type(predicate, ctx)?;
         let predicate = predicate_type
             .inferred_type
             .unify(&Type::Base(BaseType::Bool))?;
 
-        let consequent = infer(consequent, ctx)?;
-        let alternate = infer(alternate, ctx)?;
+        let consequent = synthesize_type(consequent, ctx)?;
+        let alternate = synthesize_type(alternate, ctx)?;
 
         let branch = consequent.inferred_type.unify(&alternate.inferred_type)?;
 
@@ -688,7 +708,7 @@ mod typer {
         body: &ast::Expression<A>,
         ctx: &TypingContext,
     ) -> Typing {
-        let bound = infer(bound, ctx)?;
+        let bound = synthesize_type(bound, ctx)?;
         let bound_type = generalize_type(bound.inferred_type, ctx);
 
         let mut ctx = ctx.clone();
@@ -697,7 +717,7 @@ mod typer {
         let TypeInference {
             substitutions,
             inferred_type,
-        } = infer(body, &ctx.apply(&bound.substitutions))?;
+        } = synthesize_type(body, &ctx.apply(&bound.substitutions))?;
 
         Ok(TypeInference {
             substitutions: bound.substitutions.compose(substitutions),
@@ -710,7 +730,7 @@ mod typer {
         index: &ast::ProductIndex,
         ctx: &TypingContext,
     ) -> Typing {
-        let base = infer(base, ctx)?;
+        let base = synthesize_type(base, ctx)?;
 
         match (&base.inferred_type, index) {
             (Type::Product(ProductType::Tuple(elements)), ast::ProductIndex::Tuple(index))
@@ -757,7 +777,7 @@ mod typer {
             .map(|ty| ty.instantiate())
             .as_ref()
         {
-            let argument = infer(argument, ctx)?;
+            let argument = synthesize_type(argument, ctx)?;
             if let Some(expected_type) = coproduct.find_constructor(constructor) {
                 let substitutions = argument
                     .substitutions
