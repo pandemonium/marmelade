@@ -33,7 +33,6 @@ impl ParsingInfo {
     }
 }
 
-// What do I annotate it with?
 pub fn parse_compilation_unit<'a>(
     input: &'a [Token],
 ) -> Result<CompilationUnit<ParsingInfo>, ParseError> {
@@ -345,7 +344,7 @@ fn parse_infix<'a>(
         //        println!("is_done: {t:?}");
         matches!(
             t.token_type(),
-            TT::Keyword(..) | TT::End | TT::Layout(Layout::Dedent)
+            TT::Keyword(Keyword::In | Keyword::Else) | TT::End | TT::Layout(Layout::Dedent)
         )
     };
 
@@ -357,6 +356,17 @@ fn parse_infix<'a>(
 
         [T(TT::Layout(..), ..), u, ..] if is_done(u) => Ok((lhs, input)),
 
+        // ( <Newline> | <;> ) <expr>
+        // -- an expression sequence, e.g.: <statement>* <expr>
+        [T(TT::Layout(Layout::Newline) | TT::Semicolon, ..), lookahead @ ..] if input.len() > 0 => {
+            //            println!("parse_infix 2: {:?}", &input[..5]);
+            if !starts_with(TT::End, &input[1..]) && !is_toplevel(lookahead) {
+                parse_sequence(lhs, &input[1..])
+            } else {
+                Ok((lhs, input))
+            }
+        }
+
         // <op> <expr>
         [T(TT::Operator(op), pos), remains @ ..] => {
             parse_operator(lhs, input, precedence, op, remains, *pos)
@@ -366,16 +376,6 @@ fn parse_infix<'a>(
         // -- a continuation of the infix operator sequence on the next line (possibly indented.)
         [T(TT::Layout(Layout::Newline | Layout::Indent), ..), T(TT::Operator(op), pos), remains @ ..] => {
             parse_operator(lhs, input, precedence, op, remains, *pos)
-        }
-
-        // ( <Newline> | <;> ) <expr>
-        // -- an expression sequence, e.g.: <statement>* <expr>
-        [T(TT::Layout(Layout::Newline) | TT::Semicolon, ..), lookahead @ ..] if input.len() > 0 => {
-            if !starts_with(TT::End, &input[1..]) && !is_toplevel(lookahead) {
-                parse_sequence(lhs, &input[1..])
-            } else {
-                Ok((lhs, input))
-            }
         }
 
         // <expr>
@@ -436,6 +436,8 @@ fn parse_juxtaposed<'a>(
     precedence: usize,
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (rhs, remains) = parse_prefix(tokens)?;
+
+    // parse continuing arguments
     parse_infix(
         Expression::Apply(
             ParsingInfo::new(*lhs.position()),
@@ -812,6 +814,25 @@ mod tests {
     //            Err(ParseError::ExpectedTokenType(TT::Equals))
     //        ));
     //    }
+
+    #[test]
+    fn if_after_juxtaposed() {
+        let mut lexer = LexicalAnalyzer::default();
+        let unit = parse_compilation_unit(lexer.tokenize(&into_input(
+            r#"|create_window =
+               |  fun x ->
+               |    print_endline "Hi, mom"
+               |    if x == 0 then
+               |      print "hi"
+               |    else
+               |      print "hi"
+               |
+               |"#,
+        )))
+        .unwrap();
+
+        println!("{}", unit);
+    }
 
     #[test]
     fn module_function_decls() {
