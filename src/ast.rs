@@ -705,6 +705,10 @@ impl<A> Expression<A> {
             Self::ControlFlow(x, info) => Expression::<B>::ControlFlow(f(x), info.map(f)),
         }
     }
+
+    pub fn erase_annotation(self) -> Expression<()> {
+        self.map(|_| ())
+    }
 }
 
 impl<A> fmt::Display for Expression<A> {

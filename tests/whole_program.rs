@@ -156,13 +156,14 @@ fn fibonacci23() {
            |  if 0 == x then
            |    0
            |  else
-           |    if "1" == x then
-           |      1
-           |    else
-           |      let a = x - 1 in
-           |      let b =
-           |        x - 2
-           |      in fibonacci a + fibonacci b
+           |
+           |    if 1 == x
+           |      then print_endline "hi"; 1
+           |      else
+           |        let a = x - 1 in
+           |        let b =
+           |          x - 2
+           |        in fibonacci a + fibonacci b
            |main = fibonacci 5
            |"#,
     );

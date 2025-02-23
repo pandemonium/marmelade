@@ -214,7 +214,9 @@ fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Paramet
     ))
 }
 
-pub fn parse_expr_phrase<'a>(tokens: &'a [Token]) -> Result<Expression<ParsingInfo>, ParseError> {
+pub fn parse_expression_phrase<'a>(
+    tokens: &'a [Token],
+) -> Result<Expression<ParsingInfo>, ParseError> {
     let (expression, remains) = parse_expression(tokens, 0)?;
 
     if let &[T(TT::End, ..)] = remains {
@@ -257,7 +259,11 @@ fn parse_if_expression<'a>(
         let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
         let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
 
+        //        println!("parse_if_expression: {:?}", &remains[..5]);
+
         let (consequent, remains) = parse_expression(remains, 0)?;
+
+        //        println!("parse_if_expression(2): {:?}", &remains[..5]);
 
         let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
         let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
@@ -343,14 +349,23 @@ fn parse_binding<'a>(
     }
 }
 
-fn parse_expression<'a>(
+pub fn parse_expression<'a>(
     tokens: &'a [Token],
     precedence: usize,
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (prefix, remains) = parse_prefix(tokens)?;
 
-    // An initial Indent could occur here, right?
     parse_infix(prefix, remains, precedence)
+}
+
+fn is_block_termination(t: &Token) -> bool {
+    //        println!("is_done: {t:?}");
+    matches!(
+        t.token_type(),
+        TT::Keyword(Keyword::In | Keyword::Else | Keyword::Then)
+            | TT::End
+            | TT::Layout(Layout::Dedent)
+    )
 }
 
 // Infixes end with End and In
@@ -359,21 +374,13 @@ fn parse_infix<'a>(
     input: &'a [Token],
     precedence: usize,
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
-    let is_done = |t: &Token| {
-        //        println!("is_done: {t:?}");
-        matches!(
-            t.token_type(),
-            TT::Keyword(Keyword::In | Keyword::Else) | TT::End | TT::Layout(Layout::Dedent)
-        )
-    };
-
     // Operators can be prefigured by Layout::Newline
     // Juxtapositions though? I would have to be able to ask the Expression
     // about where it started
     match input {
-        [t, ..] if is_done(t) => Ok((lhs, input)),
+        [t, ..] if is_block_termination(t) => Ok((lhs, input)),
 
-        [T(TT::Layout(..), ..), u, ..] if is_done(u) => Ok((lhs, input)),
+        [T(TT::Layout(..), ..), u, ..] if is_block_termination(u) => Ok((lhs, input)),
 
         // ( <Newline> | <;> ) <expr>
         // -- an expression sequence, e.g.: <statement>* <expr>
@@ -476,6 +483,8 @@ fn parse_sequence<'a>(
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (rhs, remains) = parse_expression(tokens, 0)?;
 
+    //    println!("parse_sequence: {:?}", &remains[..5]);
+
     let sequence = Expression::Sequence(
         ParsingInfo::new(*rhs.position()),
         Sequence {
@@ -486,7 +495,7 @@ fn parse_sequence<'a>(
 
     if matches!(
         remains,
-        [T(TT::Semicolon | TT::Layout(Layout::Newline), ..), ..]
+        [T(TT::Semicolon | TT::Layout(Layout::Newline), ..), u, ..] if !is_block_termination(u)
     ) {
         parse_sequence(sequence, &remains[1..])
     } else {
@@ -542,7 +551,8 @@ mod tests {
     fn let_in_infix() {
         let mut lexer = LexicalAnalyzer::default();
 
-        let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in x + 20"))).unwrap();
+        let expr =
+            parse_expression_phrase(lexer.tokenize(&into_input("let x = 10 in x + 20"))).unwrap();
         assert_eq!(
             E::Binding(
                 (),
@@ -577,7 +587,8 @@ mod tests {
     #[test]
     fn let_in_juxtaposed() {
         let mut lexer = LexicalAnalyzer::default();
-        let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 20"))).unwrap();
+        let expr =
+            parse_expression_phrase(lexer.tokenize(&into_input("let x = 10 in f x 20"))).unwrap();
         assert_eq!(
             E::Binding(
                 (),
@@ -608,7 +619,8 @@ mod tests {
     #[test]
     fn let_in_juxtaposed3() {
         let mut lexer = LexicalAnalyzer::default();
-        let expr = parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in f x 1 2"))).unwrap();
+        let expr =
+            parse_expression_phrase(lexer.tokenize(&into_input("let x = 10 in f x 1 2"))).unwrap();
         assert_eq!(
             E::Binding(
                 (),
@@ -646,7 +658,7 @@ mod tests {
     #[test]
     fn let_in_with_mixed_artithmetics() {
         let mut lexer = LexicalAnalyzer::default();
-        let expr = parse_expr_phrase(lexer.tokenize(&into_input(
+        let expr = parse_expression_phrase(lexer.tokenize(&into_input(
             r#"|let x =
                |    print_endline "Hello, world"; f 1 2
                |in
@@ -739,9 +751,10 @@ mod tests {
     #[test]
     fn nested_let_in() {
         let mut lexer = LexicalAnalyzer::default();
-        let expr =
-            parse_expr_phrase(lexer.tokenize(&into_input("let x = 10 in let y = 20 in x + y")))
-                .unwrap();
+        let expr = parse_expression_phrase(
+            lexer.tokenize(&into_input("let x = 10 in let y = 20 in x + y")),
+        )
+        .unwrap();
 
         assert_eq!(
             E::Binding(
