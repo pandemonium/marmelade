@@ -22,6 +22,6 @@ impl<'a> CompileState<'a> {
 
     pub fn typecheck_and_interpret(self, program: CompilationUnit<ParsingInfo>) -> Loaded<Value> {
         Interpreter::new(self.interpreter_environment.into_parent())
-            .load_and_run(self.typing_context, program.map(|_| ()))
+            .load_and_run(self.typing_context, program)
     }
 }

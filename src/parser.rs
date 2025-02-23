@@ -6,6 +6,7 @@ use crate::{
         FunctionDeclarator, Identifier, ModuleDeclarator, Parameter, Sequence, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
+    types,
 };
 
 pub type ParseResult<'a, A> = Result<(A, &'a [Token]), ParseError>;
@@ -22,7 +23,7 @@ use Keyword::*;
 use Token as T;
 use TokenType as TT;
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct ParsingInfo {
     pub position: SourcePosition,
 }
@@ -30,6 +31,26 @@ pub struct ParsingInfo {
 impl ParsingInfo {
     pub fn new(position: SourcePosition) -> Self {
         Self { position }
+    }
+
+    pub fn location(&self) -> &SourcePosition {
+        &self.position
+    }
+}
+
+impl types::Parsed for ParsingInfo {
+    fn info(&self) -> &ParsingInfo {
+        self
+    }
+}
+
+static DEFAULT_PARSING_INFO: ParsingInfo = ParsingInfo {
+    position: SourcePosition { row: 0, column: 0 },
+};
+
+impl types::Parsed for () {
+    fn info(&self) -> &ParsingInfo {
+        &DEFAULT_PARSING_INFO
     }
 }
 
@@ -206,23 +227,22 @@ pub fn parse_expr_phrase<'a>(tokens: &'a [Token]) -> Result<Expression<ParsingIn
 fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression<ParsingInfo>> {
     match tokens {
         [T(TT::Keyword(Let), position), T(TT::Identifier(binder), ..), T(TT::Equals, ..), remains @ ..] => {
-            parse_binding(position.clone(), binder, remains)
+            parse_binding(*position, binder, remains)
         }
-        [T(TT::Keyword(If), position), remains @ ..] => {
-            parse_if_expression(position.clone(), remains)
-        }
-        [T(TT::Literal(literal), pos), remains @ ..] => Ok((
-            Expression::Literal(ParsingInfo::new(*pos), literal.clone().into()),
+        [T(TT::Keyword(If), position), remains @ ..] => parse_if_expression(*position, remains),
+        [T(TT::Literal(literal), position), remains @ ..] => Ok((
+            Expression::Literal(ParsingInfo::new(*position), literal.clone().into()),
             remains,
         )),
-        [T(TT::Identifier(id), pos), remains @ ..] => Ok((
-            Expression::Variable(ParsingInfo::new(*pos), Identifier::new(&id)),
+        [T(TT::Identifier(id), position), remains @ ..] => Ok((
+            Expression::Variable(ParsingInfo::new(*position), Identifier::new(&id)),
             remains,
         )),
         otherwise => panic!("{otherwise:?}"),
     }
 }
 
+// This function is __TERRIBLE__.
 fn parse_if_expression<'a>(
     position: SourcePosition,
     remains: &'a [Token],
@@ -312,7 +332,6 @@ fn parse_binding<'a>(
                         binder: Identifier::new(binder),
                         bound: bound.into(),
                         body: body.into(),
-                        postition: position,
                     },
                 ),
                 remains,
@@ -528,7 +547,6 @@ mod tests {
             E::Binding(
                 (),
                 Binding {
-                    postition: SourcePosition::default(),
                     binder: Id::new("x"),
                     bound: E::Literal((), Constant::Int(10)).into(),
                     body: E::Apply(
@@ -564,7 +582,6 @@ mod tests {
             E::Binding(
                 (),
                 Binding {
-                    postition: SourcePosition::default(),
                     binder: Id::new("x"),
                     bound: E::Literal((), Constant::Int(10)).into(),
                     body: E::Apply(
@@ -596,7 +613,6 @@ mod tests {
             E::Binding(
                 (),
                 Binding {
-                    postition: SourcePosition::default(),
                     binder: Id::new("x"),
                     bound: E::Literal((), Constant::Int(10)).into(),
                     body: E::Apply(
@@ -642,7 +658,6 @@ mod tests {
             E::Binding(
                 (),
                 Binding {
-                    postition: SourcePosition::default(),
                     binder: Id::new("x"),
                     bound: E::Sequence(
                         (),
@@ -732,13 +747,11 @@ mod tests {
             E::Binding(
                 (),
                 Binding {
-                    postition: SourcePosition::default(),
                     binder: Id::new("x"),
                     bound: E::Literal((), Constant::Int(10)).into(),
                     body: E::Binding(
                         (),
                         Binding {
-                            postition: SourcePosition::new(1, 15),
                             binder: Id::new("y"),
                             bound: E::Literal((), Constant::Int(20)).into(),
                             body: E::Apply(

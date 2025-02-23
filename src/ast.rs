@@ -558,7 +558,6 @@ impl<A> Project<A> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding<A> {
-    pub postition: lexer::SourcePosition,
     pub binder: Identifier,
     pub bound: Box<Expression<A>>,
     pub body: Box<Expression<A>>,
@@ -566,7 +565,6 @@ pub struct Binding<A> {
 impl<A> Binding<A> {
     fn map<B>(self, f: fn(A) -> B) -> Binding<B> {
         Binding::<B> {
-            postition: self.postition,
             binder: self.binder,
             bound: self.bound.map(f).into(),
             body: self.body.map(f).into(),

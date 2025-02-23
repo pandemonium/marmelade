@@ -3,13 +3,9 @@ use std::{
     fmt,
     slice::Iter,
 };
-
 use thiserror::Error;
 
-use crate::{
-    ast::{self, Expression, Identifier},
-    types::typer::Substitutions,
-};
+use crate::{ast, lexer::SourcePosition, parser::ParsingInfo};
 
 /*
     The structure of this file is off.
@@ -18,6 +14,9 @@ use crate::{
     I don't really like the way the associated functions
       are distributed over the types either.
 */
+pub trait Parsed {
+    fn info(&self) -> &ParsingInfo;
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -107,11 +106,18 @@ impl Type {
         Self::Parameter(TypeParameter::fresh())
     }
 
-    fn unify_tuples(lhs: &[Type], rhs: &[Type]) -> Result<Substitutions, TypeError> {
+    fn unify_tuples<A>(
+        lhs: &[Type],
+        rhs: &[Type],
+        annotation: &A,
+    ) -> Result<typer::Substitutions, TypeError>
+    where
+        A: Parsed,
+    {
         if lhs.len() == rhs.len() {
-            let mut substitution = Substitutions::default();
+            let mut substitution = typer::Substitutions::default();
             for (lhs, rhs) in lhs.into_iter().zip(rhs.into_iter()) {
-                substitution = substitution.compose(lhs.unify(rhs)?);
+                substitution = substitution.compose(lhs.unify(rhs, annotation)?);
             }
             Ok(substitution)
         } else {
@@ -122,17 +128,21 @@ impl Type {
         }
     }
 
-    fn unify_coproducts(
+    fn unify_coproducts<A>(
         lhs: &CoproductType,
         rhs: &CoproductType,
-    ) -> Result<Substitutions, TypeError> {
+        annotation: &A,
+    ) -> Result<typer::Substitutions, TypeError>
+    where
+        A: Parsed,
+    {
         if lhs.arity() == rhs.arity() {
-            let mut sub = Substitutions::default();
+            let mut sub = typer::Substitutions::default();
 
             for ((lhs_constructor, lhs_ty), (rhs_constructor, rhs_ty)) in lhs.iter().zip(rhs.iter())
             {
                 if lhs_constructor == rhs_constructor {
-                    sub = sub.compose(lhs_ty.unify(rhs_ty)?)
+                    sub = sub.compose(lhs_ty.unify(rhs_ty, annotation)?)
                 } else {
                     Err(TypeError::IncompatibleCoproducts {
                         lhs: lhs.clone(),
@@ -150,12 +160,17 @@ impl Type {
         }
     }
 
-    fn unify(&self, rhs: &Type) -> Result<Substitutions, TypeError> {
+    fn unify<A>(&self, rhs: &Type, annotation: &A) -> Result<typer::Substitutions, TypeError>
+    where
+        A: Parsed,
+    {
         let lhs = self;
 
         match (lhs, rhs) {
-            (Self::Base(t), Self::Base(u)) if t == u => Ok(Substitutions::default()),
-            (Self::Parameter(t), Self::Parameter(u)) if t == u => Ok(Substitutions::default()),
+            (Self::Base(t), Self::Base(u)) if t == u => Ok(typer::Substitutions::default()),
+            (Self::Parameter(t), Self::Parameter(u)) if t == u => {
+                Ok(typer::Substitutions::default())
+            }
             (Self::Parameter(param), ty) | (ty, Self::Parameter(param)) => {
                 if ty.free_variables().contains(param) {
                     Err(TypeError::InfiniteType {
@@ -163,34 +178,41 @@ impl Type {
                         ty: ty.clone(),
                     })
                 } else {
-                    let mut substitution = Substitutions::default();
+                    let mut substitution = typer::Substitutions::default();
                     substitution.add(param.clone(), ty.clone());
                     Ok(substitution)
                 }
             }
             (Self::Product(ProductType::Tuple(lhs)), Self::Product(ProductType::Tuple(rhs))) => {
-                Self::unify_tuples(lhs, rhs)
+                Self::unify_tuples(lhs, rhs, annotation)
             }
             (Self::Product(ProductType::Struct(lhs)), Self::Product(ProductType::Struct(rhs))) => {
-                Self::unify_structs(lhs, rhs)
+                Self::unify_structs(lhs, rhs, annotation)
             }
-            (Self::Coproduct(lhs), Self::Coproduct(rhs)) => Self::unify_coproducts(lhs, rhs),
+            (Self::Coproduct(lhs), Self::Coproduct(rhs)) => {
+                Self::unify_coproducts(lhs, rhs, annotation)
+            }
             (
                 Self::Function(lhs_domain, lhs_codomain),
                 Self::Function(rhs_domain, rhs_codomain),
             ) => {
-                let domain = lhs_domain.unify(rhs_domain)?;
+                let domain = lhs_domain.unify(rhs_domain, annotation)?;
                 let codomain = (*lhs_codomain)
                     .clone()
                     .apply(&domain)
-                    .unify(&(*rhs_codomain).clone().apply(&domain))?;
+                    .unify(&(*rhs_codomain).clone().apply(&domain), annotation)?;
 
                 Ok(domain.compose(codomain))
             }
-            (lhs, rhs) => Err(TypeError::UnifyImpossible {
-                lhs: lhs.clone(),
-                rhs: rhs.clone(),
-            }),
+            (lhs, rhs) => {
+                //                panic!("failed unify here");
+
+                Err(TypeError::UnifyImpossible {
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
+                    position: { annotation.info().location().clone() },
+                })
+            }
         }
     }
 
@@ -198,10 +220,14 @@ impl Type {
     // todo: this is not ideal. Store a Vec instead of a HashMap
     // This unifies without the nominal part of the type, if it
     // even has one (a name.)
-    fn unify_structs(
-        lhs: &HashMap<Identifier, Type>,
-        rhs: &HashMap<Identifier, Type>,
-    ) -> Result<Substitutions, TypeError> {
+    fn unify_structs<A>(
+        lhs: &HashMap<ast::Identifier, Type>,
+        rhs: &HashMap<ast::Identifier, Type>,
+        annotation: &A,
+    ) -> Result<typer::Substitutions, TypeError>
+    where
+        A: Parsed,
+    {
         if lhs.len() == rhs.len() {
             let mut lhs_fields = lhs.iter().collect::<Vec<_>>();
             lhs_fields.sort_by(|(p, _), (q, _)| p.cmp(&q));
@@ -209,16 +235,17 @@ impl Type {
             let mut rhs_fields = rhs.iter().collect::<Vec<_>>();
             rhs_fields.sort_by(|(p, _), (q, _)| p.cmp(&q));
 
-            let mut substitutions = Substitutions::default();
+            let mut substitutions = typer::Substitutions::default();
             for ((lhs_id, lhs_ty), (rhs_id, rhs_ty)) in
                 lhs_fields.drain(..).zip(rhs_fields.drain(..))
             {
                 if lhs_id == rhs_id {
-                    substitutions = substitutions.compose(lhs_ty.unify(rhs_ty)?)
+                    substitutions = substitutions.compose(lhs_ty.unify(rhs_ty, annotation)?)
                 } else {
                     Err(TypeError::UnifyImpossible {
                         lhs: Type::Product(ProductType::Struct(lhs.clone())),
                         rhs: Type::Product(ProductType::Struct(lhs.clone())),
+                        position: annotation.info().location().clone(),
                     })?
                 }
             }
@@ -228,6 +255,7 @@ impl Type {
             Err(TypeError::UnifyImpossible {
                 lhs: Type::Product(ProductType::Struct(lhs.clone())),
                 rhs: Type::Product(ProductType::Struct(lhs.clone())),
+                position: annotation.info().location().clone(),
             })
         }
     }
@@ -270,10 +298,10 @@ impl fmt::Display for BaseType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductType {
     Tuple(Vec<Type>),
-    Struct(HashMap<Identifier, Type>),
+    Struct(HashMap<ast::Identifier, Type>),
 }
 impl ProductType {
-    fn apply(self, subs: &Substitutions) -> ProductType {
+    fn apply(self, subs: &typer::Substitutions) -> ProductType {
         match self {
             ProductType::Tuple(mut elements) => {
                 ProductType::Tuple(elements.drain(..).map(|ty| ty.apply(subs)).collect())
@@ -331,7 +359,7 @@ impl CoproductType {
         constructors.iter()
     }
 
-    fn apply(self, subs: &Substitutions) -> Self {
+    fn apply(self, subs: &typer::Substitutions) -> Self {
         let Self(mut constructors) = self;
         Self(
             constructors
@@ -386,8 +414,12 @@ pub enum TypeError {
         rhs: CoproductType,
     },
 
-    #[error("{lhs} and {rhs} do not unify")]
-    UnifyImpossible { lhs: Type, rhs: Type },
+    #[error("{position}: {lhs} and {rhs} do not unify")]
+    UnifyImpossible {
+        lhs: Type,
+        rhs: Type,
+        position: SourcePosition,
+    },
 
     #[error("No such type {0}")]
     UndefinedType(ast::TypeName),
@@ -433,7 +465,10 @@ impl TypingContext {
         map.get(binding)
     }
 
-    pub fn infer_type<A>(&self, e: &Expression<A>) -> Typing {
+    pub fn infer_type<A>(&self, e: &ast::Expression<A>) -> Typing
+    where
+        A: Parsed,
+    {
         typer::synthesize_type(e, self)
     }
 
@@ -476,11 +511,15 @@ mod typer {
     };
 
     use super::{
-        BaseType, ProductType, Type, TypeError, TypeInference, TypeParameter, Typing, TypingContext,
+        BaseType, Parsed, ProductType, Type, TypeError, TypeInference, TypeParameter, Typing,
+        TypingContext,
     };
-    use crate::ast::{
-        self, Apply, Binding, Construct, ControlFlow, Expression, Lambda, Project, SelfReferential,
-        Sequence,
+    use crate::{
+        ast::{
+            self, Apply, Binding, Construct, ControlFlow, Expression, Lambda, Project,
+            SelfReferential, Sequence,
+        },
+        parser::ParsingInfo,
     };
 
     static FRESH_TYPE_ID: AtomicU32 = AtomicU32::new(0);
@@ -541,8 +580,12 @@ mod typer {
             type_annotation,
         }: &ast::Parameter,
         body: &Expression<A>,
+        info: &ParsingInfo,
         ctx: &TypingContext,
-    ) -> Typing {
+    ) -> Typing
+    where
+        A: Parsed,
+    {
         let expected_param_type = if let Some(param_type) = type_annotation {
             ctx.lookup(&param_type.clone().into())
                 .cloned()
@@ -558,7 +601,7 @@ mod typer {
 
         let inferred_param_type = expected_param_type.clone().apply(&body.substitutions);
 
-        let annotation_unification = expected_param_type.unify(&inferred_param_type)?;
+        let annotation_unification = expected_param_type.unify(&inferred_param_type, info)?;
 
         let function_type = generalize_type(
             Type::Function(inferred_param_type.into(), body.inferred_type.into()),
@@ -574,8 +617,12 @@ mod typer {
     fn infer_application<A>(
         function: &ast::Expression<A>,
         argument: &ast::Expression<A>,
+        annotation: &A,
         ctx: &TypingContext,
-    ) -> Typing {
+    ) -> Typing
+    where
+        A: Parsed,
+    {
         let function = synthesize_type(function, ctx)?;
         let argument = synthesize_type(argument, &ctx.apply(&function.substitutions))?;
 
@@ -585,10 +632,13 @@ mod typer {
             .inferred_type
             .instantiate()
             .apply(&argument.substitutions)
-            .unify(&Type::Function(
-                Box::new(argument.inferred_type),
-                Box::new(return_type.clone()),
-            ))?;
+            .unify(
+                &Type::Function(
+                    Box::new(argument.inferred_type),
+                    Box::new(return_type.clone()),
+                ),
+                annotation,
+            )?;
 
         let return_type = return_type.apply(&unified_substitutions);
 
@@ -601,7 +651,10 @@ mod typer {
         })
     }
 
-    pub fn synthesize_type<A>(expr: &ast::Expression<A>, ctx: &TypingContext) -> Typing {
+    pub fn synthesize_type<A>(expr: &ast::Expression<A>, ctx: &TypingContext) -> Typing
+    where
+        A: Parsed,
+    {
         match expr {
             ast::Expression::Variable(_, binding) | ast::Expression::CallBridge(_, binding) => {
                 // Ref-variants of Binding too?
@@ -616,7 +669,7 @@ mod typer {
             }
             ast::Expression::Literal(_, constant) => synthesize_type_of_constant(constant, ctx),
             ast::Expression::SelfReferential(
-                _,
+                annotation,
                 SelfReferential {
                     name,
                     parameter,
@@ -625,13 +678,13 @@ mod typer {
             ) => {
                 let mut ctx = ctx.clone();
                 ctx.bind(name.clone().into(), Type::fresh());
-                infer_lambda(parameter, body, &ctx)
+                infer_lambda(parameter, body, &annotation.info(), &ctx)
             }
-            ast::Expression::Lambda(_, Lambda { parameter, body }) => {
-                infer_lambda(parameter, body, ctx)
+            ast::Expression::Lambda(annotation, Lambda { parameter, body }) => {
+                infer_lambda(parameter, body, &annotation.info(), ctx)
             }
-            ast::Expression::Apply(_, Apply { function, argument }) => {
-                infer_application(function, argument, ctx)
+            ast::Expression::Apply(annotation, Apply { function, argument }) => {
+                infer_application(function, argument, annotation, ctx)
             }
             ast::Expression::Binding(
                 _,
@@ -643,13 +696,13 @@ mod typer {
                 },
             ) => infer_binding(binder, bound, body, ctx),
             ast::Expression::Construct(
-                _,
+                annotation,
                 Construct {
                     name,
                     constructor,
                     argument,
                 },
-            ) => infer_coproduct(name, constructor, argument, ctx),
+            ) => infer_coproduct(name, constructor, argument, annotation, ctx),
             ast::Expression::Product(_, product) => infer_product(product, ctx),
             ast::Expression::Project(_, Project { base, index }) => {
                 infer_projection(base, index, ctx)
@@ -658,17 +711,26 @@ mod typer {
                 synthesize_type(this, ctx)?;
                 synthesize_type(and_then, ctx)
             }
-            ast::Expression::ControlFlow(_, control) => infer_control_flow(control, ctx),
+            ast::Expression::ControlFlow(annotation, control) => {
+                infer_control_flow(control, &annotation, ctx)
+            }
         }
     }
 
-    fn infer_control_flow<A>(control: &ControlFlow<A>, ctx: &TypingContext) -> Typing {
+    fn infer_control_flow<A>(
+        control: &ControlFlow<A>,
+        annotation: &A,
+        ctx: &TypingContext,
+    ) -> Typing
+    where
+        A: Parsed,
+    {
         match control {
             ControlFlow::If {
                 predicate,
                 consequent,
                 alternate,
-            } => infer_if_expression(predicate, consequent, alternate, ctx),
+            } => infer_if_expression(predicate, consequent, alternate, annotation, ctx),
         }
     }
 
@@ -676,17 +738,26 @@ mod typer {
         predicate: &Expression<A>,
         consequent: &Expression<A>,
         alternate: &Expression<A>,
+        annotation: &A,
         ctx: &TypingContext,
-    ) -> Typing {
+    ) -> Typing
+    where
+        A: Parsed,
+    {
         let predicate_type = synthesize_type(predicate, ctx)?;
         let predicate = predicate_type
             .inferred_type
-            .unify(&Type::Base(BaseType::Bool))?;
+            .unify(&Type::Base(BaseType::Bool), annotation)
+            .inspect_err(|e| println!("infer_if_expression: predicate unify error: {e}"))?;
 
-        let consequent = synthesize_type(consequent, ctx)?;
-        let alternate = synthesize_type(alternate, ctx)?;
+        let ctx = ctx.apply(&predicate_type.substitutions.clone());
+        let consequent = synthesize_type(consequent, &ctx)?;
+        let alternate = synthesize_type(alternate, &ctx)?;
 
-        let branch = consequent.inferred_type.unify(&alternate.inferred_type)?;
+        let branch = consequent
+            .inferred_type
+            .unify(&alternate.inferred_type, annotation)
+            .inspect_err(|e| println!("infer_if_expression: branch unify error: {e}"))?;
 
         let substitutions = predicate
             .compose(predicate_type.substitutions)
@@ -707,7 +778,10 @@ mod typer {
         bound: &ast::Expression<A>,
         body: &ast::Expression<A>,
         ctx: &TypingContext,
-    ) -> Typing {
+    ) -> Typing
+    where
+        A: Parsed,
+    {
         let bound = synthesize_type(bound, ctx)?;
         let bound_type = generalize_type(bound.inferred_type, ctx);
 
@@ -729,7 +803,10 @@ mod typer {
         base: &Expression<A>,
         index: &ast::ProductIndex,
         ctx: &TypingContext,
-    ) -> Typing {
+    ) -> Typing
+    where
+        A: Parsed,
+    {
         let base = synthesize_type(base, ctx)?;
 
         match (&base.inferred_type, index) {
@@ -770,8 +847,12 @@ mod typer {
         name: &ast::TypeName,
         constructor: &ast::Identifier,
         argument: &Expression<A>,
+        annotation: &A,
         ctx: &TypingContext,
-    ) -> Result<TypeInference, TypeError> {
+    ) -> Typing
+    where
+        A: Parsed,
+    {
         if let Some(constructed_type @ Type::Coproduct(coproduct)) = ctx
             .lookup(&name.clone().into())
             .map(|ty| ty.instantiate())
@@ -781,7 +862,7 @@ mod typer {
             if let Some(expected_type) = coproduct.find_constructor(constructor) {
                 let substitutions = argument
                     .substitutions
-                    .compose(argument.inferred_type.unify(expected_type)?);
+                    .compose(argument.inferred_type.unify(expected_type, annotation)?);
 
                 let inferred_type = constructed_type.clone().apply(&substitutions);
                 Ok(TypeInference {
@@ -799,7 +880,10 @@ mod typer {
         }
     }
 
-    fn infer_product<A>(product: &ast::Product<A>, ctx: &TypingContext) -> Typing {
+    fn infer_product<A>(product: &ast::Product<A>, ctx: &TypingContext) -> Typing
+    where
+        A: Parsed,
+    {
         match product {
             ast::Product::Tuple(elements) => infer_tuple(elements, ctx),
             ast::Product::Struct { bindings } => infer_struct(bindings, ctx),
@@ -809,7 +893,10 @@ mod typer {
     fn infer_struct<A>(
         elements: &HashMap<ast::Identifier, ast::Expression<A>>,
         ctx: &TypingContext,
-    ) -> Typing {
+    ) -> Typing
+    where
+        A: Parsed,
+    {
         let mut substitutions = Substitutions::default();
         let mut types = Vec::with_capacity(elements.len());
 
@@ -826,7 +913,10 @@ mod typer {
         })
     }
 
-    fn infer_tuple<A>(elements: &[ast::Expression<A>], ctx: &TypingContext) -> Typing {
+    fn infer_tuple<A>(elements: &[ast::Expression<A>], ctx: &TypingContext) -> Typing
+    where
+        A: Parsed,
+    {
         let mut substitutions = Substitutions::default();
         let mut types = Vec::with_capacity(elements.len());
 
@@ -982,8 +1072,7 @@ mod tests {
             (ast::Identifier::new("x"), mk_trivial_type(BaseType::Int)),
             (ast::Identifier::new("y"), mk_trivial_type(BaseType::Float)),
         ])));
-
-        t.inferred_type.unify(&expected_type).unwrap();
+        t.inferred_type.unify(&expected_type, &()).unwrap();
 
         let e = mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0)));
         let t = ctx.infer_type(&e).unwrap();

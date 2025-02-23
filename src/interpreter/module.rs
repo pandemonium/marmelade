@@ -2,9 +2,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{Environment, LoadError, Loaded};
 use crate::{
-    ast::{Declaration, FunctionDeclarator, Identifier, ModuleDeclarator, ValueDeclarator},
-    parser::ParsingInfo,
-    types::{TypeError, TypeInference, Typing, TypingContext},
+    ast::{Declaration, Identifier, ModuleDeclarator, ValueDeclarator},
+    types::{Parsed, TypeError, TypeInference, Typing, TypingContext},
 };
 
 pub struct ModuleLoader<'a, A> {
@@ -16,7 +15,7 @@ pub struct ModuleLoader<'a, A> {
 
 impl<'a, A> ModuleLoader<'a, A>
 where
-    A: Clone,
+    A: Clone + Parsed,
 {
     pub fn try_loading(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Loaded<Self> {
         let resolver = |id: &Identifier| prelude.is_defined(id);
@@ -46,7 +45,6 @@ where
                 let ty = self
                     .infer_declaration_type(id, &typing_context)?
                     .inferred_type;
-                println!("type_check: {id}::{ty}");
                 typing_context.bind(
                     id.clone().into(),
                     // What about the substitutions?
@@ -127,7 +125,10 @@ where
         binder: &Identifier,
         declarator: &ValueDeclarator<A>,
         typing_context: &TypingContext,
-    ) -> Typing {
+    ) -> Typing
+    where
+        A: Parsed,
+    {
         let expression = match declarator.clone() {
             ValueDeclarator::Constant(constant) => constant.initializer,
             ValueDeclarator::Function(function) => {

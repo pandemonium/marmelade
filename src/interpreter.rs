@@ -9,7 +9,7 @@ use crate::{
     },
     bridge::Bridge,
     lexer::SourcePosition,
-    types::{BaseType, Type, TypeError, TypingContext},
+    types::{BaseType, Parsed, Type, TypeError, TypingContext},
 };
 
 mod module;
@@ -46,11 +46,14 @@ impl Interpreter {
         Self { prelude }
     }
 
-    pub fn load_and_run(
+    pub fn load_and_run<A>(
         self,
         typing_context: TypingContext,
-        program: CompilationUnit<()>,
-    ) -> Loaded<Value> {
+        program: CompilationUnit<A>,
+    ) -> Loaded<Value>
+    where
+        A: Clone + Parsed,
+    {
         match program {
             CompilationUnit::Implicit(module) => {
                 // Typing has to happen for this to feel nice. TBD.
@@ -65,18 +68,21 @@ impl Interpreter {
         }
     }
 
-    fn load_module(
+    fn load_module<A>(
         self,
         typing_context: TypingContext,
-        mut module: ModuleDeclarator<()>,
-    ) -> Loaded<Environment> {
+        mut module: ModuleDeclarator<A>,
+    ) -> Loaded<Environment>
+    where
+        A: Clone + Parsed,
+    {
         self.patch_with_prelude(&mut module);
         ModuleLoader::try_loading(&module, self.prelude)?
             .type_check(typing_context)?
             .initialize()
     }
 
-    fn patch_with_prelude(&self, module: &mut ModuleDeclarator<()>) {
+    fn patch_with_prelude<A>(&self, module: &mut ModuleDeclarator<A>) {
         module.declarations.push(Declaration::ImportModule {
             position: SourcePosition::default(),
             exported_symbols: self
@@ -464,7 +470,6 @@ mod tests {
         ast::{Apply, Binding, Constant, ControlFlow, Expression, Identifier, Lambda, Parameter},
         context::CompileState,
         interpreter::{Base, Environment, RuntimeError, Value},
-        lexer::SourcePosition,
         stdlib,
     };
 
@@ -646,7 +651,6 @@ mod tests {
                         alternate: Expression::Binding(
                             (),
                             Binding {
-                                postition: SourcePosition::default(), // Placeholder for actual location
                                 binder: Identifier::new("xx"),
                                 bound: Expression::Apply(
                                     (),
@@ -765,7 +769,6 @@ mod tests {
                                         alternate: Expression::Binding(
                                             (),
                                             Binding {
-                                                postition: SourcePosition::default(), // Placeholder for actual location
                                                 binder: Identifier::new("xx"),
                                                 bound: Expression::Apply(
                                                     (),
