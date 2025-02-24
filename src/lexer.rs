@@ -84,6 +84,11 @@ impl LexicalAnalyzer {
         let mut input = input;
         loop {
             input = match input {
+                ['a', 'n', 'd', remains @ ..] => self.emit_operator(3, Operator::And, remains),
+                ['o', 'r', remains @ ..] => self.emit_operator(2, Operator::Or, remains),
+                ['x', 'o', 'r', remains @ ..] => self.emit_operator(3, Operator::Xor, remains),
+                ['n', 'o', 't', remains @ ..] => self.emit_operator(3, Operator::Not, remains),
+
                 remains @ [c, ..] if c.is_whitespace() => self.scan_whitespace(remains),
                 prefix @ [c, ..] if is_identifier_prefix(*c) => self.scan_identifier(prefix),
                 prefix @ [c, ..] if is_number_prefix(*c) => self.scan_number(prefix),
@@ -92,7 +97,12 @@ impl LexicalAnalyzer {
                 [':', ':', '=', remains @ ..] => self.emit(3, TokenType::TypeAssign, remains),
                 [':', ':', remains @ ..] => self.emit(2, TokenType::TypeAscribe, remains),
                 ['-', '>', remains @ ..] => self.emit(2, TokenType::Arrow, remains),
+
                 ['=', '=', remains @ ..] => self.emit_operator(2, Operator::Equals, remains),
+                ['>', '=', remains @ ..] => self.emit_operator(2, Operator::Gte, remains),
+                ['<', '=', remains @ ..] => self.emit_operator(2, Operator::Lte, remains),
+                ['>', remains @ ..] => self.emit_operator(1, Operator::Gt, remains),
+                ['<', remains @ ..] => self.emit_operator(1, Operator::Lt, remains),
 
                 ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
                 [',', remains @ ..] => self.emit(1, TokenType::Comma, remains),
@@ -357,17 +367,36 @@ pub enum Operator {
     Times,
     Divides,
     Modulo,
+
     Juxtaposition,
+
     Equals,
+    Gte,
+    Lte,
+    Gt,
+    Lt,
+
+    And,
+    Or,
+    Xor,
+
+    Not,
 }
 
 impl Operator {
     pub fn precedence(&self) -> usize {
         match self {
-            Self::Plus | Self::Minus => 1,
-            Self::Times | Self::Divides | Self::Modulo => 2,
-            Self::Equals => 3,
             Self::Juxtaposition => 69,
+
+            Self::Times | Self::Divides | Self::Modulo => 6,
+            Self::Plus | Self::Minus => 5,
+
+            Self::Equals | Self::Gte | Self::Lte | Self::Gt | Self::Lt => 4,
+
+            Self::Not => 3,
+
+            Self::And => 2,
+            Self::Xor | Self::Or => 1,
         }
     }
 
@@ -383,8 +412,19 @@ impl Operator {
             Self::Times => "*",
             Self::Divides => "/",
             Self::Modulo => "%",
-            Self::Equals => "==", // I would like this to be a single = instead,
-            Self::Juxtaposition => "$", // but then no tokens are no longer unique
+
+            Self::Equals => "==",
+            Self::Gte => ">=",
+            Self::Lte => "<=",
+            Self::Gt => ">",
+            Self::Lt => "<",
+
+            Self::And => "and",
+            Self::Or => "or",
+            Self::Xor => "xor",
+            Self::Not => "not",
+
+            Self::Juxtaposition => "$",
         }
     }
 }
@@ -397,7 +437,19 @@ impl fmt::Display for Operator {
             Self::Times => write!(f, "*"),
             Self::Divides => write!(f, "/"),
             Self::Modulo => write!(f, "%"),
+
             Self::Equals => write!(f, "=="),
+
+            Self::Gte => write!(f, ">="),
+            Self::Lte => write!(f, ">="),
+            Self::Gt => write!(f, ">"),
+            Self::Lt => write!(f, "<"),
+
+            Self::And => write!(f, "and"),
+            Self::Or => write!(f, "or"),
+            Self::Xor => write!(f, "xor"),
+            Self::Not => write!(f, "not"),
+
             Self::Juxtaposition => write!(f, "$"),
         }
     }

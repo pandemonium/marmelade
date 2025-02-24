@@ -279,6 +279,24 @@ impl From<f64> for Value {
     }
 }
 
+impl From<bool> for Value {
+    fn from(value: bool) -> Self {
+        Self::Base(Base::Bool(value))
+    }
+}
+
+impl TryFrom<Value> for bool {
+    type Error = RuntimeError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        if let Value::Base(Base::Bool(x)) = value {
+            Ok(x)
+        } else {
+            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Bool)))
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

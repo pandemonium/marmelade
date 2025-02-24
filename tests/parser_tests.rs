@@ -1,7 +1,7 @@
 use marmelade::{
     ast::{Apply, Binding, Constant, ControlFlow, Expression, Identifier, Sequence},
     context::CompileState,
-    interpreter::{Base, Value},
+    interpreter::Value,
     lexer::LexicalAnalyzer,
     parser, stdlib,
 };
@@ -190,7 +190,20 @@ fn precedence() {
     eval_fixture(r#"|main = (1 + 2) * 3"#, 9);
     eval_fixture(r#"|main = (1 + 2) * 3 - 9"#, 0);
     eval_fixture(r#"|main = (1 + 2) * (3 - 9)"#, -18);
-    eval_fixture(r#"|main = (3 - 9) / (1 + 2)"#, -2);
+    eval_fixture(r#"|main = ((3 - 9) / (1 + 2))"#, -2);
+
+    eval_fixture(r#"|main = 1 == 2"#, false);
+    eval_fixture(r#"|main = 1 == 1"#, true);
+    eval_fixture(r#"|main = 1 >= 2"#, false);
+    eval_fixture(r#"|main = 1 <= 2"#, true);
+
+    eval_fixture(r#"|main = 1 <= 2 or 1 >= 2"#, true);
+    eval_fixture(r#"|main = 1 <= 2 xor 1 >= 2"#, true);
+    eval_fixture(r#"|main = 1 >= 2 or 1 <= 2"#, true);
+    eval_fixture(r#"|main = 1 >= 2 xor 1 <= 2"#, true);
+    eval_fixture(r#"|main = 1 <= 2 and 1 >= 2"#, false);
+    eval_fixture(r#"|main = 1 <= 2 and 1 >= 0"#, true);
+    eval_fixture(r#"|main = 1 <= 2 xor 1 >= 0"#, false);
 }
 
 fn eq_fixture(source: &str, rhs: E<()>) {
@@ -198,6 +211,7 @@ fn eq_fixture(source: &str, rhs: E<()>) {
     let lhs = parser::parse_expression_phrase(lexer.tokenize(&into_unicode_text(source)))
         .unwrap()
         .erase_annotation();
+
     assert_eq!(lhs, rhs)
 }
 

@@ -126,10 +126,7 @@ fn factorial20() {
            |  if x == 0 then
            |      1
            |  else
-           |      let xx =
-           |          x - 1
-           |      in
-           |          x * factorial xx
+           |      x * factorial (x - 1)
            |main = factorial 20
            |"#,
     );
