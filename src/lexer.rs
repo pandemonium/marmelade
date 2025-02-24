@@ -485,6 +485,10 @@ pub enum Keyword {
     Module,
     Use,
     Fun,
+    And,
+    Or,
+    Xor,
+    Not,
 }
 
 impl Keyword {
@@ -501,6 +505,10 @@ impl Keyword {
             "module" => Some(Keyword::Module),
             "use" => Some(Keyword::Use),
             "fun" => Some(Keyword::Fun),
+            "and" => Some(Keyword::And),
+            "or" => Some(Keyword::Or),
+            "xor" => Some(Keyword::Xor),
+            "not" => Some(Keyword::Not),
             _otherwise => None,
         }
     }
@@ -520,6 +528,10 @@ impl fmt::Display for Keyword {
             Self::Module => write!(f, "Module"),
             Self::Use => write!(f, "Use"),
             Self::Fun => write!(f, "Fun"),
+            Self::And => write!(f, "And"),
+            Self::Or => write!(f, "Or"),
+            Self::Xor => write!(f, "Xor"),
+            Self::Not => write!(f, "Not"),
         }
     }
 }
