@@ -240,6 +240,14 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression<ParsingIn
             Expression::Variable(ParsingInfo::new(*position), Identifier::new(&id)),
             remains,
         )),
+        [T(TT::LeftParen, ..), remains @ ..] => {
+            let (expr, remains) = parse_expression(remains, 0)?;
+            if starts_with(TT::RightParen, remains) {
+                Ok((expr, &remains[1..]))
+            } else {
+                Err(ParseError::ExpectedTokenType(TT::RightParen))
+            }
+        }
         otherwise => panic!("{otherwise:?}"),
     }
 }
@@ -365,6 +373,7 @@ fn is_block_termination(t: &Token) -> bool {
         TT::Keyword(Keyword::In | Keyword::Else | Keyword::Then)
             | TT::End
             | TT::Layout(Layout::Dedent)
+            | TT::RightParen,
     )
 }
 

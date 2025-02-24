@@ -94,7 +94,7 @@ mod tests {
             Base::Int(3),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
-                .try_into_scalar()
+                .try_into_base_type()
                 .unwrap()
         );
     }
@@ -123,7 +123,7 @@ mod tests {
             Base::Float(1.5 + 2.3),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
-                .try_into_scalar()
+                .try_into_base_type()
                 .unwrap()
         );
     }
@@ -178,7 +178,7 @@ mod tests {
             Base::Int(-1),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
-                .try_into_scalar()
+                .try_into_base_type()
                 .unwrap()
         );
     }
@@ -207,7 +207,7 @@ mod tests {
             Base::Int(2),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
-                .try_into_scalar()
+                .try_into_base_type()
                 .unwrap()
         );
     }
@@ -236,7 +236,7 @@ mod tests {
             Base::Int(0),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
-                .try_into_scalar()
+                .try_into_base_type()
                 .unwrap()
         );
     }

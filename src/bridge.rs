@@ -161,8 +161,14 @@ impl Bridge for PartialRawLambda2 {
 
     fn evaluate(&self, e: &Environment) -> CallResult<Value> {
         // They have to be scalars.
-        let p0 = e.lookup(&Identifier::new("p0")).cloned()?.try_into_scalar();
-        let p1 = e.lookup(&Identifier::new("p1")).cloned()?.try_into_scalar();
+        let p0 = e
+            .lookup(&Identifier::new("p0"))
+            .cloned()?
+            .try_into_base_type();
+        let p1 = e
+            .lookup(&Identifier::new("p1"))
+            .cloned()?
+            .try_into_base_type();
 
         p0.zip(p1)
             .and_then(|(p0, p1)| self.apply.clone()(p0, p1))

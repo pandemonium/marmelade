@@ -104,7 +104,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn try_into_scalar(self) -> Option<Base> {
+    pub fn try_into_base_type(self) -> Option<Base> {
         if let Self::Base(s) = self {
             Some(s)
         } else {
@@ -485,7 +485,7 @@ mod tests {
             Expression::Literal((), Constant::Int(1))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap()
-                .try_into_scalar()
+                .try_into_base_type()
                 .unwrap(),
         );
     }
@@ -504,7 +504,7 @@ mod tests {
             Expression::Variable((), Identifier::new("x"))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap()
-                .try_into_scalar()
+                .try_into_base_type()
                 .unwrap()
         );
 
@@ -877,7 +877,7 @@ mod tests {
             Base::Int(127),
             e.reduce(&mut context.interpreter_environment)
                 .unwrap()
-                .try_into_scalar()
+                .try_into_base_type()
                 .unwrap()
         );
     }

@@ -41,7 +41,7 @@ fn main1() {
         .load_and_run(compilation.typing_context, program.map(|_| ()))
         .unwrap();
 
-    assert_eq!(Base::Int(327), return_value.try_into_scalar().unwrap());
+    assert_eq!(Base::Int(327), return_value.try_into_base_type().unwrap());
 }
 
 fn _make_fix_value(env: Environment) -> Value {
@@ -144,7 +144,7 @@ fn factorial20() {
         .load_and_run(compilation.typing_context, program.map(|_| ()));
     assert_eq!(
         Base::Int(2432902008176640000),
-        return_value.unwrap().try_into_scalar().unwrap()
+        return_value.unwrap().try_into_base_type().unwrap()
     );
 }
 
@@ -158,13 +158,9 @@ fn fibonacci23() {
            |  else
            |
            |    if 1 == x
-           |      then print_endline "hi"; 1
-           |      else
-           |        let a = x - 1 in
-           |        let b =
-           |          x - 2
-           |        in fibonacci a + fibonacci b
-           |main = fibonacci 5
+           |      then 1
+           |      else fibonacci (x - 1) + fibonacci (x - 2)
+           |main = fibonacci 25
            |"#,
     );
     let program = parser::parse_compilation_unit(lexer.tokenize(&source_text)).unwrap();
@@ -183,8 +179,8 @@ fn fibonacci23() {
     let return_value = compilation.typecheck_and_interpret(program);
 
     assert_eq!(
-        //        Base::Int(75025),
-        Base::Int(5),
-        return_value.unwrap().try_into_scalar().unwrap()
+        Base::Int(75025),
+        //        Base::Int(5),
+        return_value.unwrap().try_into_base_type().unwrap()
     );
 }
