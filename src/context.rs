@@ -1,7 +1,7 @@
 use crate::{
-    ast::CompilationUnit,
     interpreter::{Environment, Interpreter, Loaded, Value},
-    parser::ParsingInfo,
+    lexer::LexicalAnalyzer,
+    parser,
     types::TypingContext,
 };
 
@@ -20,7 +20,10 @@ impl<'a> CompileState<'a> {
         }
     }
 
-    pub fn typecheck_and_interpret(self, program: CompilationUnit<ParsingInfo>) -> Loaded<Value> {
+    pub fn typecheck_and_interpret(self) -> Loaded<Value> {
+        let mut lexer = LexicalAnalyzer::default();
+        let program = parser::parse_compilation_unit(lexer.tokenize(&self.source_text))?;
+
         Interpreter::new(self.interpreter_environment.into_parent())
             .load_and_run(self.typing_context, program)
     }

@@ -1,9 +1,12 @@
 use core::panic;
+use std::{fmt, marker::PhantomData};
 
 use crate::{
     ast::{
-        Apply, Binding, CompilationUnit, ConstantDeclarator, ControlFlow, Declaration, Expression,
-        FunctionDeclarator, Identifier, ModuleDeclarator, Parameter, Sequence, ValueDeclarator,
+        Apply, Binding, CompilationUnit, ConstantDeclarator, Constructor, ControlFlow, Coproduct,
+        Declaration, Expression, FunctionDeclarator, Identifier, ModuleDeclarator, Parameter,
+        Sequence, TypeApply, TypeDeclaration, TypeDeclarator, TypeExpression, TypeName,
+        ValueDeclaration, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
     types,
@@ -11,14 +14,22 @@ use crate::{
 
 pub type ParseResult<'a, A> = Result<(A, &'a [Token]), ParseError>;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum ParseError {
+    #[error("Unexpected token {0}")]
     UnexpectedToken(Token),
+
+    #[error("Unexpected remains {0:?}")]
     UnexpectedRemains(Vec<Token>),
+
+    #[error("Expected: {0}")]
     ExpectedTokenType(TokenType),
+
+    #[error("Declaration stream {1:?} is offside of {0}")]
     DeclarationOffside(SourcePosition, Vec<Token>),
 }
 
+use thiserror::Error;
 use Keyword::*;
 use Token as T;
 use TokenType as TT;
@@ -35,6 +46,13 @@ impl ParsingInfo {
 
     pub fn location(&self) -> &SourcePosition {
         &self.position
+    }
+}
+
+impl fmt::Display for ParsingInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { position } = self;
+        write!(f, "{position}")
     }
 }
 
@@ -59,11 +77,13 @@ pub fn parse_compilation_unit<'a>(
 ) -> Result<CompilationUnit<ParsingInfo>, ParseError> {
     let (declarations, ..) = parse_declarations(input)?;
 
-    Ok(CompilationUnit::Implicit(ModuleDeclarator {
-        position: SourcePosition::default(),
-        name: Identifier::new("main"),
-        declarations,
-    }))
+    Ok(CompilationUnit::Implicit(
+        ParsingInfo::new(*input[0].location()),
+        ModuleDeclarator {
+            name: Identifier::new("main"),
+            declarations,
+        },
+    ))
 }
 
 pub fn parse_declarations<'a>(
@@ -123,8 +143,137 @@ pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration<
         [T(TT::Identifier(id), pos), T(TT::Equals, ..), remains @ ..] => {
             parse_value_binding(id, pos, remains)
         }
+        [T(TT::Identifier(id), pos), T(TT::TypeAssign, ..), remains @ ..] => {
+            parse_type_binding(id, pos, remains)
+        }
         [t, ..] => Err(ParseError::UnexpectedToken(t.clone())),
         otherwise => panic!("{otherwise:?}"),
+    }
+}
+
+fn parse_type_binding<'a>(
+    binder: &String,
+    position: &SourcePosition,
+    remains: &'a [Token],
+) -> ParseResult<'a, Declaration<ParsingInfo>> {
+    let (declarator, remains) =
+        parse_type_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+
+    Ok((
+        Declaration::Type(
+            ParsingInfo::new(*position),
+            TypeDeclaration {
+                binding: Identifier::new(&binder),
+                declarator,
+            },
+        ),
+        remains,
+    ))
+}
+
+fn parse_type_declarator<'a>(remains: &'a [Token]) -> ParseResult<'a, TypeDeclarator<ParsingInfo>> {
+    // forall a.
+    let postition = remains[0].location();
+    // Try different avenues down the line.
+    let (coproduct, remains) = parse_coproduct(remains)?;
+
+    Ok((
+        TypeDeclarator::Coproduct(ParsingInfo::new(*postition), coproduct),
+        remains,
+    ))
+}
+
+fn parse_coproduct<'a>(remains: &'a [Token]) -> ParseResult<'a, Coproduct<ParsingInfo>> {
+    todo!()
+}
+
+fn parse_constructor<'a>(remains: &'a [Token]) -> ParseResult<'a, Constructor<ParsingInfo>> {
+    if let [T(TT::Identifier(name), position), remains @ ..] = remains {
+        let (signature, remains) = parse_constructor_signature(remains)?;
+        Ok((
+            Constructor {
+                name: Identifier::new(name),
+                signature,
+            },
+            remains,
+        ))
+    } else {
+        Err(ParseError::ExpectedTokenType(TT::Identifier(
+            "<constructor>".to_owned(),
+        )))
+    }
+}
+
+fn parse_constructor_signature<'a>(
+    mut remains: &'a [Token],
+) -> ParseResult<'a, Vec<TypeExpression<ParsingInfo>>> {
+    let mut boofer = vec![];
+
+    while matches!(remains, [T(TT::LeftParen | TT::Identifier(..), ..), ..]) {
+        let (term, rem) = parse_type_expression(remains)?;
+        boofer.push(term);
+        remains = rem;
+    }
+
+    Ok((boofer, remains))
+}
+
+// Type Expression ::= Type-name [ Type-arg* ]
+//   Type-name ::= Identifier
+//   Type-arg  ::= '(' Type-arg  ')' | Genuine-type | Type-parameter
+//   Genuine-type ::= Uppercase?(Identifier)
+//   Type-parameter ::= Lowercase?(Identifier)
+fn parse_type_expression<'a>(remains: &'a [Token]) -> ParseResult<'a, TypeExpression<ParsingInfo>> {
+    if starts_with(TT::LeftParen, remains) {
+        let (type_expr, remains) = parse_type_expression(&remains[1..])?;
+        if starts_with(TT::RightParen, remains) {
+            Ok((type_expr, remains))
+        } else {
+            Err(ParseError::ExpectedTokenType(TT::RightParen))
+        }
+    } else {
+        if let [T(TT::Identifier(name), ..), remains @ ..] = remains {
+            parse_type_expression_term(TypeExpression::TypeRef(TypeName::new(name)), remains)
+        } else {
+            Err(ParseError::ExpectedTokenType(TT::Identifier(
+                "<Constructor>".to_owned(),
+            )))
+        }
+    }
+}
+
+fn parse_type_expression_term<'a>(
+    prefix: TypeExpression<ParsingInfo>,
+    rem: &'a [Token],
+) -> ParseResult<'a, TypeExpression<ParsingInfo>> {
+    let into_term = |id: &str| {
+        if id.chars().all(char::is_lowercase) {
+            TypeExpression::<ParsingInfo>::Parameter(TypeName::new(id))
+        } else {
+            TypeExpression::TypeRef(TypeName::new(id))
+        }
+    };
+
+    match rem {
+        [T(TT::Identifier(id), ..), rem @ ..] => parse_type_expression_term(
+            TypeExpression::Apply(
+                TypeApply {
+                    constructor: prefix.into(),
+                    argument: into_term(id).into(),
+                },
+                PhantomData::default(),
+            ),
+            rem,
+        ),
+        [t, rem @ ..] if t.token_type() == &TT::LeftParen => {
+            let (infix, rem) = parse_type_expression_term(prefix, rem)?;
+            if starts_with(TT::RightParen, rem) {
+                Ok((infix, rem))
+            } else {
+                Err(ParseError::ExpectedTokenType(TT::RightParen))
+            }
+        }
+        _otherwise => Ok((prefix, rem)),
     }
 }
 
@@ -137,11 +286,13 @@ fn parse_value_binding<'a>(
         parse_value_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
 
     Ok((
-        Declaration::Value {
-            binder: Identifier::new(&binder),
-            declarator,
-            position: position.clone(),
-        },
+        Declaration::Value(
+            ParsingInfo::new(*position),
+            ValueDeclaration {
+                binder: Identifier::new(&binder),
+                declarator,
+            },
+        ),
         remains,
     ))
 }
@@ -218,6 +369,18 @@ pub fn parse_expression_phrase<'a>(
     tokens: &'a [Token],
 ) -> Result<Expression<ParsingInfo>, ParseError> {
     let (expression, remains) = parse_expression(tokens, 0)?;
+
+    if let &[T(TT::End, ..)] = remains {
+        Ok(expression)
+    } else {
+        Err(ParseError::UnexpectedRemains(remains.to_vec()))
+    }
+}
+
+pub fn parse_declaration_phrase<'a>(
+    tokens: &'a [Token],
+) -> Result<Declaration<ParsingInfo>, ParseError> {
+    let (expression, remains) = parse_declaration(tokens)?;
 
     if let &[T(TT::End, ..)] = remains {
         Ok(expression)
@@ -366,7 +529,7 @@ pub fn parse_expression<'a>(
     parse_infix(prefix, remains, precedence)
 }
 
-fn is_block_termination(t: &Token) -> bool {
+fn is_expression_terminator(t: &Token) -> bool {
     //        println!("is_done: {t:?}");
     matches!(
         t.token_type(),
@@ -387,9 +550,9 @@ fn parse_infix<'a>(
     // Juxtapositions though? I would have to be able to ask the Expression
     // about where it started
     match input {
-        [t, ..] if is_block_termination(t) => Ok((lhs, input)),
+        [t, ..] if is_expression_terminator(t) => Ok((lhs, input)),
 
-        [T(TT::Layout(..), ..), u, ..] if is_block_termination(u) => Ok((lhs, input)),
+        [T(TT::Layout(..), ..), u, ..] if is_expression_terminator(u) => Ok((lhs, input)),
 
         // ( <Newline> | <;> ) <expr>
         // -- an expression sequence, e.g.: <statement>* <expr>
@@ -504,7 +667,7 @@ fn parse_sequence<'a>(
 
     if matches!(
         remains,
-        [T(TT::Semicolon | TT::Layout(Layout::Newline), ..), u, ..] if !is_block_termination(u)
+        [T(TT::Semicolon | TT::Layout(Layout::Newline), ..), u, ..] if !is_expression_terminator(u)
     ) {
         parse_sequence(sequence, &remains[1..])
     } else {
@@ -811,31 +974,33 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            Declaration::Value {
-                binder: Identifier::new("create_window"),
-                declarator: ValueDeclarator::Function(FunctionDeclarator {
-                    parameters: vec![Parameter {
-                        name: Identifier::new("x"),
-                        type_annotation: None
-                    }],
-                    return_type_annotation: None,
-                    body: E::Apply(
-                        (),
-                        Apply {
-                            function: E::Apply(
-                                (),
-                                Apply {
-                                    function: E::Variable((), Id::new("+")).into(),
-                                    argument: E::Literal((), Constant::Int(1)).into()
-                                }
-                            )
-                            .into(),
-                            argument: Expression::Variable((), Identifier::new("x")).into()
-                        }
-                    ),
-                }),
-                position: SourcePosition::default(),
-            },
+            Declaration::Value(
+                (),
+                ValueDeclaration {
+                    binder: Identifier::new("create_window"),
+                    declarator: ValueDeclarator::Function(FunctionDeclarator {
+                        parameters: vec![Parameter {
+                            name: Identifier::new("x"),
+                            type_annotation: None
+                        }],
+                        return_type_annotation: None,
+                        body: E::Apply(
+                            (),
+                            Apply {
+                                function: E::Apply(
+                                    (),
+                                    Apply {
+                                        function: E::Variable((), Id::new("+")).into(),
+                                        argument: E::Literal((), Constant::Int(1)).into()
+                                    }
+                                )
+                                .into(),
+                                argument: Expression::Variable((), Identifier::new("x")).into()
+                            }
+                        ),
+                    }),
+                }
+            ),
             decl.map(|_| ())
         );
     }
@@ -890,49 +1055,53 @@ mod tests {
 
         assert_eq!(
             vec![
-                Declaration::Value {
-                    binder: Identifier::new("create_window"),
-                    declarator: ValueDeclarator::Function(FunctionDeclarator {
-                        parameters: vec![Parameter {
-                            name: Identifier::new("x"),
-                            type_annotation: None
-                        }],
-                        return_type_annotation: None,
-                        body: E::Apply(
-                            (),
-                            Apply {
-                                function: E::Apply(
-                                    (),
-                                    Apply {
-                                        function: E::Variable((), Id::new("+")).into(),
-                                        argument: E::Literal((), Constant::Int(1)).into()
-                                    }
-                                )
-                                .into(),
-                                argument: E::Variable((), Id::new("x")).into()
-                            }
-                        ),
-                    }),
-                    position: SourcePosition::default(),
-                },
-                Declaration::Value {
-                    position: SourcePosition::new(5, 1),
-                    binder: Id::new("print_endline"),
-                    declarator: ValueDeclarator::Function(FunctionDeclarator {
-                        parameters: vec![Parameter {
-                            name: Identifier::new("s"),
-                            type_annotation: None
-                        }],
-                        return_type_annotation: None,
-                        body: E::Apply(
-                            (),
-                            Apply {
-                                function: E::Variable((), Id::new("__print")).into(),
-                                argument: E::Variable((), Identifier::new("s")).into()
-                            }
-                        )
-                    })
-                }
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("create_window"),
+                        declarator: ValueDeclarator::Function(FunctionDeclarator {
+                            parameters: vec![Parameter {
+                                name: Identifier::new("x"),
+                                type_annotation: None
+                            }],
+                            return_type_annotation: None,
+                            body: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Apply(
+                                        (),
+                                        Apply {
+                                            function: E::Variable((), Id::new("+")).into(),
+                                            argument: E::Literal((), Constant::Int(1)).into()
+                                        }
+                                    )
+                                    .into(),
+                                    argument: E::Variable((), Id::new("x")).into()
+                                }
+                            ),
+                        }),
+                    }
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Id::new("print_endline"),
+                        declarator: ValueDeclarator::Function(FunctionDeclarator {
+                            parameters: vec![Parameter {
+                                name: Identifier::new("s"),
+                                type_annotation: None
+                            }],
+                            return_type_annotation: None,
+                            body: E::Apply(
+                                (),
+                                Apply {
+                                    function: E::Variable((), Id::new("__print")).into(),
+                                    argument: E::Variable((), Identifier::new("s")).into()
+                                }
+                            )
+                        })
+                    }
+                )
             ],
             decls
         );

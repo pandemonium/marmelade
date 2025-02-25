@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{Environment, LoadError, Loaded};
 use crate::{
-    ast::{Declaration, Identifier, ModuleDeclarator, ValueDeclarator},
+    ast::{
+        Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration, ValueDeclarator,
+    },
     types::{Parsed, TypeError, TypeInference, Typing, TypingContext},
 };
 
@@ -69,7 +71,8 @@ where
     }
 
     fn initialize_declaration(&mut self, id: &Identifier) -> Loaded<()> {
-        if let Some(Declaration::Value { declarator, .. }) = self.module.find_value_declaration(id)
+        if let Some(Declaration::Value(_, ValueDeclaration { declarator, .. })) =
+            self.module.find_value_declaration(id)
         {
             self.initialize_binding(id, declarator)
         } else if self.initialized.is_defined(id) {
@@ -109,11 +112,11 @@ where
             .ok_or_else(|| TypeError::UndefinedSymbol(id.clone()))?;
 
         match declaration {
-            Declaration::Value {
-                binder, declarator, ..
-            } => Ok(self.infer_declarator_type(binder, declarator, typing_context)?),
+            Declaration::Value(_, value) => {
+                Ok(self.infer_declarator_type(&value.binder, &value.declarator, typing_context)?)
+            }
             // I have to have a different Dependency Graph for the types
-            Declaration::Type { .. } => todo!(),
+            Declaration::Type(..) => todo!(),
             _otherwise => todo!(),
         }
     }
@@ -156,14 +159,18 @@ impl<'a> DependencyGraph<'a> {
 
         for decl in decls {
             match decl {
-                Declaration::Value {
-                    binder, declarator, ..
-                } => {
-                    outbound.insert(binder, declarator.dependencies().drain().collect());
+                Declaration::Value(_, value) => {
+                    outbound.insert(
+                        &value.binder,
+                        value.declarator.dependencies().drain().collect(),
+                    );
                 }
-                Declaration::ImportModule {
-                    exported_symbols, ..
-                } => {
+                Declaration::ImportModule(
+                    _,
+                    ImportModule {
+                        exported_symbols, ..
+                    },
+                ) => {
                     for dep in exported_symbols {
                         outbound.entry(dep).or_default();
                     }

@@ -1,27 +1,10 @@
-use marmelade::{
-    ast::{Apply, Binding, Constant, ControlFlow, Expression, Identifier, Sequence},
-    context::CompileState,
-    interpreter::Value,
-    lexer::LexicalAnalyzer,
-    parser, stdlib,
-};
+mod tools;
 
-fn into_unicode_text(source: &str) -> Vec<char> {
-    source
-        .lines()
-        .filter(|s| !s.trim().is_empty())
-        .map(|line| line.trim_start().strip_prefix("|").unwrap_or(line))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .chars()
-        .collect()
-}
-
-use Expression as E;
+use tools::*;
 
 #[test]
 fn app_sequence() {
-    eq_fixture(
+    expr_fixture(
         r#"|foo x
            |bar y
            |baz q
@@ -35,7 +18,7 @@ fn app_sequence() {
 
 #[test]
 fn if_block_sequencing() {
-    eq_fixture(
+    expr_fixture(
         r#"|foo x
            |if quux bar
            |  then baz q; lol
@@ -54,27 +37,27 @@ fn if_block_sequencing() {
 
 #[test]
 fn let_in_tests() {
-    eq_fixture(
+    expr_fixture(
         r#"|let x = foo bar in quux
            "#,
         let_in("x", apply(var("foo"), var("bar")), var("quux")),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|let x = foo bar in
            |quux
            "#,
         let_in("x", apply(var("foo"), var("bar")), var("quux")),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|let x = foo bar
            |in quux
            "#,
         let_in("x", apply(var("foo"), var("bar")), var("quux")),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|let x =
            |  foo bar
            |in quux
@@ -82,7 +65,7 @@ fn let_in_tests() {
         let_in("x", apply(var("foo"), var("bar")), var("quux")),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|let x =
            |  foo bar
            |in if quux
@@ -96,7 +79,7 @@ fn let_in_tests() {
         ),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|let x =
            |  foo bar; frobnicate the
            |in if quux
@@ -113,7 +96,7 @@ fn let_in_tests() {
         ),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|let x =
            |  foo bar
            |  frobnicate the
@@ -140,7 +123,7 @@ fn let_in_tests() {
 
 #[test]
 fn precedence() {
-    eq_fixture(
+    expr_fixture(
         r#"|a + b * c
            "#,
         apply(
@@ -149,7 +132,7 @@ fn precedence() {
         ),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|(a + b * c)
            "#,
         apply(
@@ -158,7 +141,7 @@ fn precedence() {
         ),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|a * b + c
            "#,
         apply(
@@ -167,7 +150,7 @@ fn precedence() {
         ),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|(a * b) + c
            "#,
         apply(
@@ -176,7 +159,7 @@ fn precedence() {
         ),
     );
 
-    eq_fixture(
+    expr_fixture(
         r#"|a / (b + c)
            "#,
         apply(
@@ -204,86 +187,4 @@ fn precedence() {
     eval_fixture(r#"|main = 1 <= 2 and 1 >= 2"#, false);
     eval_fixture(r#"|main = 1 <= 2 and 1 >= 0"#, true);
     eval_fixture(r#"|main = 1 <= 2 xor 1 >= 0"#, false);
-}
-
-fn eq_fixture(source: &str, rhs: E<()>) {
-    let mut lexer = LexicalAnalyzer::default();
-    let lhs = parser::parse_expression_phrase(lexer.tokenize(&into_unicode_text(source)))
-        .unwrap()
-        .erase_annotation();
-
-    assert_eq!(lhs, rhs)
-}
-
-fn eval_fixture<A>(source: &str, rhs: A)
-where
-    A: Into<Value>,
-{
-    let mut lexer = LexicalAnalyzer::default();
-    let source_text = into_unicode_text(source);
-    let program = parser::parse_compilation_unit(lexer.tokenize(&source_text)).unwrap();
-
-    let mut compilation = CompileState::new(&source_text);
-    stdlib::import(&mut compilation).unwrap();
-
-    let return_value = compilation.typecheck_and_interpret(program);
-
-    assert_eq!(
-        return_value.unwrap().try_into_base_type().unwrap(),
-        rhs.into().try_into_base_type().unwrap()
-    )
-}
-
-fn int(i: i64) -> E<()> {
-    E::Literal((), Constant::Int(i))
-}
-
-fn text(s: &str) -> E<()> {
-    E::Literal((), Constant::Text(s.to_owned()))
-}
-
-fn let_in(binder: &str, bound: E<()>, body: E<()>) -> E<()> {
-    E::Binding(
-        (),
-        Binding {
-            binder: Identifier::new(binder),
-            bound: bound.into(),
-            body: body.into(),
-        },
-    )
-}
-
-fn if_else(predicate: E<()>, consequent: E<()>, alternate: E<()>) -> E<()> {
-    E::ControlFlow(
-        (),
-        ControlFlow::If {
-            predicate: predicate.into(),
-            consequent: consequent.into(),
-            alternate: alternate.into(),
-        },
-    )
-}
-
-fn seq(this: E<()>, and_then: E<()>) -> E<()> {
-    E::Sequence(
-        (),
-        Sequence {
-            this: this.into(),
-            and_then: and_then.into(),
-        },
-    )
-}
-
-fn apply(f: E<()>, x: E<()>) -> E<()> {
-    E::Apply(
-        (),
-        Apply {
-            function: f.into(),
-            argument: x.into(),
-        },
-    )
-}
-
-fn var(id: &str) -> E<()> {
-    E::Variable((), Identifier::new(id))
 }

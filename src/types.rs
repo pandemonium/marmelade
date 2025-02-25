@@ -5,7 +5,11 @@ use std::{
 };
 use thiserror::Error;
 
-use crate::{ast, lexer::SourcePosition, parser::ParsingInfo};
+use crate::{
+    ast::{self},
+    lexer::SourcePosition,
+    parser::ParsingInfo,
+};
 
 /*
     The structure of this file is off.
@@ -26,6 +30,8 @@ pub enum Type {
     Coproduct(CoproductType),
     Function(Box<Type>, Box<Type>),
     Forall(TypeParameter, Box<Type>),
+    //    Constructor(TypeName),
+    //    Apply(Box<Type>, Box<Type>),
 }
 
 impl Type {

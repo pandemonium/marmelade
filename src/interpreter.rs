@@ -5,10 +5,10 @@ use thiserror::Error;
 use crate::{
     ast::{
         Apply, Binding, CompilationUnit, Constant, Construct, ControlFlow, Declaration, Expression,
-        Identifier, Lambda, ModuleDeclarator, Project, SelfReferential, Sequence,
+        Identifier, ImportModule, Lambda, ModuleDeclarator, Project, SelfReferential, Sequence,
     },
     bridge::Bridge,
-    lexer::SourcePosition,
+    parser::ParseError,
     types::{BaseType, Parsed, Type, TypeError, TypingContext},
 };
 
@@ -35,6 +35,9 @@ pub enum LoadError {
 
     #[error("Type error {0}")]
     TypeError(#[from] TypeError),
+
+    #[error("Parse error {0}")]
+    ParseError(#[from] ParseError),
 }
 
 pub struct Interpreter {
@@ -55,9 +58,9 @@ impl Interpreter {
         A: Clone + Parsed,
     {
         match program {
-            CompilationUnit::Implicit(module) => {
+            CompilationUnit::Implicit(annotation, module) => {
                 // Typing has to happen for this to feel nice. TBD.
-                let env = self.load_module(typing_context, module)?;
+                let env = self.load_module(annotation, typing_context, module)?;
                 match env.lookup(&Identifier::new("main"))? {
                     Value::Closure { .. } => todo!(),
                     Value::Bridge { .. } => todo!(),
@@ -70,28 +73,31 @@ impl Interpreter {
 
     fn load_module<A>(
         self,
+        annotation: A,
         typing_context: TypingContext,
         mut module: ModuleDeclarator<A>,
     ) -> Loaded<Environment>
     where
         A: Clone + Parsed,
     {
-        self.patch_with_prelude(&mut module);
+        self.patch_with_prelude(annotation, &mut module);
         ModuleLoader::try_loading(&module, self.prelude)?
             .type_check(typing_context)?
             .initialize()
     }
 
-    fn patch_with_prelude<A>(&self, module: &mut ModuleDeclarator<A>) {
-        module.declarations.push(Declaration::ImportModule {
-            position: SourcePosition::default(),
-            exported_symbols: self
-                .prelude
-                .symbols()
-                .drain(..)
-                .cloned()
-                .collect::<Vec<_>>(),
-        });
+    fn patch_with_prelude<A>(&self, annotation: A, module: &mut ModuleDeclarator<A>) {
+        module.declarations.push(Declaration::ImportModule(
+            annotation,
+            ImportModule {
+                exported_symbols: self
+                    .prelude
+                    .symbols()
+                    .drain(..)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            },
+        ));
     }
 }
 
@@ -307,6 +313,8 @@ pub type Interpretation<A = Value> = Result<A, RuntimeError>;
 
 impl<A> Expression<A> {
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
+        //        println!("reduce");
+
         match self {
             Self::Variable(_, id) => env.lookup(&id).cloned(),
             Self::CallBridge(_, id) => evaluate_bridge(id, env),

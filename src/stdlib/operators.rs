@@ -1,5 +1,4 @@
 use crate::{
-    ast::Identifier,
     bridge::*,
     context::CompileState,
     interpreter::{Base, Interpretation},

@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    marker::PhantomData,
 };
 
 use crate::{
@@ -10,12 +11,15 @@ use crate::{
 };
 
 #[derive(Debug)]
+pub struct LibraryDeclarator<A> {
+    pub modules: Vec<ModuleDeclarator<A>>,
+    pub main: ModuleDeclarator<A>,
+}
+
+#[derive(Debug)]
 pub enum CompilationUnit<A> {
-    Implicit(ModuleDeclarator<A>),
-    Library {
-        modules: Vec<ModuleDeclarator<A>>,
-        main: ModuleDeclarator<A>,
-    },
+    Implicit(A, ModuleDeclarator<A>),
+    Library(A, LibraryDeclarator<A>),
 }
 impl<A> CompilationUnit<A>
 where
@@ -23,20 +27,28 @@ where
 {
     pub fn map<B>(self, f: fn(A) -> B) -> CompilationUnit<B> {
         match self {
-            Self::Implicit(module) => CompilationUnit::<B>::Implicit(module.map(f)),
-            Self::Library { mut modules, main } => CompilationUnit::<B>::Library {
-                modules: modules.drain(..).map(|m| m.map(f)).collect(),
-                main: main.map(f),
-            },
+            Self::Implicit(a, module) => CompilationUnit::<B>::Implicit(f(a), module.map(f)),
+            Self::Library(a, LibraryDeclarator { mut modules, main }) => {
+                CompilationUnit::<B>::Library(
+                    f(a),
+                    LibraryDeclarator {
+                        modules: modules.drain(..).map(|m| m.map(f)).collect(),
+                        main: main.map(f),
+                    },
+                )
+            }
         }
     }
 }
 
-impl<A> fmt::Display for CompilationUnit<A> {
+impl<A> fmt::Display for CompilationUnit<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Implicit(module) => writeln!(f, "{module}"),
-            Self::Library { modules, main } => {
+            Self::Implicit(_, module) => writeln!(f, "{module}"),
+            Self::Library(_, LibraryDeclarator { modules, main }) => {
                 for m in modules {
                     writeln!(f, "{m}")?;
                 }
@@ -48,7 +60,6 @@ impl<A> fmt::Display for CompilationUnit<A> {
 
 #[derive(Debug, PartialEq)]
 pub struct ModuleDeclarator<A> {
-    pub position: SourcePosition,
     pub name: Identifier,
     pub declarations: Vec<Declaration<A>>,
     // pub main: Expression,
@@ -62,7 +73,7 @@ where
     pub fn find_value_declaration<'a>(&'a self, id: &'a Identifier) -> Option<&'a Declaration<A>> {
         self.declarations
             .iter()
-            .find(|decl| matches!(decl, Declaration::Value { binder, .. } if binder == id))
+            .find(|decl| matches!(decl, Declaration::Value(_, value) if &value.binder == id))
     }
 
     pub fn dependency_graph(&self) -> DependencyGraph {
@@ -71,14 +82,16 @@ where
 
     fn map<B>(mut self, f: fn(A) -> B) -> ModuleDeclarator<B> {
         ModuleDeclarator::<B> {
-            position: self.position,
             name: self.name,
             declarations: self.declarations.drain(..).map(|d| d.map(f)).collect(),
         }
     }
 }
 
-impl<A> fmt::Display for ModuleDeclarator<A> {
+impl<A> fmt::Display for ModuleDeclarator<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             name, declarations, ..
@@ -141,85 +154,107 @@ impl fmt::Display for TypeName {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct ValueDeclaration<A> {
+    pub binder: Identifier,
+    pub declarator: ValueDeclarator<A>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TypeDeclaration<A> {
+    pub binding: Identifier,
+    pub declarator: TypeDeclarator<A>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ImportModule {
+    pub exported_symbols: Vec<Identifier>,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Declaration<A> {
-    Value {
-        position: SourcePosition,
-        binder: Identifier,
-        declarator: ValueDeclarator<A>,
-    },
-    Type {
-        position: SourcePosition,
-        binding: Identifier,
-        declarator: TypeDeclarator,
-    },
-    Module(ModuleDeclarator<A>),
-    ImportModule {
-        position: SourcePosition,
-        exported_symbols: Vec<Identifier>,
-    },
+    Value(A, ValueDeclaration<A>),
+    Type(A, TypeDeclaration<A>),
+    Module(A, ModuleDeclarator<A>),
+    ImportModule(A, ImportModule),
     // Use()    ??
+}
+
+impl Declaration<ParsingInfo> {
+    pub fn position(&self) -> &SourcePosition {
+        self.parsing_info().location()
+    }
+
+    pub fn parsing_info(&self) -> &ParsingInfo {
+        match self {
+            Self::Value(annotation, _)
+            | Self::Type(annotation, _)
+            | Self::Module(annotation, _)
+            | Self::ImportModule(annotation, _) => annotation,
+        }
+    }
 }
 
 impl<A> Declaration<A>
 where
     A: Clone,
 {
-    pub fn position(&self) -> &SourcePosition {
-        match self {
-            Self::Value { position, .. }
-            | Self::Type { position, .. }
-            | Self::Module(ModuleDeclarator { position, .. })
-            | Self::ImportModule { position, .. } => position,
-        }
-    }
-
     pub fn map<B>(self, f: fn(A) -> B) -> Declaration<B> {
         match self {
-            Self::Value {
-                position,
-                binder,
-                declarator,
-            } => Declaration::<B>::Value {
-                position,
-                binder,
-                declarator: declarator.map(f),
-            },
-            Self::Type {
-                position,
-                binding,
-                declarator,
-            } => Declaration::<B>::Type {
-                position,
-                binding,
-                declarator,
-            },
-            Self::Module(declarator) => Declaration::<B>::Module(declarator.map(f)),
-            Self::ImportModule {
-                position,
-                exported_symbols,
-            } => Declaration::<B>::ImportModule {
-                position,
-                exported_symbols,
-            },
+            Self::Value(a, ValueDeclaration { binder, declarator }) => Declaration::<B>::Value(
+                f(a),
+                ValueDeclaration {
+                    binder,
+                    declarator: declarator.map(f),
+                },
+            ),
+            Self::Type(
+                a,
+                TypeDeclaration {
+                    binding,
+                    declarator,
+                },
+            ) => Declaration::<B>::Type(
+                f(a),
+                TypeDeclaration {
+                    binding,
+                    declarator: declarator.map(f),
+                },
+            ),
+            Self::Module(a, declarator) => Declaration::<B>::Module(f(a), declarator.map(f)),
+            Self::ImportModule(a, ImportModule { exported_symbols }) => {
+                Declaration::<B>::ImportModule(f(a), ImportModule { exported_symbols })
+            }
         }
     }
 }
 
-impl<A> fmt::Display for Declaration<A> {
+impl<A> fmt::Display for Declaration<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Value {
-                binder, declarator, ..
-            } => write!(f, "{binder} = {declarator}"),
-            Self::Type {
-                binding,
-                declarator,
-                ..
-            } => write!(f, "{binding} = {declarator}"),
-            Self::Module(module) => write!(f, "{module}"),
-            Self::ImportModule {
-                exported_symbols, ..
-            } => {
+            Self::Value(
+                _,
+                ValueDeclaration {
+                    binder, declarator, ..
+                },
+            ) => write!(f, "{binder} = {declarator}"),
+            Self::Type(
+                _,
+                TypeDeclaration {
+                    binding,
+                    declarator,
+                    ..
+                },
+            ) => write!(f, "{binding} = {declarator}"),
+            Self::Module(_, module) => write!(f, "{module}"),
+            Self::ImportModule(
+                _,
+                ImportModule {
+                    exported_symbols, ..
+                },
+            ) => {
                 write!(f, "import ")?;
                 for sym in exported_symbols {
                     write!(f, "{sym},")?;
@@ -232,26 +267,62 @@ impl<A> fmt::Display for Declaration<A> {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum TypeDeclarator {
-    Alias {
-        alias: Identifier,
-        aliased: TypeName,
-    },
-    Coproduct(Vec<Constructor>),
-    Struct(Vec<StructField>),
+pub struct Coproduct<A>(pub Vec<Constructor<A>>);
+
+impl<A> Coproduct<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> Coproduct<B> {
+        let Self(mut cs) = self;
+        Coproduct::<B>(cs.drain(..).map(|c| c.map(f)).collect())
+    }
 }
 
-impl fmt::Display for TypeDeclarator {
+#[derive(Debug, PartialEq)]
+pub struct Struct<A>(pub Vec<StructField<A>>);
+
+impl<A> Struct<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> Struct<B> {
+        let Self(mut xs) = self;
+        Struct::<B>(xs.drain(..).map(|x| x.map(f)).collect())
+    }
+}
+
+// Introduce sub-constructors here
+#[derive(Debug, PartialEq)]
+pub enum TypeDeclarator<A> {
+    Alias(A, TypeExpression<A>),
+    Coproduct(A, Coproduct<A>),
+    Struct(A, Struct<A>),
+}
+
+impl<A> TypeDeclarator<A>
+where
+    A: Clone,
+{
+    fn map<B>(self, f: fn(A) -> B) -> TypeDeclarator<B> {
+        match self {
+            Self::Alias(a, alias) => TypeDeclarator::<B>::Alias(f(a), alias.map(f)),
+            Self::Coproduct(a, coproduct) => TypeDeclarator::<B>::Coproduct(f(a), coproduct.map(f)),
+            Self::Struct(a, record) => TypeDeclarator::<B>::Struct(f(a), record.map(f)),
+        }
+    }
+}
+
+impl<A> fmt::Display for TypeDeclarator<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Alias { alias, aliased } => write!(f, "type alias {alias} = {aliased}"),
-            Self::Coproduct(constructors) => {
+            Self::Alias(_, type_expr) => {
+                write!(f, "{type_expr}")
+            }
+            Self::Coproduct(_, Coproduct(constructors)) => {
                 for c in constructors {
-                    write!(f, "| {c}")?;
+                    write!(f, "{c}")?;
                 }
                 Ok(())
             }
-            Self::Struct(fields) => {
+            Self::Struct(_, Struct(fields)) => {
                 writeln!(f, "struct {{")?;
                 for StructField {
                     name,
@@ -267,18 +338,43 @@ impl fmt::Display for TypeDeclarator {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct StructField {
+pub struct StructField<A> {
     pub name: Identifier,
-    pub type_annotation: TypeName,
+    pub type_annotation: TypeExpression<A>,
+}
+
+impl<A> StructField<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> StructField<B> {
+        StructField::<B> {
+            name: self.name,
+            type_annotation: self.type_annotation.map(f),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Constructor {
+pub struct Constructor<A> {
     pub name: Identifier,
-    pub signature: Vec<TypeName>,
+    pub signature: Vec<TypeExpression<A>>,
 }
 
-impl fmt::Display for Constructor {
+impl<A> Constructor<A> {
+    fn generate_function_declaration(&self) -> Declaration<A> {
+        todo!()
+    }
+
+    pub fn map<B>(mut self, f: fn(A) -> B) -> Constructor<B> {
+        Constructor::<B> {
+            name: self.name,
+            signature: self.signature.drain(..).map(|expr| expr.map(f)).collect(),
+        }
+    }
+}
+
+impl<A> fmt::Display for Constructor<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { name, signature } = self;
         write!(f, "{name} :: (")?;
@@ -293,6 +389,67 @@ impl fmt::Display for Constructor {
             }
         }
         writeln!(f, ")")
+    }
+}
+
+// This thing needs positions
+#[derive(Debug, PartialEq)]
+pub enum TypeExpression<A> {
+    TypeRef(TypeName),
+    Parameter(TypeName),
+    Apply(TypeApply<A>, PhantomData<A>),
+}
+
+impl<A> TypeExpression<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> TypeExpression<B> {
+        match self {
+            Self::TypeRef(id) => TypeExpression::<B>::TypeRef(id),
+            Self::Parameter(id) => TypeExpression::<B>::Parameter(id),
+            Self::Apply(apply, ..) => {
+                TypeExpression::<B>::Apply(apply.map(f), PhantomData::default())
+            }
+        }
+    }
+}
+
+impl<A> fmt::Display for TypeExpression<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TypeRef(id) => write!(f, "{id}"),
+            Self::Parameter(id) => write!(f, "{id}"),
+            Self::Apply(apply, ..) => write!(f, "{apply}"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TypeApply<A> {
+    pub constructor: Box<TypeExpression<A>>,
+    pub argument: Box<TypeExpression<A>>,
+}
+
+impl<A> TypeApply<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> TypeApply<B> {
+        TypeApply::<B> {
+            constructor: self.constructor.map(f).into(),
+            argument: self.argument.map(f).into(),
+        }
+    }
+}
+
+impl<A> fmt::Display for TypeApply<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            constructor,
+            argument,
+        } = self;
+        write!(f, "{constructor} {argument}")
     }
 }
 
@@ -877,7 +1034,7 @@ impl<A> fmt::Display for Product<A> {
 
 #[cfg(test)]
 mod tests {
-    use crate::lexer::SourcePosition;
+    use crate::ast::ValueDeclaration;
 
     use super::{
         Constant, ConstantDeclarator, Declaration, Expression, Identifier, ModuleDeclarator,
@@ -888,33 +1045,38 @@ mod tests {
     fn cyclic_dependencies() {
         // I should parse text instead of this
         let m = ModuleDeclarator {
-            position: SourcePosition::default(),
             name: Identifier::new(""),
             declarations: vec![
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("foo"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("bar")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("quux"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("foo")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("bar"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("quux")),
-                        type_annotation: None,
-                    }),
-                },
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("foo"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("bar")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("quux"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("foo")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("bar"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("quux")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
             ],
         };
 
@@ -925,41 +1087,48 @@ mod tests {
     #[test]
     fn satisfiable() {
         let m = ModuleDeclarator {
-            position: SourcePosition::default(),
             name: Identifier::new(""),
             declarations: vec![
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("foo"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("bar")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("quux"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("bar")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("bar"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("frobnicator")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("frobnicator"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Literal((), Constant::Int(1)),
-                        type_annotation: None,
-                    }),
-                },
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("foo"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("bar")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("quux"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("bar")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("bar"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("frobnicator")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("frobnicator"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Literal((), Constant::Int(1)),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
             ],
         };
 
@@ -971,33 +1140,38 @@ mod tests {
     #[test]
     fn unsatisfiable() {
         let m = ModuleDeclarator {
-            position: SourcePosition::default(),
             name: Identifier::new(""),
             declarations: vec![
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("foo"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("bar")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("quux"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("bar")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("bar"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("frobnicator")),
-                        type_annotation: None,
-                    }),
-                },
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("foo"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("bar")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("quux"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("bar")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("bar"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("frobnicator")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
             ],
         };
 
@@ -1009,41 +1183,48 @@ mod tests {
     #[test]
     fn top_of_the_day() {
         let m = ModuleDeclarator {
-            position: SourcePosition::default(),
             name: Identifier::new(""),
             declarations: vec![
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("foo"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("bar")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("quux"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("bar")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("bar"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Variable((), Identifier::new("frobnicator")),
-                        type_annotation: None,
-                    }),
-                },
-                Declaration::Value {
-                    position: SourcePosition::default(),
-                    binder: Identifier::new("frobnicator"),
-                    declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                        initializer: Expression::Literal((), Constant::Int(1)),
-                        type_annotation: None,
-                    }),
-                },
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("foo"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("bar")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("quux"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("bar")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("bar"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Variable((), Identifier::new("frobnicator")),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
+                Declaration::Value(
+                    (),
+                    ValueDeclaration {
+                        binder: Identifier::new("frobnicator"),
+                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
+                            initializer: Expression::Literal((), Constant::Int(1)),
+                            type_annotation: None,
+                        }),
+                    },
+                ),
             ],
         };
 

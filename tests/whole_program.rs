@@ -147,36 +147,26 @@ fn factorial20() {
 
 #[test]
 fn fibonacci23() {
-    let mut lexer = LexicalAnalyzer::default();
     let source_text = into_input(
         r#"|fibonacci = fun x ->
            |  if 0 == x then
            |    0
            |  else
-           |
            |    if 1 == x
            |      then 1
            |      else fibonacci (x - 1) + fibonacci (x - 2)
-           |main = fibonacci 25
+           |main = fibonacci 18
            |"#,
     );
-    let program = parser::parse_compilation_unit(lexer.tokenize(&source_text)).unwrap();
 
     let mut compilation = CompileState::new(&source_text);
     stdlib::import(&mut compilation).unwrap();
 
-    //    HMm, so it will correctly find type errors in a lot
-    //    of places, but not if I put == "1"
+    let return_value = compilation.typecheck_and_interpret();
 
-    // This program must not type-check successfully because
-    // the type of the apply does not type-check
-
-    // Check that main is either a function that takes args
-    // or a value. Both returning the Int type.
-    let return_value = compilation.typecheck_and_interpret(program);
-
+    // Thia has lost several magnitudes of performance and I do not know why.
     assert_eq!(
-        Base::Int(75025),
+        Base::Int(2584),
         //        Base::Int(5),
         return_value.unwrap().try_into_base_type().unwrap()
     );

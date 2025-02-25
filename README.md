@@ -1,26 +1,47 @@
 # Toy functional language
 # Syntax playground:
 
-    Option a coproduct The of a | Nil
+# Co-products
+    Perhaps ::= forall a. This a | Nil
+    Perhaps ::= This a | Nil
+    Perhaps ::=
+      This a
+      Nil
+    Perhaps ::= forall a.
+      This a
+      Nil
 
-    Result a e coproduct Ok of a | Err of e
+    ## Implies that the Eval type is Eval a e, and not e a.
+    Eval ::= forall a e. Fault e | Return a
 
-    Type_Error coproduct
-        Undefined_Symbol       of Text
-        Unification_Impossible of Type * Type
+    ## Declares Eval e a
+    Eval ::= Fault e | Return a
 
-    Type coproduct
-        Parameter of typer::TypeVariable
-        Trivial   of TrivialType
-        Function  of Type * Type
+    Type_Error ::=
+        Undefined_Symbol       Text
+        Unification_Impossible Type Type
 
-    List a coproduct Cons of a * List a | Nil
+    Type ::=
+        Parameter typer::TypeVariable
+        Trivial   TrivialType
+        Function  Type Type
 
-    Typing alias Result Type Type_Error
 
-    Gui_Window struct
-        width  u32
-        height u32
+    List ::= forall a. Cons a (List a) | Nil
+    List ::= Cons a (List a) | Nil
+    List ::=
+      Cons a (List a)
+      Nil
+
+    Typing ::= alias Result Type Type_Error
+    Loaded ::= forall a. alias Result a Load_error
+
+    ## Records
+    Gui_Window ::=
+        { width  : u32
+          height : u32 }
+
+    Gui_Window ::= { width : u32; height : u32 }
 
     let <symbol> <=> [<Indent>] <expr> ( ( <;> or <newline> <expr>)* ) [<Dedent>]
     in [<Indent>] <expr> ( ( <;> or <newline> <expr>)* )
@@ -73,10 +94,10 @@ With the caveat that: If there is an Indent following <=>, then the Dedent is op
         fun x -> x
 
     (* Multiple parameters? *)
-    mk_pair = fun x y -> x, y
+    mk_pair = lambda x y. x, y
 
     (* Tuple argument *)
-    fst = fun (x, y) -> x
+    fst = lambda (x, y) -> x
 
     (* Tuple argument *)
-    snd = fun (x, )y -> y
+    snd = lambda (x, )y -> y
