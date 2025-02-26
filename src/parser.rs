@@ -183,8 +183,29 @@ fn parse_type_declarator<'a>(remains: &'a [Token]) -> ParseResult<'a, TypeDeclar
     ))
 }
 
-fn parse_coproduct<'a>(remains: &'a [Token]) -> ParseResult<'a, Coproduct<ParsingInfo>> {
-    todo!()
+fn parse_coproduct<'a>(mut remains: &'a [Token]) -> ParseResult<'a, Coproduct<ParsingInfo>> {
+    let mut boofer = vec![];
+
+    // parse the first constructor to see:
+    //   if there are more constructors and
+    //   how they are separated. (Newline or Pipe.)
+    let (constructor, remains1) = parse_constructor(remains)?;
+    remains = remains1;
+    boofer.push(constructor);
+
+    // Constructors are either inline, separated by |, or broken down, separated by Newline
+    if let [T(separator @ (TT::Pipe | TT::Layout(Layout::Newline)), ..), ..] = remains {
+        while matches!(remains, [t, ..] if t.token_type() == separator) {
+            let (constructor, remains1) = parse_constructor(&remains1[1..])?;
+            boofer.push(constructor);
+            remains = remains1;
+        }
+
+        Ok((Coproduct(boofer), remains))
+    } else {
+        // Caller solves a possibly divered parser
+        Ok((Coproduct(boofer), remains))
+    }
 }
 
 fn parse_constructor<'a>(remains: &'a [Token]) -> ParseResult<'a, Constructor<ParsingInfo>> {
@@ -212,7 +233,12 @@ fn parse_constructor_signature<'a>(
     while matches!(remains, [T(TT::LeftParen | TT::Identifier(..), ..), ..]) {
         let (term, rem) = parse_type_expression(remains)?;
         boofer.push(term);
-        remains = rem;
+
+        remains = if starts_with(TT::RightParen, rem) {
+            &rem[1..]
+        } else {
+            rem
+        };
     }
 
     Ok((boofer, remains))
@@ -224,56 +250,57 @@ fn parse_constructor_signature<'a>(
 //   Genuine-type ::= Uppercase?(Identifier)
 //   Type-parameter ::= Lowercase?(Identifier)
 fn parse_type_expression<'a>(remains: &'a [Token]) -> ParseResult<'a, TypeExpression<ParsingInfo>> {
-    if starts_with(TT::LeftParen, remains) {
-        let (type_expr, remains) = parse_type_expression(&remains[1..])?;
-        if starts_with(TT::RightParen, remains) {
-            Ok((type_expr, remains))
-        } else {
-            Err(ParseError::ExpectedTokenType(TT::RightParen))
-        }
-    } else {
-        if let [T(TT::Identifier(name), ..), remains @ ..] = remains {
-            parse_type_expression_term(TypeExpression::TypeRef(TypeName::new(name)), remains)
-        } else {
-            Err(ParseError::ExpectedTokenType(TT::Identifier(
-                "<Constructor>".to_owned(),
-            )))
-        }
-    }
+    let (prefix, remains) = parse_type_expression_prefix(remains)?;
+    parse_type_expression_infix(prefix, remains)
 }
 
-fn parse_type_expression_term<'a>(
-    prefix: TypeExpression<ParsingInfo>,
-    rem: &'a [Token],
+fn parse_type_expression_prefix<'a>(
+    remains: &'a [Token],
 ) -> ParseResult<'a, TypeExpression<ParsingInfo>> {
-    let into_term = |id: &str| {
-        if id.chars().all(char::is_lowercase) {
-            TypeExpression::<ParsingInfo>::Parameter(TypeName::new(id))
-        } else {
-            TypeExpression::TypeRef(TypeName::new(id))
-        }
-    };
-
-    match rem {
-        [T(TT::Identifier(id), ..), rem @ ..] => parse_type_expression_term(
-            TypeExpression::Apply(
-                TypeApply {
-                    constructor: prefix.into(),
-                    argument: into_term(id).into(),
-                },
-                PhantomData::default(),
-            ),
-            rem,
-        ),
-        [t, rem @ ..] if t.token_type() == &TT::LeftParen => {
-            let (infix, rem) = parse_type_expression_term(prefix, rem)?;
-            if starts_with(TT::RightParen, rem) {
-                Ok((infix, rem))
+    match remains {
+        [T(TT::Identifier(id), ..), remains @ ..] => Ok((simple_type_expr_term(id), remains)),
+        [T(TT::LeftParen, ..), ..] => {
+            let (term, remains) = parse_type_expression(&remains[1..])?;
+            if starts_with(TT::RightParen, remains) {
+                Ok((term, remains))
             } else {
                 Err(ParseError::ExpectedTokenType(TT::RightParen))
             }
         }
-        _otherwise => Ok((prefix, rem)),
+        _otherwise => Err(ParseError::ExpectedTokenType(TT::Identifier(
+            "<Constructor>".to_owned(),
+        ))),
+    }
+}
+
+fn simple_type_expr_term(id: &str) -> TypeExpression<ParsingInfo> {
+    if id.chars().all(char::is_lowercase) {
+        TypeExpression::<ParsingInfo>::Parameter(TypeName::new(id))
+    } else {
+        TypeExpression::TypeRef(TypeName::new(id))
+    }
+}
+
+fn parse_type_expression_infix<'a>(
+    lhs: TypeExpression<ParsingInfo>,
+    remains: &'a [Token],
+) -> ParseResult<'a, TypeExpression<ParsingInfo>> {
+    match remains {
+        [T(TT::Identifier(rhs), ..), remains @ ..] => {
+            let rhs = simple_type_expr_term(rhs);
+
+            Ok((
+                TypeExpression::Apply(
+                    TypeApply {
+                        constructor: lhs.into(),
+                        argument: rhs.into(),
+                    },
+                    PhantomData::default(),
+                ),
+                remains,
+            ))
+        }
+        _otherwise => Ok((lhs, remains)),
     }
 }
 

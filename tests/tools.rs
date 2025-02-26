@@ -1,5 +1,10 @@
+use std::marker::PhantomData;
+
 use marmelade::{
-    ast::{Apply, Binding, Constant, ControlFlow, Declaration, Expression, Identifier, Sequence},
+    ast::{
+        Apply, Binding, Constant, Construct, Constructor, ControlFlow, Coproduct, Declaration,
+        Expression, Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
+    },
     context::CompileState,
     interpreter::Value,
     lexer::LexicalAnalyzer,
@@ -53,7 +58,7 @@ pub fn let_in(binder: &str, bound: E<()>, body: E<()>) -> E<()> {
     E::Binding(
         (),
         Binding {
-            binder: Identifier::new(binder),
+            binder: ident(binder),
             bound: bound.into(),
             body: body.into(),
         },
@@ -92,7 +97,44 @@ pub fn apply(f: E<()>, x: E<()>) -> E<()> {
 }
 
 pub fn var(id: &str) -> E<()> {
-    E::Variable((), Identifier::new(id))
+    E::Variable((), ident(id))
+}
+
+pub fn ident(id: &str) -> Identifier {
+    Identifier::new(id)
+}
+
+pub fn tyname(id: &str) -> TypeName {
+    TypeName::new(id)
+}
+
+pub fn typar(id: &str) -> TypeExpression<()> {
+    TypeExpression::Parameter(tyname(id))
+}
+
+pub fn tyref(id: &str) -> TypeExpression<()> {
+    TypeExpression::TypeRef(tyname(id))
+}
+
+pub fn constructor(id: &str, te: Vec<TypeExpression<()>>) -> Constructor<()> {
+    Constructor {
+        name: ident(id),
+        signature: te,
+    }
+}
+
+pub fn tyapp(f: TypeExpression<()>, a: TypeExpression<()>) -> TypeExpression<()> {
+    TypeExpression::Apply(
+        TypeApply {
+            constructor: f.into(),
+            argument: a.into(),
+        },
+        PhantomData::default(),
+    )
+}
+
+pub fn coproduct(constructors: Vec<Constructor<()>>) -> TypeDeclarator<()> {
+    TypeDeclarator::Coproduct((), Coproduct(constructors))
 }
 
 pub fn into_unicode_text(source: &str) -> Vec<char> {

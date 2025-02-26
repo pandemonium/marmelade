@@ -58,7 +58,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModuleDeclarator<A> {
     pub name: Identifier,
     pub declarations: Vec<Declaration<A>>,
@@ -153,24 +153,24 @@ impl fmt::Display for TypeName {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ValueDeclaration<A> {
     pub binder: Identifier,
     pub declarator: ValueDeclarator<A>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TypeDeclaration<A> {
     pub binding: Identifier,
     pub declarator: TypeDeclarator<A>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ImportModule {
     pub exported_symbols: Vec<Identifier>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Declaration<A> {
     Value(A, ValueDeclaration<A>),
     Type(A, TypeDeclaration<A>),
@@ -266,7 +266,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Coproduct<A>(pub Vec<Constructor<A>>);
 
 impl<A> Coproduct<A> {
@@ -276,7 +276,7 @@ impl<A> Coproduct<A> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Struct<A>(pub Vec<StructField<A>>);
 
 impl<A> Struct<A> {
@@ -287,7 +287,7 @@ impl<A> Struct<A> {
 }
 
 // Introduce sub-constructors here
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TypeDeclarator<A> {
     Alias(A, TypeExpression<A>),
     Coproduct(A, Coproduct<A>),
@@ -337,7 +337,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StructField<A> {
     pub name: Identifier,
     pub type_annotation: TypeExpression<A>,
@@ -352,7 +352,7 @@ impl<A> StructField<A> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Constructor<A> {
     pub name: Identifier,
     pub signature: Vec<TypeExpression<A>>,
@@ -393,7 +393,7 @@ where
 }
 
 // This thing needs positions
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TypeExpression<A> {
     TypeRef(TypeName),
     Parameter(TypeName),
@@ -425,7 +425,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TypeApply<A> {
     pub constructor: Box<TypeExpression<A>>,
     pub argument: Box<TypeExpression<A>>,
