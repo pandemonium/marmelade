@@ -36,9 +36,9 @@ fn binary_to_bool_type() -> Type {
     let tp = Box::new(Type::Parameter(ty.clone()));
     Type::Forall(
         ty.clone(),
-        Type::Function(
+        Type::Arrow(
             tp.clone(),
-            Type::Function(tp, Type::Base(BaseType::Bool).into()).into(),
+            Type::Arrow(tp, Type::Constant(BaseType::Bool).into()).into(),
         )
         .into(),
     )
@@ -49,7 +49,7 @@ fn binary_type() -> Type {
     let tp = Box::new(Type::Parameter(ty.clone()));
     Type::Forall(
         ty.clone(),
-        Type::Function(tp.clone(), Type::Function(tp.clone(), tp).into()).into(),
+        Type::Arrow(tp.clone(), Type::Arrow(tp.clone(), tp).into()).into(),
     )
 }
 

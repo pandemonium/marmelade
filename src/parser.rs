@@ -277,7 +277,7 @@ fn simple_type_expr_term(id: &str) -> TypeExpression<ParsingInfo> {
     if id.chars().all(char::is_lowercase) {
         TypeExpression::<ParsingInfo>::Parameter(TypeName::new(id))
     } else {
-        TypeExpression::TypeRef(TypeName::new(id))
+        TypeExpression::Constant(TypeName::new(id))
     }
 }
 
@@ -363,7 +363,7 @@ fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclar
 
 // Should this function eat the -> ?
 // a | pattern
-fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter>> {
+fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter<ParsingInfo>>> {
     let (params, remains) =
         // This pattern is quite common...
         if let Some(end) = remains.iter().position(|t| t.token_type() == &TT::Arrow) {

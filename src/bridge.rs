@@ -49,23 +49,23 @@ trait TypeBridge {
 }
 
 impl TypeBridge for String {
-    const TYPE: Type = Type::Base(BaseType::Text);
+    const TYPE: Type = Type::Constant(BaseType::Text);
 }
 
 impl TypeBridge for () {
-    const TYPE: Type = Type::Base(BaseType::Unit);
+    const TYPE: Type = Type::Constant(BaseType::Unit);
 }
 
 impl TypeBridge for i64 {
-    const TYPE: Type = Type::Base(BaseType::Int);
+    const TYPE: Type = Type::Constant(BaseType::Int);
 }
 
 impl TypeBridge for f64 {
-    const TYPE: Type = Type::Base(BaseType::Float);
+    const TYPE: Type = Type::Constant(BaseType::Float);
 }
 
 impl TypeBridge for bool {
-    const TYPE: Type = Type::Base(BaseType::Bool);
+    const TYPE: Type = Type::Constant(BaseType::Bool);
 }
 
 pub struct Lambda1<A, R>(pub fn(A) -> R);
@@ -86,7 +86,7 @@ where
 
     fn signature(&self) -> Type {
         // Call into the typer here?
-        Type::Function(A::lift_type().into(), R::lift_type().into())
+        Type::Arrow(A::lift_type().into(), R::lift_type().into())
     }
 }
 
@@ -113,9 +113,9 @@ where
 
     fn signature(&self) -> Type {
         // Call into the typer here?
-        Type::Function(
+        Type::Arrow(
             A::lift_type().into(),
-            Type::Function(B::lift_type().into(), R::lift_type().into()).into(),
+            Type::Arrow(B::lift_type().into(), R::lift_type().into()).into(),
         )
     }
 }
@@ -140,7 +140,7 @@ where
         let ty = TypeParameter::fresh();
         Type::Forall(
             ty.clone(),
-            Type::Function(Type::Parameter(ty).into(), R::lift_type().into()).into(),
+            Type::Arrow(Type::Parameter(ty).into(), R::lift_type().into()).into(),
         )
     }
 }
@@ -214,7 +214,7 @@ impl TryFrom<Value> for () {
         if let Value::Base(Base::Unit) = value {
             Ok(())
         } else {
-            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Unit)))
+            Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Unit)))
         }
     }
 }
@@ -232,7 +232,7 @@ impl TryFrom<Value> for String {
         if let Value::Base(Base::Text(s)) = value {
             Ok(s)
         } else {
-            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Text)))
+            Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Text)))
         }
     }
 }
@@ -250,7 +250,7 @@ impl TryFrom<Value> for i64 {
         if let Value::Base(Base::Int(x)) = value {
             Ok(x)
         } else {
-            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Int)))
+            Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Int)))
         }
     }
 }
@@ -268,7 +268,7 @@ impl TryFrom<Value> for f64 {
         if let Value::Base(Base::Float(x)) = value {
             Ok(x)
         } else {
-            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Int)))
+            Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Int)))
         }
     }
 }
@@ -292,7 +292,7 @@ impl TryFrom<Value> for bool {
         if let Value::Base(Base::Bool(x)) = value {
             Ok(x)
         } else {
-            Err(RuntimeError::ExpectedType(Type::Base(BaseType::Bool)))
+            Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Bool)))
         }
     }
 }

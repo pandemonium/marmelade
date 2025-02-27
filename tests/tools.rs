@@ -46,6 +46,7 @@ where
         rhs.into().try_into_base_type().unwrap()
     )
 }
+
 pub fn int(i: i64) -> E<()> {
     E::Literal((), Constant::Int(i))
 }
@@ -113,7 +114,7 @@ pub fn typar(id: &str) -> TypeExpression<()> {
 }
 
 pub fn tyref(id: &str) -> TypeExpression<()> {
-    TypeExpression::TypeRef(tyname(id))
+    TypeExpression::Constant(tyname(id))
 }
 
 pub fn constructor(id: &str, te: Vec<TypeExpression<()>>) -> Constructor<()> {

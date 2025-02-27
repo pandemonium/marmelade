@@ -169,7 +169,7 @@ impl fmt::Display for Closure {
         } = self;
         writeln!(f, "\\{parameter}. ")?;
         write!(f, "{capture}")?;
-        write!(f, "{body}")
+        write!(f, "{body:?}")
     }
 }
 
@@ -414,7 +414,7 @@ fn reduce_control_flow<A>(control: ControlFlow<A>, env: &mut Environment) -> Int
                     alternate.reduce(env)
                 }
             } else {
-                Err(RuntimeError::ExpectedType(Type::Base(BaseType::Bool)))
+                Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Bool)))
             }
         }
     }

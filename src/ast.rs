@@ -8,6 +8,7 @@ use crate::{
     interpreter::DependencyGraph,
     lexer::{self, SourcePosition},
     parser::ParsingInfo,
+    types::{CoproductType, ProductType, Type, TypeParameter},
 };
 
 #[derive(Debug)]
@@ -27,16 +28,14 @@ where
 {
     pub fn map<B>(self, f: fn(A) -> B) -> CompilationUnit<B> {
         match self {
-            Self::Implicit(a, module) => CompilationUnit::<B>::Implicit(f(a), module.map(f)),
-            Self::Library(a, LibraryDeclarator { mut modules, main }) => {
-                CompilationUnit::<B>::Library(
-                    f(a),
-                    LibraryDeclarator {
-                        modules: modules.drain(..).map(|m| m.map(f)).collect(),
-                        main: main.map(f),
-                    },
-                )
-            }
+            Self::Implicit(a, module) => CompilationUnit::Implicit(f(a), module.map(f)),
+            Self::Library(a, LibraryDeclarator { mut modules, main }) => CompilationUnit::Library(
+                f(a),
+                LibraryDeclarator {
+                    modules: modules.drain(..).map(|m| m.map(f)).collect(),
+                    main: main.map(f),
+                },
+            ),
         }
     }
 }
@@ -81,7 +80,7 @@ where
     }
 
     fn map<B>(mut self, f: fn(A) -> B) -> ModuleDeclarator<B> {
-        ModuleDeclarator::<B> {
+        ModuleDeclarator {
             name: self.name,
             declarations: self.declarations.drain(..).map(|d| d.map(f)).collect(),
         }
@@ -132,7 +131,7 @@ impl fmt::Display for Identifier {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeName(String);
 
 impl TypeName {
@@ -200,7 +199,7 @@ where
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Declaration<B> {
         match self {
-            Self::Value(a, ValueDeclaration { binder, declarator }) => Declaration::<B>::Value(
+            Self::Value(a, ValueDeclaration { binder, declarator }) => Declaration::Value(
                 f(a),
                 ValueDeclaration {
                     binder,
@@ -213,16 +212,16 @@ where
                     binding,
                     declarator,
                 },
-            ) => Declaration::<B>::Type(
+            ) => Declaration::Type(
                 f(a),
                 TypeDeclaration {
                     binding,
                     declarator: declarator.map(f),
                 },
             ),
-            Self::Module(a, declarator) => Declaration::<B>::Module(f(a), declarator.map(f)),
+            Self::Module(a, declarator) => Declaration::Module(f(a), declarator.map(f)),
             Self::ImportModule(a, ImportModule { exported_symbols }) => {
-                Declaration::<B>::ImportModule(f(a), ImportModule { exported_symbols })
+                Declaration::ImportModule(f(a), ImportModule { exported_symbols })
             }
         }
     }
@@ -269,10 +268,30 @@ where
 #[derive(Clone, Debug, PartialEq)]
 pub struct Coproduct<A>(pub Vec<Constructor<A>>);
 
-impl<A> Coproduct<A> {
+impl<A> Coproduct<A>
+where
+    A: Clone,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> Coproduct<B> {
         let Self(mut cs) = self;
-        Coproduct::<B>(cs.drain(..).map(|c| c.map(f)).collect())
+        Coproduct(cs.drain(..).map(|c| c.map(f)).collect())
+    }
+
+    fn synthesize_type(&self) -> Type {
+        let Self(cs) = self;
+
+        Type::Coproduct(CoproductType::new(
+            cs.iter()
+                .map(|Constructor { name, signature }| {
+                    (
+                        name.as_str().to_owned(),
+                        Type::Product(ProductType::Tuple(
+                            signature.iter().map(|te| te.clone().into_type()).collect(),
+                        )),
+                    )
+                })
+                .collect(),
+        ))
     }
 }
 
@@ -282,7 +301,7 @@ pub struct Struct<A>(pub Vec<StructField<A>>);
 impl<A> Struct<A> {
     pub fn map<B>(self, f: fn(A) -> B) -> Struct<B> {
         let Self(mut xs) = self;
-        Struct::<B>(xs.drain(..).map(|x| x.map(f)).collect())
+        Struct(xs.drain(..).map(|x| x.map(f)).collect())
     }
 }
 
@@ -300,9 +319,17 @@ where
 {
     fn map<B>(self, f: fn(A) -> B) -> TypeDeclarator<B> {
         match self {
-            Self::Alias(a, alias) => TypeDeclarator::<B>::Alias(f(a), alias.map(f)),
-            Self::Coproduct(a, coproduct) => TypeDeclarator::<B>::Coproduct(f(a), coproduct.map(f)),
-            Self::Struct(a, record) => TypeDeclarator::<B>::Struct(f(a), record.map(f)),
+            Self::Alias(a, alias) => TypeDeclarator::Alias(f(a), alias.map(f)),
+            Self::Coproduct(a, coproduct) => TypeDeclarator::Coproduct(f(a), coproduct.map(f)),
+            Self::Struct(a, record) => TypeDeclarator::Struct(f(a), record.map(f)),
+        }
+    }
+
+    fn synthesize_type(&self) -> Type {
+        match self {
+            Self::Alias(_, type_expr) => todo!(),
+            Self::Coproduct(_, coproduct) => coproduct.synthesize_type(),
+            Self::Struct(_, record) => todo!(),
         }
     }
 }
@@ -345,7 +372,7 @@ pub struct StructField<A> {
 
 impl<A> StructField<A> {
     pub fn map<B>(self, f: fn(A) -> B) -> StructField<B> {
-        StructField::<B> {
+        StructField {
             name: self.name,
             type_annotation: self.type_annotation.map(f),
         }
@@ -358,13 +385,71 @@ pub struct Constructor<A> {
     pub signature: Vec<TypeExpression<A>>,
 }
 
-impl<A> Constructor<A> {
-    fn generate_function_declaration(&self) -> Declaration<A> {
-        todo!()
+impl<A> Constructor<A>
+where
+    A: Clone,
+{
+    // Think about whether or not this can consume self.
+    fn generate_function_declaration(
+        &self,
+        annotation: A,
+        ty: TypeName,
+        _forall: Vec<TypeName>,
+    ) -> Declaration<A> {
+        let parameters = self
+            .signature
+            .iter()
+            .enumerate()
+            .map(|(index, expr)| {
+                Parameter::new_typed(Identifier::new(&format!("p{index}")), expr.clone())
+            })
+            .collect::<Vec<_>>();
+
+        // Think about how many annotations this contains. Are they all needed
+        // because they are all on different positions?
+        let function = FunctionDeclarator {
+            parameters: parameters.clone(),
+            return_type_annotation: None,
+            body: Expression::Construct(
+                annotation.clone(),
+                self.make_construct_node(&annotation, ty, parameters),
+            ),
+        };
+
+        Declaration::Value(
+            annotation.clone(),
+            ValueDeclaration {
+                binder: self.name.clone(),
+                declarator: ValueDeclarator::Function(function),
+            },
+        )
+    }
+
+    fn make_construct_node(
+        &self,
+        annotation: &A,
+        name: TypeName,
+        mut parameters: Vec<Parameter<A>>,
+    ) -> Construct<A>
+    where
+        A: Clone,
+    {
+        let tuple = Product::Tuple(
+            parameters
+                .drain(..)
+                .map(|p| Expression::Variable(annotation.clone(), p.name))
+                .collect(),
+        );
+
+        Construct {
+            name,
+            constructor: self.name.clone(),
+            argument: Expression::Product(annotation.clone(), tuple).into(),
+        }
     }
 
     pub fn map<B>(mut self, f: fn(A) -> B) -> Constructor<B> {
-        Constructor::<B> {
+        Constructor {
             name: self.name,
             signature: self.signature.drain(..).map(|expr| expr.map(f)).collect(),
         }
@@ -395,7 +480,7 @@ where
 // This thing needs positions
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeExpression<A> {
-    TypeRef(TypeName),
+    Constant(TypeName),
     Parameter(TypeName),
     Apply(TypeApply<A>, PhantomData<A>),
 }
@@ -403,12 +488,32 @@ pub enum TypeExpression<A> {
 impl<A> TypeExpression<A> {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeExpression<B> {
         match self {
-            Self::TypeRef(id) => TypeExpression::<B>::TypeRef(id),
-            Self::Parameter(id) => TypeExpression::<B>::Parameter(id),
-            Self::Apply(apply, ..) => {
-                TypeExpression::<B>::Apply(apply.map(f), PhantomData::default())
+            Self::Constant(id) => TypeExpression::Constant(id),
+            Self::Parameter(id) => TypeExpression::Parameter(id),
+            Self::Apply(apply, ..) => TypeExpression::Apply(apply.map(f), PhantomData::default()),
+        }
+    }
+
+    pub fn into_type(self) -> Type {
+        fn map_expression<A>(
+            expr: TypeExpression<A>,
+            type_params: &mut HashMap<String, TypeParameter>,
+        ) -> Type {
+            match expr {
+                TypeExpression::Constant(name) => Type::Named(name),
+                TypeExpression::Parameter(TypeName(param)) => Type::Parameter(
+                    *type_params
+                        .entry(param)
+                        .or_insert_with(TypeParameter::fresh),
+                ),
+                TypeExpression::Apply(node, ..) => Type::Apply(
+                    map_expression(*node.constructor, type_params).into(),
+                    map_expression(*node.argument, type_params).into(),
+                ),
             }
         }
+
+        map_expression(self, &mut HashMap::default())
     }
 }
 
@@ -418,7 +523,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TypeRef(id) => write!(f, "{id}"),
+            Self::Constant(id) => write!(f, "{id}"),
             Self::Parameter(id) => write!(f, "{id}"),
             Self::Apply(apply, ..) => write!(f, "{apply}"),
         }
@@ -433,7 +538,7 @@ pub struct TypeApply<A> {
 
 impl<A> TypeApply<A> {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeApply<B> {
-        TypeApply::<B> {
+        TypeApply {
             constructor: self.constructor.map(f).into(),
             argument: self.argument.map(f).into(),
         }
@@ -473,13 +578,16 @@ where
 
     fn map<B>(self, f: fn(A) -> B) -> ValueDeclarator<B> {
         match self {
-            Self::Constant(constant) => ValueDeclarator::<B>::Constant(constant.map(f)),
-            Self::Function(function) => ValueDeclarator::<B>::Function(function.map(f)),
+            Self::Constant(constant) => ValueDeclarator::Constant(constant.map(f)),
+            Self::Function(function) => ValueDeclarator::Function(function.map(f)),
         }
     }
 }
 
-impl<A> fmt::Display for ValueDeclarator<A> {
+impl<A> fmt::Display for ValueDeclarator<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Constant(constant) => write!(f, "{constant}"),
@@ -500,14 +608,17 @@ impl<A> ConstantDeclarator<A> {
     }
 
     fn map<B>(self, f: fn(A) -> B) -> ConstantDeclarator<B> {
-        ConstantDeclarator::<B> {
+        ConstantDeclarator {
             initializer: self.initializer.map(f),
             type_annotation: self.type_annotation,
         }
     }
 }
 
-impl<A> fmt::Display for ConstantDeclarator<A> {
+impl<A> fmt::Display for ConstantDeclarator<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             initializer,
@@ -517,16 +628,14 @@ impl<A> fmt::Display for ConstantDeclarator<A> {
         if let Some(ty) = type_annotation {
             write!(f, "[{ty}]")?;
         }
-
-        //        writeln!(f, "")
         Ok(())
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDeclarator<A> {
-    pub parameters: Vec<Parameter>,
-    pub return_type_annotation: Option<TypeName>,
+    pub parameters: Vec<Parameter<A>>,
+    pub return_type_annotation: Option<TypeName>, // TypeExpression instead
     pub body: Expression<A>,
 }
 
@@ -559,16 +668,19 @@ where
         free
     }
 
-    fn map<B>(self, f: fn(A) -> B) -> FunctionDeclarator<B> {
-        FunctionDeclarator::<B> {
-            parameters: self.parameters,
+    fn map<B>(mut self, f: fn(A) -> B) -> FunctionDeclarator<B> {
+        FunctionDeclarator {
+            parameters: self.parameters.drain(..).map(|p| p.map(f)).collect(),
             return_type_annotation: self.return_type_annotation,
             body: self.body.map(f),
         }
     }
 }
 
-impl<A> fmt::Display for FunctionDeclarator<A> {
+impl<A> fmt::Display for FunctionDeclarator<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             parameters,
@@ -592,22 +704,39 @@ impl<A> fmt::Display for FunctionDeclarator<A> {
 }
 
 // these can be pattern matches too
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Parameter {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameter<A> {
     pub name: Identifier,
-    pub type_annotation: Option<TypeName>,
+    pub type_annotation: Option<TypeExpression<A>>,
 }
 
-impl Parameter {
+impl<A> Parameter<A> {
     pub fn new(name: Identifier) -> Self {
         Self {
             name,
             type_annotation: None,
         }
     }
+
+    pub fn new_typed(name: Identifier, ty: TypeExpression<A>) -> Self {
+        Self {
+            name,
+            type_annotation: Some(ty),
+        }
+    }
+
+    pub fn map<B>(self, f: fn(A) -> B) -> Parameter<B> {
+        Parameter {
+            name: self.name,
+            type_annotation: self.type_annotation.map(|t| t.map(f)),
+        }
+    }
 }
 
-impl fmt::Display for Parameter {
+impl<A> fmt::Display for Parameter<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             name,
@@ -642,14 +771,14 @@ pub enum Expression<A> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfReferential<A> {
     pub name: Identifier,
-    pub parameter: Parameter,
+    pub parameter: Parameter<A>,
     pub body: Box<Expression<A>>,
 }
 impl<A> SelfReferential<A> {
     fn map<B>(self, f: fn(A) -> B) -> SelfReferential<B> {
-        SelfReferential::<B> {
+        SelfReferential {
             name: self.name,
-            parameter: self.parameter,
+            parameter: self.parameter.map(f),
             body: self.body.map(f).into(),
         }
     }
@@ -657,13 +786,13 @@ impl<A> SelfReferential<A> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lambda<A> {
-    pub parameter: Parameter,
+    pub parameter: Parameter<A>,
     pub body: Box<Expression<A>>,
 }
 impl<A> Lambda<A> {
     fn map<B>(self, f: fn(A) -> B) -> Lambda<B> {
-        Lambda::<B> {
-            parameter: self.parameter,
+        Lambda {
+            parameter: self.parameter.map(f),
             body: self.body.map(f).into(),
         }
     }
@@ -676,7 +805,7 @@ pub struct Apply<A> {
 }
 impl<A> Apply<A> {
     pub fn map<B>(self, f: fn(A) -> B) -> Apply<B> {
-        Apply::<B> {
+        Apply {
             function: self.function.map(f).into(),
             argument: self.argument.map(f).into(),
         }
@@ -691,7 +820,7 @@ pub struct Construct<A> {
 }
 impl<A> Construct<A> {
     fn map<B>(self, f: fn(A) -> B) -> Construct<B> {
-        Construct::<B> {
+        Construct {
             name: self.name,
             constructor: self.constructor,
             argument: self.argument.map(f).into(),
@@ -706,7 +835,7 @@ pub struct Project<A> {
 }
 impl<A> Project<A> {
     fn map<B>(self, f: fn(A) -> B) -> Project<B> {
-        Project::<B> {
+        Project {
             base: self.base.map(f).into(),
             index: self.index,
         }
@@ -721,7 +850,7 @@ pub struct Binding<A> {
 }
 impl<A> Binding<A> {
     fn map<B>(self, f: fn(A) -> B) -> Binding<B> {
-        Binding::<B> {
+        Binding {
             binder: self.binder,
             bound: self.bound.map(f).into(),
             body: self.body.map(f).into(),
@@ -736,7 +865,7 @@ pub struct Sequence<A> {
 }
 impl<A> Sequence<A> {
     fn map<B>(self, f: fn(A) -> B) -> Sequence<B> {
-        Sequence::<B> {
+        Sequence {
             this: self.this.map(f).into(),
             and_then: self.and_then.map(f).into(),
         }
@@ -868,7 +997,10 @@ impl<A> Expression<A> {
     }
 }
 
-impl<A> fmt::Display for Expression<A> {
+impl<A> fmt::Display for Expression<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expression::Variable(_, id) => write!(f, "{id}"),
@@ -934,7 +1066,10 @@ impl<A> ControlFlow<A> {
     }
 }
 
-impl<A> fmt::Display for ControlFlow<A> {
+impl<A> fmt::Display for ControlFlow<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self::If {
             predicate,
@@ -1002,7 +1137,7 @@ impl<A> Product<A> {
     fn map<B>(self, f: fn(A) -> B) -> Product<B> {
         match self {
             Self::Tuple(mut expressions) => {
-                Product::<B>::Tuple(expressions.drain(..).map(|x| x.map(f)).collect())
+                Product::Tuple(expressions.drain(..).map(|x| x.map(f)).collect())
             }
             Self::Struct { mut bindings } => Product::<B>::Struct {
                 bindings: bindings.drain().map(|(k, v)| (k, v.map(f))).collect(),
@@ -1011,7 +1146,10 @@ impl<A> Product<A> {
     }
 }
 
-impl<A> fmt::Display for Product<A> {
+impl<A> fmt::Display for Product<A>
+where
+    A: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Tuple(expressions) => {
