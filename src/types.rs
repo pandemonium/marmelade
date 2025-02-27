@@ -616,24 +616,6 @@ impl TypingContext {
 
         Self(map)
     }
-
-    fn resolve_type_references(self) -> Typing<Self> {
-        let Self(map) = self;
-        let mut boofer = HashMap::with_capacity(map.len());
-
-        for (binding, ty) in &map {
-            let ty = if let Type::Named(name) = ty {
-                map.get(&Binding::TypeTerm(name.as_str().to_owned()))
-                    .ok_or_else(|| TypeError::UndefinedType(name.clone()))?
-            } else {
-                ty
-            };
-
-            boofer.insert(binding.clone(), ty.clone());
-        }
-
-        Ok(Self(boofer))
-    }
 }
 
 impl fmt::Display for TypingContext {
@@ -736,8 +718,11 @@ mod typer {
         A: Clone + Parsed,
     {
         let expected_param_type = if let Some(param_type) = type_annotation {
-            // What about Type::TypeName
-            param_type.clone().into_type().expand(ctx)?
+            // Why doesn't it have to look something up?
+            param_type
+                .clone()
+                .synthesize_type(&mut HashMap::default()) // hmmmm
+                .expand(ctx)?
             //            ctx.lookup(&param_type.clone().into())
             //                .cloned()
             //                .ok_or_else(|| TypeError::UndefinedType(param_type.clone()))?

@@ -280,13 +280,18 @@ where
     fn synthesize_type(&self) -> Type {
         let Self(cs) = self;
 
+        let mut type_map = HashMap::default();
+
         Type::Coproduct(CoproductType::new(
             cs.iter()
                 .map(|Constructor { name, signature }| {
                     (
                         name.as_str().to_owned(),
                         Type::Product(ProductType::Tuple(
-                            signature.iter().map(|te| te.clone().into_type()).collect(),
+                            signature
+                                .iter()
+                                .map(|expr| expr.synthesize_type(&mut type_map))
+                                .collect(),
                         )),
                     )
                 })
@@ -325,7 +330,7 @@ where
         }
     }
 
-    fn synthesize_type(&self) -> Type {
+    pub fn synthesize_type(&self) -> Type {
         match self {
             Self::Alias(_, type_expr) => todo!(),
             Self::Coproduct(_, coproduct) => coproduct.synthesize_type(),
@@ -494,26 +499,26 @@ impl<A> TypeExpression<A> {
         }
     }
 
-    pub fn into_type(self) -> Type {
+    pub fn synthesize_type(&self, type_param_map: &mut HashMap<String, TypeParameter>) -> Type {
         fn map_expression<A>(
-            expr: TypeExpression<A>,
+            expr: &TypeExpression<A>,
             type_params: &mut HashMap<String, TypeParameter>,
         ) -> Type {
             match expr {
-                TypeExpression::Constant(name) => Type::Named(name),
+                TypeExpression::Constant(name) => Type::Named(name.to_owned()),
                 TypeExpression::Parameter(TypeName(param)) => Type::Parameter(
                     *type_params
-                        .entry(param)
+                        .entry(param.to_owned())
                         .or_insert_with(TypeParameter::fresh),
                 ),
                 TypeExpression::Apply(node, ..) => Type::Apply(
-                    map_expression(*node.constructor, type_params).into(),
-                    map_expression(*node.argument, type_params).into(),
+                    map_expression(&node.constructor, type_params).into(),
+                    map_expression(&node.argument, type_params).into(),
                 ),
             }
         }
 
-        map_expression(self, &mut HashMap::default())
+        map_expression(self, type_param_map)
     }
 }
 

@@ -1,6 +1,4 @@
-use marmelade::ast::{
-    Coproduct, Declaration, TypeDeclaration, TypeDeclarator as Decl, TypeExpression as TE,
-};
+use marmelade::ast::{Declaration, TypeDeclaration};
 use tools::*;
 
 mod tools;
