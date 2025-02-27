@@ -74,14 +74,15 @@ impl Interpreter {
     fn load_module<A>(
         self,
         annotation: A,
-        typing_context: TypingContext,
+        mut typing_context: TypingContext,
         mut module: ModuleDeclarator<A>,
     ) -> Loaded<Environment>
     where
         A: Clone + Parsed,
     {
-        self.patch_with_prelude(annotation, &mut module);
+        self.patch_with_prelude(annotation.clone(), &mut module);
         ModuleLoader::try_loading(&module, self.prelude)?
+            .admit_types(annotation, &mut typing_context)?
             .type_check(typing_context)?
             .initialize()
     }
@@ -333,7 +334,7 @@ impl<A> Expression<A> {
             Self::Apply(_, Apply { function, argument }) => {
                 apply_function(*function, *argument, env)
             }
-            Self::Construct(_, Construct { .. }) => todo!(),
+            Self::Construct(_, Construct { .. }) => Ok(Value)),
             Self::Product(..) => todo!(),
             Self::Project(_, Project { .. }) => todo!(),
             Self::Binding(

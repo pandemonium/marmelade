@@ -277,11 +277,27 @@ where
         Coproduct(cs.drain(..).map(|c| c.map(f)).collect())
     }
 
+    pub fn synthesize_module(&self, annotation: A, self_name: TypeName) -> CoproductModule<A> {
+        let Self(constructors) = self;
+
+        CoproductModule {
+            data_type: self.synthesize_type(),
+            constructor_functions: constructors
+                .iter()
+                .map(|constructor| {
+                    constructor.generate_function_declaration(
+                        annotation.clone(),
+                        self_name.clone(),
+                        vec![],
+                    )
+                })
+                .collect(),
+        }
+    }
+
     fn synthesize_type(&self) -> Type {
         let Self(cs) = self;
-
-        let mut type_map = HashMap::default();
-
+        let mut type_parameters = HashMap::default();
         Type::Coproduct(CoproductType::new(
             cs.iter()
                 .map(|Constructor { name, signature }| {
@@ -290,7 +306,7 @@ where
                         Type::Product(ProductType::Tuple(
                             signature
                                 .iter()
-                                .map(|expr| expr.synthesize_type(&mut type_map))
+                                .map(|expr| expr.synthesize_type(&mut type_parameters))
                                 .collect(),
                         )),
                     )
@@ -298,6 +314,11 @@ where
                 .collect(),
         ))
     }
+}
+
+pub struct CoproductModule<A> {
+    pub data_type: Type,
+    pub constructor_functions: Vec<ValueDeclaration<A>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -332,9 +353,9 @@ where
 
     pub fn synthesize_type(&self) -> Type {
         match self {
-            Self::Alias(_, type_expr) => todo!(),
+            Self::Alias(..) => todo!(),
             Self::Coproduct(_, coproduct) => coproduct.synthesize_type(),
-            Self::Struct(_, record) => todo!(),
+            Self::Struct(..) => todo!(),
         }
     }
 }
@@ -399,14 +420,17 @@ where
         &self,
         annotation: A,
         ty: TypeName,
-        _forall: Vec<TypeName>,
-    ) -> Declaration<A> {
+        _type_parameters: Vec<TypeName>, // this is the forall clause, really
+    ) -> ValueDeclaration<A> {
         let parameters = self
             .signature
             .iter()
             .enumerate()
             .map(|(index, expr)| {
-                Parameter::new_typed(Identifier::new(&format!("p{index}")), expr.clone())
+                Parameter::new_with_type_annotation(
+                    Identifier::new(&format!("p{index}")),
+                    expr.clone(),
+                )
             })
             .collect::<Vec<_>>();
 
@@ -421,13 +445,10 @@ where
             ),
         };
 
-        Declaration::Value(
-            annotation.clone(),
-            ValueDeclaration {
-                binder: self.name.clone(),
-                declarator: ValueDeclarator::Function(function),
-            },
-        )
+        ValueDeclaration {
+            binder: self.name.clone(),
+            declarator: ValueDeclarator::Function(function),
+        }
     }
 
     fn make_construct_node(
@@ -723,7 +744,7 @@ impl<A> Parameter<A> {
         }
     }
 
-    pub fn new_typed(name: Identifier, ty: TypeExpression<A>) -> Self {
+    pub fn new_with_type_annotation(name: Identifier, ty: TypeExpression<A>) -> Self {
         Self {
             name,
             type_annotation: Some(ty),

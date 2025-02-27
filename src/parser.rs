@@ -209,7 +209,7 @@ fn parse_coproduct<'a>(mut remains: &'a [Token]) -> ParseResult<'a, Coproduct<Pa
 }
 
 fn parse_constructor<'a>(remains: &'a [Token]) -> ParseResult<'a, Constructor<ParsingInfo>> {
-    if let [T(TT::Identifier(name), position), remains @ ..] = remains {
+    if let [T(TT::Identifier(name), _position), remains @ ..] = remains {
         let (signature, remains) = parse_constructor_signature(remains)?;
         Ok((
             Constructor {

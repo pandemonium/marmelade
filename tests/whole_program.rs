@@ -139,6 +139,7 @@ fn factorial20() {
 
     let return_value = Interpreter::new(program_environment)
         .load_and_run(compilation.typing_context, program.map(|_| ()));
+
     assert_eq!(
         Base::Int(2432902008176640000),
         return_value.unwrap().try_into_base_type().unwrap()
@@ -155,6 +156,8 @@ fn fibonacci23() {
            |    if 1 == x
            |      then 1
            |      else fibonacci (x - 1) + fibonacci (x - 2)
+           |Perhaps ::= This a | Nope
+           |List ::= Cons a (List a) | Nil
            |main = fibonacci 18
            |"#,
     );

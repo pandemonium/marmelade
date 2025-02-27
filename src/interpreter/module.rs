@@ -1,9 +1,13 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt,
+};
 
 use super::{Environment, LoadError, Loaded};
 use crate::{
     ast::{
-        Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration, ValueDeclarator,
+        Declaration, Identifier, ImportModule, ModuleDeclarator, TypeDeclaration, TypeDeclarator,
+        TypeName, ValueDeclaration, ValueDeclarator,
     },
     types::{Parsed, TypeError, TypeInference, Typing, TypingContext},
 };
@@ -44,15 +48,17 @@ where
     pub fn type_check(self, mut typing_context: TypingContext) -> Loaded<Self> {
         for id in self.dependency_graph.compute_resolution_order().drain(..) {
             if self.module.find_value_declaration(id).is_some() {
-                let ty = self
+                // Why is it like this?
+                let declaration_type = self
                     .infer_declaration_type(id, &typing_context)?
                     .inferred_type;
+
                 typing_context.bind(
                     id.clone().into(),
                     // What about the substitutions?
                     // Can I build a huge Substitutions table for
                     // all symbols here?
-                    ty,
+                    declaration_type,
                 );
             }
         }
@@ -112,11 +118,11 @@ where
             .ok_or_else(|| TypeError::UndefinedSymbol(id.clone()))?;
 
         match declaration {
-            Declaration::Value(_, value) => {
-                Ok(self.infer_declarator_type(&value.binder, &value.declarator, typing_context)?)
-            }
-            // I have to have a different Dependency Graph for the types
-            Declaration::Type(..) => todo!(),
+            Declaration::Value(_, declaration) => Ok(self.infer_declarator_type(
+                &declaration.binder,
+                &declaration.declarator,
+                typing_context,
+            )?),
             _otherwise => todo!(),
         }
     }
@@ -142,6 +148,45 @@ where
         };
 
         typing_context.infer_type(&expression)
+    }
+
+    pub fn admit_types(
+        mut self,
+        annotation: A,
+        typing_context: &mut TypingContext,
+    ) -> Loaded<Self> {
+        // Types depend on one another so these have to be sorted
+        // Can use DependencyGraph for this too
+        for decl in &self.module.declarations {
+            if let Declaration::Type(_, decl) = decl {
+                match &decl.declarator {
+                    TypeDeclarator::Alias(..) => todo!(),
+                    TypeDeclarator::Coproduct(_, coproduct) => {
+                        let module = coproduct.synthesize_module(
+                            annotation.clone(),
+                            TypeName::new(decl.binding.as_str()),
+                        );
+
+                        typing_context.bind(decl.binding.clone().into(), module.data_type);
+
+                        for constructor in module.constructor_functions {
+                            let lambda = match constructor.declarator {
+                                ValueDeclarator::Constant(constant) => constant.initializer,
+                                ValueDeclarator::Function(function) => {
+                                    println!("admit_types: function");
+                                    function.into_lambda_tree(constructor.binder.clone())
+                                }
+                            };
+                            let value = lambda.reduce(&mut self.initialized)?;
+                            self.initialized.insert_binding(constructor.binder, value);
+                        }
+                    }
+                    TypeDeclarator::Struct(_, _) => todo!(),
+                }
+            }
+        }
+
+        Ok(self)
     }
 }
 
