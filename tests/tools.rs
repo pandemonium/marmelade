@@ -1,9 +1,10 @@
+#![allow(dead_code)]
 use std::marker::PhantomData;
 
 use marmelade::{
     ast::{
-        Apply, Binding, Constant, Construct, Constructor, ControlFlow, Coproduct, Declaration,
-        Expression, Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
+        Apply, Binding, Constant, Constructor, ControlFlow, Coproduct, Declaration, Expression,
+        Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
     },
     context::CompileState,
     interpreter::Value,

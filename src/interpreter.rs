@@ -5,7 +5,8 @@ use thiserror::Error;
 use crate::{
     ast::{
         Apply, Binding, CompilationUnit, Constant, Construct, ControlFlow, Declaration, Expression,
-        Identifier, ImportModule, Lambda, ModuleDeclarator, Project, SelfReferential, Sequence,
+        Identifier, ImportModule, Lambda, ModuleDeclarator, Product, Project, SelfReferential,
+        Sequence, TypeName,
     },
     bridge::Bridge,
     parser::ParseError,
@@ -105,9 +106,19 @@ impl Interpreter {
 #[derive(Debug, Clone)]
 pub enum Value {
     Base(Base),
+    // Does this thing need to know more than the value and the constructor?
+    Coproduct {
+        name: TypeName,
+        constructor: Identifier,
+        value: Box<Value>,
+    },
+    Tuple(Vec<Value>),
+    Struct(Vec<(Identifier, Value)>),
     Closure(Closure),
     RecursiveClosure(RecursiveClosure),
-    Bridge { target: BridgeDebug },
+    Bridge {
+        target: BridgeDebug,
+    },
 }
 
 impl Value {
@@ -133,6 +144,29 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Base(scalar) => write!(f, "{scalar}"),
+            Self::Coproduct {
+                name,
+                constructor,
+                value,
+            } => write!(f, "{name}::{constructor} {value}"),
+            Self::Tuple(elements) => write!(
+                f,
+                "{}",
+                elements
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Self::Struct(fields) => write!(
+                f,
+                "{}",
+                fields
+                    .iter()
+                    .map(|(field, value)| format!("{field}: {value}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
             Self::Closure(closure) => writeln!(f, "closure {closure}"),
             Self::RecursiveClosure(closure) => writeln!(f, "closure {closure}"),
             Self::Bridge { target } => write!(f, "{target:?}"),
@@ -150,7 +184,8 @@ pub struct RecursiveClosure {
 impl fmt::Display for RecursiveClosure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { name, inner } = self;
-        write!(f, "{name} -> {inner:?}")
+        let inner = inner.borrow();
+        write!(f, "{name} -> {inner}")
     }
 }
 
@@ -312,10 +347,11 @@ pub enum RuntimeError {
 
 pub type Interpretation<A = Value> = Result<A, RuntimeError>;
 
-impl<A> Expression<A> {
+impl<A> Expression<A>
+where
+    A: Clone,
+{
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
-        //        println!("reduce");
-
         match self {
             Self::Variable(_, id) => env.lookup(&id).cloned(),
             Self::CallBridge(_, id) => evaluate_bridge(id, env),
@@ -327,15 +363,15 @@ impl<A> Expression<A> {
                     parameter,
                     body,
                 },
-            ) => make_recursive_closure(name, parameter.name, *body, env.clone()),
+            ) => make_recursive_closure(name, parameter.name, body.erase_annotation(), env.clone()),
             Self::Lambda(_, Lambda { parameter, body }) => {
                 make_closure(parameter.name, *body, env.clone())
             }
             Self::Apply(_, Apply { function, argument }) => {
                 apply_function(*function, *argument, env)
             }
-            Self::Construct(_, Construct { .. }) => Ok(Value)),
-            Self::Product(..) => todo!(),
+            Self::Construct(_, node) => reduce_construct_coproduct(node, env),
+            Self::Product(_, node) => reduce_product(node, env),
             Self::Project(_, Project { .. }) => todo!(),
             Self::Binding(
                 _,
@@ -352,16 +388,47 @@ impl<A> Expression<A> {
     }
 }
 
-fn make_recursive_closure<A>(
+fn reduce_product<A>(node: Product<A>, env: &mut Environment) -> Interpretation
+where
+    A: Clone,
+{
+    match node {
+        Product::Tuple(mut elements) => Ok(Value::Tuple(
+            elements
+                .drain(..)
+                .map(|e| e.reduce(env))
+                .collect::<Interpretation<_>>()?,
+        )),
+        Product::Struct { mut bindings } => Ok(Value::Struct(
+            bindings
+                .drain()
+                .map(|(field, expr)| expr.reduce(env).map(|v| (field, v)))
+                .collect::<Interpretation<_>>()?,
+        )),
+    }
+}
+
+fn reduce_construct_coproduct<A>(node: Construct<A>, env: &mut Environment) -> Interpretation
+where
+    A: Clone,
+{
+    Ok(Value::Coproduct {
+        constructor: node.constructor,
+        value: node.argument.reduce(env)?.into(),
+        name: node.name.clone(),
+    })
+}
+
+fn make_recursive_closure(
     name: Identifier,
     parameter: Identifier,
-    body: Expression<A>,
+    body: Expression<()>,
     capture: Environment,
-) -> Result<Value, RuntimeError> {
+) -> Interpretation {
     let closure = Rc::new(RefCell::new(Closure {
         parameter,
         capture,
-        body: body.map(|_| ()), // Erase information.
+        body,
     }));
 
     closure.borrow_mut().capture.insert_binding(
@@ -384,7 +451,10 @@ fn sequence<A>(
     this: Box<Expression<A>>,
     and_then: Box<Expression<A>>,
     env: &mut Environment,
-) -> Interpretation {
+) -> Interpretation
+where
+    A: Clone,
+{
     this.reduce(env)?;
     and_then.reduce(env)
 }
@@ -401,7 +471,10 @@ fn evaluate_bridge(id: Identifier, env: &mut Environment) -> Interpretation {
     }
 }
 
-fn reduce_control_flow<A>(control: ControlFlow<A>, env: &mut Environment) -> Interpretation {
+fn reduce_control_flow<A>(control: ControlFlow<A>, env: &mut Environment) -> Interpretation
+where
+    A: Clone,
+{
     match control {
         ControlFlow::If {
             predicate,
@@ -426,7 +499,10 @@ fn reduce_binding<A>(
     bound: Expression<A>,
     body: Expression<A>,
     env: &mut Environment,
-) -> Interpretation {
+) -> Interpretation
+where
+    A: Clone,
+{
     let bound = bound.reduce(env)?;
     env.insert_binding(binder.clone(), bound);
     let retval = body.reduce(env);
@@ -438,7 +514,10 @@ fn apply_function<A>(
     function: Expression<A>,
     argument: Expression<A>,
     env: &mut Environment,
-) -> Interpretation {
+) -> Interpretation
+where
+    A: Clone,
+{
     match function.reduce(env)? {
         Value::Closure(Closure {
             parameter,
@@ -469,7 +548,7 @@ fn make_closure<A>(param: Identifier, body: Expression<A>, env: Environment) -> 
     Ok(Value::Closure(Closure {
         parameter: param,
         capture: env,
-        body: body.map(|_| ()), // Erase parse and lexing annotation
+        body: body.erase_annotation(),
     }))
 }
 

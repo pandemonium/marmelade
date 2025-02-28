@@ -1,13 +1,10 @@
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    fmt,
-};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{Environment, LoadError, Loaded};
 use crate::{
     ast::{
-        Declaration, Identifier, ImportModule, ModuleDeclarator, TypeDeclaration, TypeDeclarator,
-        TypeName, ValueDeclaration, ValueDeclarator,
+        Declaration, Identifier, ImportModule, ModuleDeclarator, TypeDeclarator, TypeName,
+        ValueDeclaration, ValueDeclarator,
     },
     types::{Parsed, TypeError, TypeInference, Typing, TypingContext},
 };
