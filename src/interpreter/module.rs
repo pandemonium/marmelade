@@ -50,6 +50,8 @@ where
                     .infer_declaration_type(id, &typing_context)?
                     .inferred_type;
 
+                println!("type_check: `{id}` `{declaration_type}`");
+
                 typing_context.bind(
                     id.clone().into(),
                     // What about the substitutions?
@@ -96,6 +98,8 @@ where
             ValueDeclarator::Constant(constant) => constant.initializer,
             ValueDeclarator::Function(function) => function.into_lambda_tree(id.clone()),
         };
+
+        println!("initialize_binding: {id}");
 
         let env = &mut self.initialized;
         let value = expression.reduce(env)?;
@@ -145,45 +149,6 @@ where
         };
 
         typing_context.infer_type(&expression)
-    }
-
-    pub fn admit_types(
-        mut self,
-        annotation: A,
-        typing_context: &mut TypingContext,
-    ) -> Loaded<Self> {
-        // Types depend on one another so these have to be sorted
-        // Can use DependencyGraph for this too
-        for decl in &self.module.declarations {
-            if let Declaration::Type(_, decl) = decl {
-                match &decl.declarator {
-                    TypeDeclarator::Alias(..) => todo!(),
-                    TypeDeclarator::Coproduct(_, coproduct) => {
-                        let module = coproduct.synthesize_module(
-                            annotation.clone(),
-                            TypeName::new(decl.binding.as_str()),
-                        );
-
-                        typing_context.bind(decl.binding.clone().into(), module.data_type);
-
-                        for constructor in module.constructor_functions {
-                            let lambda = match constructor.declarator {
-                                ValueDeclarator::Constant(constant) => constant.initializer,
-                                ValueDeclarator::Function(function) => {
-                                    println!("admit_types: function");
-                                    function.into_lambda_tree(constructor.binder.clone())
-                                }
-                            };
-                            let value = lambda.reduce(&mut self.initialized)?;
-                            self.initialized.insert_binding(constructor.binder, value);
-                        }
-                    }
-                    TypeDeclarator::Struct(_, _) => todo!(),
-                }
-            }
-        }
-
-        Ok(self)
     }
 }
 

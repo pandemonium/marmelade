@@ -1,12 +1,12 @@
 use module::ModuleLoader;
-use std::{cell::RefCell, fmt, rc::Rc};
+use std::{any::Any, cell::RefCell, fmt, rc::Rc};
 use thiserror::Error;
 
 use crate::{
     ast::{
         Apply, Binding, CompilationUnit, Constant, Construct, ControlFlow, Declaration, Expression,
         Identifier, ImportModule, Lambda, ModuleDeclarator, Product, Project, SelfReferential,
-        Sequence, TypeName,
+        Sequence, TypeDeclaration, TypeDeclarator, TypeName, ValueDeclarator,
     },
     bridge::Bridge,
     parser::ParseError,
@@ -56,11 +56,10 @@ impl Interpreter {
         program: CompilationUnit<A>,
     ) -> Loaded<Value>
     where
-        A: Clone + Parsed,
+        A: Clone + Parsed + fmt::Display,
     {
         match program {
             CompilationUnit::Implicit(annotation, module) => {
-                // Typing has to happen for this to feel nice. TBD.
                 let env = self.load_module(annotation, typing_context, module)?;
                 match env.lookup(&Identifier::new("main"))? {
                     Value::Closure { .. } => todo!(),
@@ -79,16 +78,17 @@ impl Interpreter {
         mut module: ModuleDeclarator<A>,
     ) -> Loaded<Environment>
     where
-        A: Clone + Parsed,
+        A: Clone + Parsed + fmt::Display,
     {
-        self.patch_with_prelude(annotation.clone(), &mut module);
+        self.inject_prelude(annotation.clone(), &mut module);
+        self.inject_types_and_synthetics(annotation.clone(), &mut module, &mut typing_context);
+        println!("load_module: types and synthetics loaded");
         ModuleLoader::try_loading(&module, self.prelude)?
-            .admit_types(annotation, &mut typing_context)?
             .type_check(typing_context)?
             .initialize()
     }
 
-    fn patch_with_prelude<A>(&self, annotation: A, module: &mut ModuleDeclarator<A>) {
+    fn inject_prelude<A>(&self, annotation: A, module: &mut ModuleDeclarator<A>) {
         module.declarations.push(Declaration::ImportModule(
             annotation,
             ImportModule {
@@ -101,9 +101,49 @@ impl Interpreter {
             },
         ));
     }
+
+    fn inject_types_and_synthetics<A>(
+        &self,
+        annotation: A,
+        module: &mut ModuleDeclarator<A>,
+        typing_context: &mut TypingContext,
+    ) where
+        A: fmt::Display + Clone,
+    {
+        let type_bindings = module
+            .declarations
+            .iter()
+            .filter_map(|decl| {
+                if let Declaration::Type(
+                    _,
+                    TypeDeclaration {
+                        binding,
+                        declarator: TypeDeclarator::Coproduct(_, coproduct),
+                    },
+                ) = decl
+                {
+                    Some((binding.clone(), coproduct.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for (binding, coproduct) in type_bindings {
+            let coproduct = coproduct
+                .implementation_module(annotation.clone(), TypeName::new(binding.as_str()));
+            typing_context.bind(coproduct.name.into(), coproduct.declaring_type);
+
+            for constructor in coproduct.constructors {
+                module
+                    .declarations
+                    .push(Declaration::Value(annotation.clone(), constructor));
+            }
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Base(Base),
     // Does this thing need to know more than the value and the constructor?
@@ -175,7 +215,7 @@ impl fmt::Display for Value {
 }
 
 // Turn SelfReferentialLambda into this
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecursiveClosure {
     pub name: Identifier, // Name does not seem used.
     pub inner: Rc<RefCell<Closure>>,
@@ -189,7 +229,7 @@ impl fmt::Display for RecursiveClosure {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
     pub parameter: Identifier,
     pub capture: Environment,
@@ -211,6 +251,12 @@ impl fmt::Display for Closure {
 
 #[derive(Clone)]
 pub struct BridgeDebug(Rc<dyn Bridge + 'static>);
+
+impl PartialEq for BridgeDebug {
+    fn eq(&self, other: &Self) -> bool {
+        self.type_id() == other.type_id()
+    }
+}
 
 impl fmt::Debug for BridgeDebug {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -253,7 +299,7 @@ impl fmt::Display for Base {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Environment {
     parent: Option<Rc<Environment>>,
     leaf: Vec<(Identifier, Value)>,

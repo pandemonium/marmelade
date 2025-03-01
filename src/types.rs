@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -22,7 +23,7 @@ pub trait Parsed {
     fn info(&self) -> &ParsingInfo;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Parameter(TypeParameter),
     Constant(BaseType),
@@ -40,7 +41,7 @@ impl Type {
     }
 
     fn resolve_constants(self, ctx: &TypingContext) -> Typing<Self> {
-        self.transform(
+        self.resolve(
             &mut |ty| {
                 if let Type::Named(name) = &ty {
                     ctx.lookup(&Binding::TypeTerm(name.as_str().to_owned()))
@@ -56,8 +57,9 @@ impl Type {
     }
 
     fn expand(self, ctx: &TypingContext) -> Typing<Self> {
-        self.transform(
+        self.resolve(
             &mut |ty| {
+                println!("expand: {ty}");
                 if let Type::Named(name) = &ty {
                     ctx.lookup(&Binding::TypeTerm(name.as_str().to_owned()))
                         .cloned()
@@ -70,20 +72,19 @@ impl Type {
         )
     }
 
-    fn transform<F>(self, f: &mut F, ctx: &TypingContext) -> Typing<Self>
+    fn resolve<F>(self, resolver: &mut F, ctx: &TypingContext) -> Typing<Self>
     where
         F: FnMut(Self) -> Self,
     {
         fn traverse_type<F>(
             ty: Type,
-            f: &mut F,
+            resolver: &mut F,
             ctx: &TypingContext,
             seen: &mut HashSet<TypeName>,
         ) -> Typing<Type>
         where
             F: FnMut(Type) -> Type,
         {
-            let ty = f(ty);
             match ty {
                 Type::Parameter(..) => Ok(ty),
                 Type::Constant(..) => Ok(ty),
@@ -91,13 +92,15 @@ impl Type {
                     ProductType::Tuple(mut elements) => ProductType::Tuple(
                         elements
                             .drain(..)
-                            .map(|t| t.transform(f, ctx))
+                            .map(|t| traverse_type(t, resolver, ctx, seen))
                             .collect::<Typing<_>>()?,
                     ),
                     ProductType::Struct(mut fields) => ProductType::Struct(
                         fields
-                            .drain()
-                            .map(|(name, t)| t.transform(f, ctx).map(|t| (name, t)))
+                            .drain(..)
+                            .map(|(name, t)| {
+                                traverse_type(t, resolver, ctx, seen).map(|t| (name, t))
+                            })
                             .collect::<Typing<_>>()?,
                     ),
                 })),
@@ -106,39 +109,42 @@ impl Type {
                         constructors
                             .drain(..)
                             .map(|(name, constructor)| {
-                                constructor.transform(f, ctx).map(|t| (name, t))
+                                traverse_type(constructor, resolver, ctx, seen).map(|t| (name, t))
                             })
                             .collect::<Typing<_>>()?,
                     )))
                 }
-                Type::Arrow(dom, codom) => Ok(Type::Arrow(
-                    dom.transform(f, ctx)?.into(),
-                    codom.transform(f, ctx)?.into(),
+                Type::Arrow(domain, codomain) => Ok(Type::Arrow(
+                    traverse_type(*domain, resolver, ctx, seen)?.into(),
+                    traverse_type(*codomain, resolver, ctx, seen)?.into(),
                 )),
-                Type::Forall(parameter, body) => {
-                    Ok(Type::Forall(parameter, body.transform(f, ctx)?.into()))
-                }
+                Type::Forall(parameter, body) => Ok(Type::Forall(
+                    parameter,
+                    traverse_type(*body, resolver, ctx, seen)?.into(),
+                )),
                 Type::Named(ref name) => {
-                    if !seen.contains(&name) {
+                    if seen.contains(&name) {
+                        println!("traverse_type: seen {name}");
+                        Ok(ty)
+                    } else {
+                        println!("traverse_type: have not seen {name}");
                         seen.insert(name.to_owned());
 
                         ctx.lookup(&Binding::TypeTerm(name.as_str().to_owned()))
                             .cloned()
                             .ok_or_else(|| TypeError::UndefinedType(name.clone()))
                             // Unless seen?
-                            .and_then(|t| t.transform(f, ctx))
-                    } else {
-                        Ok(ty)
+                            .and_then(|t| traverse_type(t, resolver, ctx, seen))
                     }
                 }
-                Type::Apply(dom, codom) => Ok(Type::Apply(
-                    dom.transform(f, ctx)?.into(),
-                    codom.transform(f, ctx)?.into(),
+                Type::Apply(type_constructor, argument) => Ok(Type::Apply(
+                    traverse_type(*type_constructor, resolver, ctx, seen)?.into(),
+                    traverse_type(*argument, resolver, ctx, seen)?.into(),
                 )),
             }
         }
 
-        traverse_type(self, f, ctx, &mut HashSet::default())
+        traverse_type(self, resolver, ctx, &mut HashSet::default())
     }
 
     fn apply(self, subs: &typer::Substitutions) -> Self {
@@ -148,16 +154,17 @@ impl Type {
             Self::Parameter(param) => subs
                 .lookup(&param)
                 .cloned()
+                .map(|ty| ty.apply(subs))
                 .unwrap_or_else(|| Self::Parameter(param)),
             Self::Arrow(domain, codomain) => {
-                Self::Arrow(Box::new(domain.apply(subs)), Box::new(codomain.apply(subs)))
+                Self::Arrow(domain.apply(subs).into(), codomain.apply(subs).into())
             }
             Self::Forall(param, body) => {
                 // This can be done without a Clone. Can add a closure method instead:
                 // subs.except(param, |subs| Self::Forall, etc.)
                 let mut subs = subs.clone();
                 subs.remove(&param);
-                Self::Forall(param, Box::new(body.apply(&subs)))
+                Self::Forall(param, body.apply(&subs).into())
             }
             Self::Coproduct(coproduct) => Self::Coproduct(coproduct.apply(subs)),
             Self::Product(product) => Self::Product(product.apply(subs)),
@@ -182,8 +189,8 @@ impl Type {
                     elements.iter().flat_map(|ty| ty.free_variables()).collect()
                 }
                 ProductType::Struct(elements) => elements
-                    .values()
-                    .flat_map(|ty| ty.free_variables())
+                    .iter()
+                    .flat_map(|(_, ty)| ty.free_variables())
                     .collect(),
             },
             Self::Forall(ty_var, ty) => {
@@ -225,6 +232,7 @@ impl Type {
                 _ => ty,
             }
         }
+
         rename(self.clone(), &mut map)
     }
 
@@ -268,6 +276,7 @@ impl Type {
             for ((lhs_constructor, lhs_ty), (rhs_constructor, rhs_ty)) in lhs.iter().zip(rhs.iter())
             {
                 if lhs_constructor == rhs_constructor {
+                    println!("unify_coproducts: `{lhs_ty}` `{rhs_ty}`");
                     sub = sub.compose(lhs_ty.unify(rhs_ty, annotation)?)
                 } else {
                     Err(TypeError::IncompatibleCoproducts {
@@ -335,11 +344,29 @@ impl Type {
                     .unify(&arg2.clone().apply(&constructors), annotation)?;
                 Ok(constructors.compose(arguments))
             }
-            (lhs, rhs) => Err(TypeError::UnifyImpossible {
-                lhs: lhs.clone(),
-                rhs: rhs.clone(),
-                position: { annotation.info().location().clone() },
-            }),
+            // Also: c must not have type parameters
+            (Self::Apply(constructor, _), rhs)
+                if &**constructor == rhs && constructor.free_variables().is_empty() =>
+            {
+                Ok(typer::Substitutions::default())
+            }
+            (lhs, Self::Apply(constructor, _))
+                if lhs == &**constructor && constructor.free_variables().is_empty() =>
+            {
+                Ok(typer::Substitutions::default())
+            }
+            (Self::Named(lhs), Self::Named(rhs)) if lhs == rhs => {
+                Ok(typer::Substitutions::default())
+            }
+            (lhs, rhs) => {
+                //                panic!("`{lhs}` != `{rhs}`");
+
+                Err(TypeError::UnifyImpossible {
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
+                    position: { annotation.info().location().clone() },
+                })
+            }
         }
     }
 
@@ -348,8 +375,8 @@ impl Type {
     // This unifies without the nominal part of the type, if it
     // even has one (a name.)
     fn unify_structs<A>(
-        lhs: &HashMap<ast::Identifier, Type>,
-        rhs: &HashMap<ast::Identifier, Type>,
+        lhs: &[(ast::Identifier, Type)],
+        rhs: &[(ast::Identifier, Type)],
         annotation: &A,
     ) -> Result<typer::Substitutions, TypeError>
     where
@@ -370,8 +397,8 @@ impl Type {
                     substitutions = substitutions.compose(lhs_ty.unify(rhs_ty, annotation)?)
                 } else {
                     Err(TypeError::UnifyImpossible {
-                        lhs: Type::Product(ProductType::Struct(lhs.clone())),
-                        rhs: Type::Product(ProductType::Struct(lhs.clone())),
+                        lhs: Type::Product(ProductType::Struct(lhs.to_vec())),
+                        rhs: Type::Product(ProductType::Struct(lhs.to_vec())),
                         position: annotation.info().location().clone(),
                     })?
                 }
@@ -380,8 +407,8 @@ impl Type {
             Ok(substitutions)
         } else {
             Err(TypeError::UnifyImpossible {
-                lhs: Type::Product(ProductType::Struct(lhs.clone())),
-                rhs: Type::Product(ProductType::Struct(lhs.clone())),
+                lhs: Type::Product(ProductType::Struct(lhs.to_vec())),
+                rhs: Type::Product(ProductType::Struct(lhs.to_vec())),
                 position: annotation.info().location().clone(),
             })
         }
@@ -398,7 +425,7 @@ impl fmt::Display for Type {
             Self::Arrow(ty0, ty1) => write!(f, "{ty0}->{ty1}"),
             Self::Forall(ty_var, ty) => write!(f, "forall {ty_var}.{ty}"),
             Self::Named(cons) => write!(f, "{cons}"),
-            Self::Apply(cons, arg) => write!(f, "({cons} {arg})"),
+            Self::Apply(cons, arg) => write!(f, "{cons}[{arg}]"),
         }
     }
 }
@@ -410,6 +437,18 @@ pub enum BaseType {
     Bool,
     Float,
     Text,
+}
+
+impl BaseType {
+    pub fn into_type_name(self) -> TypeName {
+        TypeName::new(match self {
+            Self::Unit => "builtin::Unit",
+            Self::Int => "builtin::Int",
+            Self::Bool => "builtin::Bool",
+            Self::Float => "builtin::Float",
+            Self::Text => "builtin::Text",
+        })
+    }
 }
 
 impl fmt::Display for BaseType {
@@ -424,10 +463,10 @@ impl fmt::Display for BaseType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ProductType {
     Tuple(Vec<Type>),
-    Struct(HashMap<ast::Identifier, Type>),
+    Struct(Vec<(ast::Identifier, Type)>),
 }
 impl ProductType {
     fn apply(self, subs: &typer::Substitutions) -> ProductType {
@@ -437,7 +476,7 @@ impl ProductType {
             }
             ProductType::Struct(mut elements) => ProductType::Struct(
                 elements
-                    .drain()
+                    .drain(..)
                     .map(|(label, ty)| (label, ty.apply(subs)))
                     .collect(),
             ),
@@ -450,9 +489,17 @@ impl fmt::Display for ProductType {
         match self {
             Self::Tuple(elements) => {
                 write!(f, "(")?;
-                for element in elements {
-                    write!(f, "{element},")?
-                }
+
+                write!(
+                    f,
+                    "{}",
+                    elements
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )?;
+
                 write!(f, ")")
             }
             Self::Struct(_elements) => {
@@ -462,7 +509,7 @@ impl fmt::Display for ProductType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CoproductType(Vec<(String, Type)>);
 
 impl CoproductType {
@@ -520,7 +567,7 @@ pub struct TypeInference {
     pub inferred_type: Type,
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum TypeError {
     #[error("Undefined symbol {0}")]
     UndefinedSymbol(ast::Identifier),
@@ -585,10 +632,7 @@ pub struct TypingContext(HashMap<Binding, Type>);
 
 impl TypingContext {
     pub fn bind(&mut self, binding: Binding, ty: Type) {
-        self.0.insert(
-            binding,
-            ty.clone().resolve_constants(&self).unwrap_or_else(|_| ty),
-        );
+        self.0.insert(binding, ty.clone());
     }
 
     fn lookup(&self, binding: &Binding) -> Option<&Type> {
@@ -719,13 +763,10 @@ mod typer {
     {
         let expected_param_type = if let Some(param_type) = type_annotation {
             // Why doesn't it have to look something up?
-            param_type
-                .clone()
-                .synthesize_type(&mut HashMap::default()) // hmmmm
-                .expand(ctx)?
-            //            ctx.lookup(&param_type.clone().into())
-            //                .cloned()
-            //                .ok_or_else(|| TypeError::UndefinedType(param_type.clone()))?
+            param_type.clone().synthesize_type(&mut HashMap::default()) // hmmmm
+                                                                        //            ctx.lookup(&param_type.clone().into())
+                                                                        //                .cloned()
+                                                                        //                .ok_or_else(|| TypeError::UndefinedType(param_type.clone()))?
         } else {
             Type::fresh()
         };
@@ -760,31 +801,29 @@ mod typer {
         A: Clone + Parsed,
     {
         let function = synthesize_type(function, ctx)?;
-        let argument =
-            synthesize_type(argument, &ctx.apply_substitutions(&function.substitutions))?;
+        let argument = synthesize_type(argument, &ctx)?;
 
         let return_type = Type::fresh();
 
         let unified_substitutions = function
             .inferred_type
             .instantiate()
-            .apply(&argument.substitutions)
+            .expand(ctx)?
+            .apply(&function.substitutions)
             .unify(
                 &Type::Arrow(
-                    Box::new(argument.inferred_type),
-                    Box::new(return_type.clone()),
+                    argument.inferred_type.apply(&function.substitutions).into(),
+                    return_type.clone().into(),
                 ),
                 annotation,
             )?;
-
-        let return_type = return_type.apply(&unified_substitutions);
 
         Ok(TypeInference {
             substitutions: function
                 .substitutions
                 .compose(argument.substitutions)
                 .compose(unified_substitutions),
-            inferred_type: return_type,
+            inferred_type: return_type.apply(&function.substitutions).expand(ctx)?,
         })
     }
 
@@ -893,6 +932,7 @@ mod typer {
 
         let branch = consequent
             .inferred_type
+            .clone() //wtf
             .unify(&alternate.inferred_type, annotation)
             .inspect_err(|e| println!("infer_if_expression: branch unify error: {e}"))?;
 
@@ -955,13 +995,18 @@ mod typer {
                     inferred_type: elements[*index].clone(),
                 })
             }
-            (Type::Product(ProductType::Struct(elements)), ast::ProductIndex::Struct(id))
-                if elements.contains_key(id) =>
-            {
-                Ok(TypeInference {
-                    substitutions: base.substitutions,
-                    inferred_type: elements.get(id).cloned().unwrap(),
-                })
+            (Type::Product(ProductType::Struct(elements)), ast::ProductIndex::Struct(id)) => {
+                if let Some((_, inferred_type)) = elements.iter().find(|(field, _)| field == id) {
+                    Ok(TypeInference {
+                        substitutions: base.substitutions,
+                        inferred_type: inferred_type.clone(),
+                    })
+                } else {
+                    Err(TypeError::BadProjection {
+                        base: base.inferred_type,
+                        index: index.clone(),
+                    })
+                }
             }
             _otherwise => Err(TypeError::BadProjection {
                 base: base.inferred_type,
@@ -990,17 +1035,16 @@ mod typer {
     where
         A: Clone + Parsed,
     {
-        if let Some(constructed_type @ Type::Coproduct(coproduct)) = ctx
+        if let ref constructed_type @ Type::Coproduct(ref coproduct) = ctx
             .lookup(&name.clone().into())
-            .map(|ty| ty.instantiate())
-            .as_ref()
+            .ok_or_else(|| TypeError::UndefinedType(name.clone()))
+            .map(|ty| ty.instantiate())?
         {
             let argument = synthesize_type(argument, ctx)?;
-            if let Some(expected_type) = coproduct.find_constructor(constructor) {
-                let substitutions = argument
-                    .substitutions
-                    .compose(argument.inferred_type.unify(expected_type, annotation)?);
+            if let Some(rhs) = coproduct.find_constructor(constructor) {
+                let lhs = &argument.inferred_type;
 
+                let substitutions = argument.substitutions.compose(lhs.unify(rhs, annotation)?);
                 let inferred_type = constructed_type.clone().apply(&substitutions);
                 Ok(TypeInference {
                     substitutions,
@@ -1013,7 +1057,7 @@ mod typer {
                 })
             }
         } else {
-            Err(TypeError::UndefinedType(name.to_owned()))
+            Err(TypeError::UndefinedType(name.clone()))
         }
     }
 
@@ -1213,7 +1257,7 @@ mod tests {
             ),
         );
         let t = ctx.infer_type(&e).unwrap();
-        let expected_type = Type::Product(ProductType::Struct(HashMap::from([
+        let expected_type = Type::Product(ProductType::Struct(Vec::from([
             (ast::Identifier::new("id"), mk_identity_type()),
             (ast::Identifier::new("x"), mk_constant_type(BaseType::Int)),
             (ast::Identifier::new("y"), mk_constant_type(BaseType::Float)),
@@ -1276,6 +1320,27 @@ mod tests {
                 ("The".to_owned(), Type::Constant(BaseType::Float)),
                 ("Nil".to_owned(), Type::Constant(BaseType::Unit)),
             ]))
+        );
+
+        let e = ast::Expression::Construct(
+            (),
+            Construct {
+                name: ast::TypeName::new("Option"),
+                constructor: ast::Identifier::new("Nil"),
+                argument: mk_constant(ast::Constant::Unit).into(),
+            },
+        );
+        let t = ctx.infer_type(&e).unwrap();
+
+        assert_eq!(
+            t.inferred_type,
+            Type::Coproduct(CoproductType::new(vec![
+                (
+                    "The".to_owned(),
+                    Type::Parameter(TypeParameter::new_for_test(0))
+                ),
+                ("Nil".to_owned(), Type::Constant(BaseType::Unit)),
+            ]))
         )
     }
 
@@ -1313,7 +1378,7 @@ mod tests {
         let t = ctx.infer_type(&e).unwrap();
         assert_eq!(
             t.inferred_type,
-            Type::Product(ProductType::Struct(HashMap::from([
+            Type::Product(ProductType::Struct(Vec::from([
                 (ast::Identifier::new("x"), mk_constant_type(BaseType::Int)),
                 (ast::Identifier::new("y"), mk_constant_type(BaseType::Float)),
             ])))

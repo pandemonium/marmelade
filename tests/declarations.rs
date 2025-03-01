@@ -1,4 +1,7 @@
-use marmelade::ast::{Declaration, TypeDeclaration};
+use marmelade::{
+    ast::{Declaration, Identifier, TypeDeclaration, TypeName},
+    interpreter::{Base, Value},
+};
 use tools::*;
 
 mod tools;
@@ -36,6 +39,22 @@ fn coproduct_list() {
                 ]),
             },
         ),
+    );
+}
+
+#[test]
+fn eval_coproduct_list() {
+    // try_initialize blows up because it cannot type main. No such
+    // function Cons.
+    eval_fixture(
+        r#"|List ::= Cons a (List a) | Nil
+           |main = Cons 1 Nil
+           "#,
+        Value::Coproduct {
+            name: TypeName::new("List"),
+            constructor: Identifier::new("Cons"),
+            value: Value::Base(Base::Int(1)).into(),
+        },
     );
 }
 

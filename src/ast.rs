@@ -8,7 +8,7 @@ use crate::{
     interpreter::DependencyGraph,
     lexer::{self, SourcePosition},
     parser::ParsingInfo,
-    types::{CoproductType, ProductType, Type, TypeParameter},
+    types::{BaseType, CoproductType, ProductType, Type, TypeParameter},
 };
 
 #[derive(Debug)]
@@ -277,19 +277,16 @@ where
         Coproduct(cs.drain(..).map(|c| c.map(f)).collect())
     }
 
-    pub fn synthesize_module(&self, annotation: A, self_name: TypeName) -> CoproductModule<A> {
+    pub fn implementation_module(&self, annotation: A, self_name: TypeName) -> CoproductModule<A> {
         let Self(constructors) = self;
 
         CoproductModule {
-            data_type: self.synthesize_type(),
-            constructor_functions: constructors
+            name: self_name.clone(),
+            declaring_type: self.synthesize_type(),
+            constructors: constructors
                 .iter()
                 .map(|constructor| {
-                    constructor.generate_function_declaration(
-                        annotation.clone(),
-                        self_name.clone(),
-                        vec![],
-                    )
+                    constructor.make_curried(annotation.clone(), self_name.clone(), vec![])
                 })
                 .collect(),
         }
@@ -317,8 +314,9 @@ where
 }
 
 pub struct CoproductModule<A> {
-    pub data_type: Type,
-    pub constructor_functions: Vec<ValueDeclaration<A>>,
+    pub name: TypeName,
+    pub declaring_type: Type,
+    pub constructors: Vec<ValueDeclaration<A>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -416,7 +414,7 @@ where
     A: Clone,
 {
     // Think about whether or not this can consume self.
-    fn generate_function_declaration(
+    fn make_curried(
         &self,
         annotation: A,
         ty: TypeName,
@@ -434,15 +432,14 @@ where
             })
             .collect::<Vec<_>>();
 
+        let node = self.make_construct_node(&annotation, ty, parameters.clone());
+
         // Think about how many annotations this contains. Are they all needed
         // because they are all on different positions?
         let function = FunctionDeclarator {
             parameters: parameters.clone(),
-            return_type_annotation: None,
-            body: Expression::Construct(
-                annotation.clone(),
-                self.make_construct_node(&annotation, ty, parameters),
-            ),
+            return_type_annotation: None, //todo!(),
+            body: Expression::Construct(annotation.clone(), node),
         };
 
         ValueDeclaration {
@@ -1179,7 +1176,7 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Tuple(expressions) => {
-                write!(f, "(")?;
+                write!(f, "T(")?;
                 for e in expressions {
                     write!(f, "{e},")?;
                 }

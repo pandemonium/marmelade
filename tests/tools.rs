@@ -43,8 +43,13 @@ where
     let return_value = compilation.typecheck_and_interpret();
 
     assert_eq!(
-        return_value.unwrap().try_into_base_type().unwrap(),
-        rhs.into().try_into_base_type().unwrap()
+        return_value
+            .map_err(|e| format!("{e}"))
+            .inspect(|x| println!("{x}"))
+            .unwrap(),
+        //            .try_into_base_type()
+        //            .unwrap(),
+        rhs.into() //.try_into_base_type().unwrap()
     )
 }
 

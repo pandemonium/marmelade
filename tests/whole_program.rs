@@ -38,7 +38,7 @@ fn main1() {
     stdlib::import(&mut compilation).unwrap();
 
     let return_value = Interpreter::new(compilation.interpreter_environment)
-        .load_and_run(compilation.typing_context, program.map(|_| ()))
+        .load_and_run(compilation.typing_context, program)
         .unwrap();
 
     assert_eq!(Base::Int(327), return_value.try_into_base_type().unwrap());
@@ -137,8 +137,8 @@ fn factorial20() {
 
     let program_environment = compilation.interpreter_environment.into_parent();
 
-    let return_value = Interpreter::new(program_environment)
-        .load_and_run(compilation.typing_context, program.map(|_| ()));
+    let return_value =
+        Interpreter::new(program_environment).load_and_run(compilation.typing_context, program);
 
     assert_eq!(
         Base::Int(2432902008176640000),
