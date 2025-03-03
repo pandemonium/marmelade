@@ -798,7 +798,7 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression<A> {
     Variable(A, Identifier),
-    CallBridge(A, Identifier),
+    InvokeBridge(A, Identifier),
     Literal(A, Constant),
     SelfReferential(A, SelfReferential<A>),
     Lambda(A, Lambda<A>),
@@ -929,7 +929,7 @@ impl<A> Expression<A> {
     pub fn annotation(&self) -> &A {
         match self {
             Self::Variable(annotation, ..) => annotation,
-            Self::CallBridge(annotation, ..) => annotation,
+            Self::InvokeBridge(annotation, ..) => annotation,
             Self::Literal(annotation, ..) => annotation,
             Self::SelfReferential(annotation, ..) => annotation,
             Self::Lambda(annotation, ..) => annotation,
@@ -960,7 +960,7 @@ impl<A> Expression<A> {
                     free.insert(id);
                 }
             }
-            Self::CallBridge(_, id) => {
+            Self::InvokeBridge(_, id) => {
                 free.insert(id);
             }
             Self::Lambda(_, Lambda { parameter, body }) => {
@@ -1021,7 +1021,7 @@ impl<A> Expression<A> {
     pub fn map<B>(self, f: fn(A) -> B) -> Expression<B> {
         match self {
             Self::Variable(x, info) => Expression::<B>::Variable(f(x), info),
-            Self::CallBridge(x, info) => Expression::<B>::CallBridge(f(x), info),
+            Self::InvokeBridge(x, info) => Expression::<B>::InvokeBridge(f(x), info),
             Self::Literal(x, info) => Expression::<B>::Literal(f(x), info),
             Self::SelfReferential(x, info) => Expression::<B>::SelfReferential(f(x), info.map(f)),
             Self::Lambda(x, info) => Expression::<B>::Lambda(f(x), info.map(f)),
@@ -1047,7 +1047,7 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expression::Variable(_, id) => write!(f, "{id}"),
-            Expression::CallBridge(_, id) => write!(f, "call {id}"),
+            Expression::InvokeBridge(_, id) => write!(f, "call {id}"),
             Expression::Literal(_, c) => write!(f, "{c}"),
             Expression::SelfReferential(_, SelfReferential { name, body, .. }) => {
                 write!(f, "{name}->[{body}]")

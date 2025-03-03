@@ -33,7 +33,7 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     match expr {
-        ast::Expression::Variable(_, binding) | ast::Expression::CallBridge(_, binding) => {
+        ast::Expression::Variable(_, binding) | ast::Expression::InvokeBridge(_, binding) => {
             if let Some(ty) = ctx.lookup(&binding.clone().into()) {
                 Ok(TypeInference {
                     substitutions: Substitutions::default(),

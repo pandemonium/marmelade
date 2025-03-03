@@ -2,10 +2,10 @@ use crate::{
     ast::{Expression, Identifier, Lambda, Parameter},
     context::CompileState,
     interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
-    typer::{BaseType, Type, TypeParameter},
+    typer::{BaseType, ProductType, Type, TypeParameter},
 };
 
-pub type CallResult<A> = Result<A, RuntimeError>;
+pub type InvocationResult<A> = Result<A, RuntimeError>;
 
 #[derive(Debug, Clone)]
 pub struct BridgingInfo {
@@ -22,28 +22,30 @@ impl BridgingInfo {
 
 pub trait Bridge {
     fn arity(&self) -> usize;
-    fn evaluate(&self, e: &Environment) -> CallResult<Value>;
-    fn signature(&self) -> Type;
+    fn evaluate(&self, e: &Environment) -> InvocationResult<Value>;
+    fn synthesize_type(&self) -> Type;
 
-    // What to put in Expression here? They are synthetic
     fn generate_lambda_tree(&self, target: Identifier) -> Expression<BridgingInfo> {
         let info = BridgingInfo::new(target.clone());
-        (0..self.arity()).rfold(Expression::CallBridge(info.clone(), target), |acc, x| {
-            Expression::Lambda(
-                info.clone(),
-                Lambda {
-                    parameter: Parameter::new(Identifier::new(&format!("p{x}"))),
-                    body: acc.into(),
-                },
-            )
-        })
+        (0..self.arity()).rfold(
+            Expression::InvokeBridge(info.clone(), target),
+            |expression, parameter_index| {
+                Expression::Lambda(
+                    info.clone(),
+                    Lambda {
+                        parameter: Parameter::new(Identifier::new(&format!("p{parameter_index}"))),
+                        body: expression.into(),
+                    },
+                )
+            },
+        )
     }
 }
 
 trait TypeBridge {
     const TYPE: Type;
 
-    fn lift_type() -> Type {
+    fn synthesize_type() -> Type {
         Self::TYPE
     }
 }
@@ -79,14 +81,14 @@ where
         1
     }
 
-    fn evaluate(&self, e: &Environment) -> CallResult<Value> {
+    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
         let Self(f) = self;
         Ok(f(e.lookup(&Identifier::new("p0")).cloned()?.try_into()?).into())
     }
 
-    fn signature(&self) -> Type {
+    fn synthesize_type(&self) -> Type {
         // Call into the typer here?
-        Type::Arrow(A::lift_type().into(), R::lift_type().into())
+        Type::Arrow(A::synthesize_type().into(), R::synthesize_type().into())
     }
 }
 
@@ -102,7 +104,7 @@ where
         2
     }
 
-    fn evaluate(&self, e: &Environment) -> CallResult<Value> {
+    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
         let Self(f) = self;
         Ok(f(
             e.lookup(&Identifier::new("p0")).cloned()?.try_into()?,
@@ -111,11 +113,11 @@ where
         .into())
     }
 
-    fn signature(&self) -> Type {
+    fn synthesize_type(&self) -> Type {
         // Call into the typer here?
         Type::Arrow(
-            A::lift_type().into(),
-            Type::Arrow(B::lift_type().into(), R::lift_type().into()).into(),
+            A::synthesize_type().into(),
+            Type::Arrow(B::synthesize_type().into(), R::synthesize_type().into()).into(),
         )
     }
 }
@@ -131,16 +133,71 @@ where
         1
     }
 
-    fn evaluate(&self, e: &Environment) -> CallResult<Value> {
+    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
         let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
         Ok(self.0.clone()(p0).into())
     }
 
-    fn signature(&self) -> Type {
+    fn synthesize_type(&self) -> Type {
         let ty = TypeParameter::fresh();
         Type::Forall(
             ty.clone(),
-            Type::Arrow(Type::Parameter(ty).into(), R::lift_type().into()).into(),
+            Type::Arrow(Type::Parameter(ty).into(), R::synthesize_type().into()).into(),
+        )
+    }
+}
+
+// The Comma operator has to be right associative or
+// it won't bind correctly.
+pub struct TupleConsSyntax;
+
+impl Bridge for TupleConsSyntax {
+    fn arity(&self) -> usize {
+        2
+    }
+
+    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
+        let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
+        let p1 = e.lookup(&Identifier::new("p1")).cloned()?;
+
+        // see what p1 is.
+        // if it is a tuple, then "cons" p0
+        // otherwise: cons p1 to (), and p0 to that
+        //
+        // But what is my type?
+
+        let tuple = if let Value::Tuple(mut xs) = p1 {
+            xs.insert(0, p0);
+            Value::Tuple(xs)
+        } else {
+            Value::Tuple(vec![p0, p1])
+        };
+
+        Ok(tuple)
+    }
+
+    fn synthesize_type(&self) -> Type {
+        let p = TypeParameter::fresh();
+        let q = TypeParameter::fresh();
+        Type::Forall(
+            p.clone(),
+            Type::Forall(
+                q.clone(),
+                Type::Arrow(
+                    Type::Parameter(p).into(),
+                    Type::Arrow(
+                        Type::Parameter(q).into(),
+                        Type::Product(ProductType::Tuple(vec![
+                            Type::Parameter(p),
+                            Type::Parameter(q),
+                        ]))
+                        .into(),
+                    )
+                    .into(),
+                )
+                .into(),
+            )
+            .into(),
         )
     }
 }
@@ -148,35 +205,31 @@ where
 // See if I can do something with the Add, Sub, Mul and Div type classes
 // for this thing.
 // Or could I impl Bridge for all tripples that have Add?
+// Why is this Base only?
 #[derive(Debug, Clone)]
-pub struct PartialRawLambda2 {
-    pub apply: fn(Base, Base) -> Option<Base>,
+pub struct PartialRawLambda2<F> {
+    pub apply: F,
     pub signature: Type,
 }
 
-impl Bridge for PartialRawLambda2 {
+impl<F> Bridge for PartialRawLambda2<F>
+where
+    F: Clone + FnOnce(Value, Value) -> Option<Value>,
+{
     fn arity(&self) -> usize {
         2
     }
 
-    fn evaluate(&self, e: &Environment) -> CallResult<Value> {
+    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
         // They have to be scalars.
-        let p0 = e
-            .lookup(&Identifier::new("p0"))
-            .cloned()?
-            .try_into_base_type();
-        let p1 = e
-            .lookup(&Identifier::new("p1"))
-            .cloned()?
-            .try_into_base_type();
+        let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
+        let p1 = e.lookup(&Identifier::new("p1")).cloned()?;
 
-        p0.zip(p1)
-            .and_then(|(p0, p1)| self.apply.clone()(p0, p1))
-            .map(Value::Base)
-            .ok_or_else(|| RuntimeError::InapplicableLamda2) // bring in arguments here later
+        self.apply.clone()(p0, p1).ok_or_else(|| RuntimeError::InapplicableLamda2)
+        // bring in arguments here later
     }
 
-    fn signature(&self) -> Type {
+    fn synthesize_type(&self) -> Type {
         self.signature.clone()
     }
 }
@@ -195,8 +248,8 @@ where
 {
     let bridge_name = syntactical_name.scoped_with("bridge");
 
-    typing_context.bind(bridge_name.clone().into(), bridge.signature());
-    typing_context.bind(syntactical_name.clone().into(), bridge.signature());
+    typing_context.bind(bridge_name.clone().into(), bridge.synthesize_type());
+    typing_context.bind(syntactical_name.clone().into(), bridge.synthesize_type());
 
     let tree = bridge.generate_lambda_tree(bridge_name.clone());
     interpreter_environment.insert_binding(bridge_name, Value::bridge(bridge));
@@ -270,6 +323,16 @@ impl TryFrom<Value> for f64 {
         } else {
             Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Int)))
         }
+    }
+}
+
+impl<A, B> From<(A, B)> for Value
+where
+    A: Into<Value>,
+    B: Into<Value>,
+{
+    fn from((p, q): (A, B)) -> Self {
+        Value::Tuple(vec![p.into(), q.into()])
     }
 }
 

@@ -153,7 +153,7 @@ pub enum Value {
         constructor: Identifier,
         value: Box<Value>,
     },
-    Tuple(Vec<Value>),
+    Tuple(Vec<Value>), // Redo this into a TupleCons|TupleNil thing?
     Struct(Vec<(Identifier, Value)>),
     Closure(Closure),
     RecursiveClosure(RecursiveClosure),
@@ -401,7 +401,7 @@ where
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
             Self::Variable(_, id) => env.lookup(&id).cloned(),
-            Self::CallBridge(_, id) => evaluate_bridge(id, env),
+            Self::InvokeBridge(_, id) => invoke_bridge(id, env),
             Self::Literal(_, constant) => immediate(constant),
             Self::SelfReferential(
                 _,
@@ -441,6 +441,8 @@ where
 {
     match node {
         Product::Tuple(mut elements) => Ok(Value::Tuple(
+            // flatten here?
+            // could mean more than one flattenings.
             elements
                 .drain(..)
                 .map(|e| e.reduce(env))
@@ -506,7 +508,7 @@ where
     and_then.reduce(env)
 }
 
-fn evaluate_bridge(id: Identifier, env: &mut Environment) -> Interpretation {
+fn invoke_bridge(id: Identifier, env: &mut Environment) -> Interpretation {
     if let Value::Bridge {
         // Do away with this sucker. Impl Deref.
         target: BridgeDebug(bridge),

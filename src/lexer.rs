@@ -374,6 +374,8 @@ pub enum Operator {
     Gt,
     Lt,
 
+    TupleCons,
+
     And,
     Or,
     Xor,
@@ -398,6 +400,7 @@ impl Operator {
             TokenType::Lte => Some(Operator::Lte),
             TokenType::Gt => Some(Operator::Gt),
             TokenType::Lt => Some(Operator::Lt),
+            TokenType::Comma => Some(Operator::TupleCons),
             TokenType::Keyword(Keyword::And) => Some(Operator::And),
             TokenType::Keyword(Keyword::Or) => Some(Operator::Or),
             TokenType::Keyword(Keyword::Xor) => Some(Operator::Xor),
@@ -408,15 +411,17 @@ impl Operator {
 
     pub fn precedence(&self) -> usize {
         match self {
-            Self::Times | Self::Divides | Self::Modulo => 6,
-            Self::Plus | Self::Minus => 5,
+            Self::Times | Self::Divides | Self::Modulo => 16,
+            Self::Plus | Self::Minus => 15,
 
-            Self::Equals | Self::Gte | Self::Lte | Self::Gt | Self::Lt => 4,
+            Self::Equals | Self::Gte | Self::Lte | Self::Gt | Self::Lt => 14,
 
-            Self::Not => 3,
+            Self::Not => 13,
 
-            Self::And => 2,
-            Self::Xor | Self::Or => 1,
+            Self::And => 12,
+            Self::Xor | Self::Or => 11,
+
+            Self::TupleCons => 10,
         }
     }
 
@@ -438,6 +443,8 @@ impl Operator {
             Self::Lte => "<=",
             Self::Gt => ">",
             Self::Lt => "<",
+
+            Self::TupleCons => ",",
 
             Self::And => "and",
             Self::Or => "or",
@@ -462,6 +469,8 @@ impl fmt::Display for Operator {
             Self::Lte => write!(f, ">="),
             Self::Gt => write!(f, ">"),
             Self::Lt => write!(f, "<"),
+
+            Self::TupleCons => write!(f, ","),
 
             Self::And => write!(f, "and"),
             Self::Or => write!(f, "or"),
