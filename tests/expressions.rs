@@ -175,8 +175,8 @@ fn precedence() {
     eval_fixture(r#"|main = (1 + 2) * (3 - 9)"#, -18);
     eval_fixture(r#"|main = ((3 - 9) / (1 + 2))"#, -2);
 
-    eval_fixture(r#"|main = 1 == 2"#, false);
-    eval_fixture(r#"|main = 1 == 1"#, true);
+    eval_fixture(r#"|main = 1 = 2"#, false);
+    eval_fixture(r#"|main = 1 = 1"#, true);
     eval_fixture(r#"|main = 1 >= 2"#, false);
     eval_fixture(r#"|main = 1 <= 2"#, true);
 

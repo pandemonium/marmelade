@@ -84,11 +84,6 @@ impl LexicalAnalyzer {
         let mut input = input;
         loop {
             input = match input {
-                ['a', 'n', 'd', remains @ ..] => self.emit_operator(3, Operator::And, remains),
-                ['o', 'r', remains @ ..] => self.emit_operator(2, Operator::Or, remains),
-                ['x', 'o', 'r', remains @ ..] => self.emit_operator(3, Operator::Xor, remains),
-                ['n', 'o', 't', remains @ ..] => self.emit_operator(3, Operator::Not, remains),
-
                 remains @ [c, ..] if c.is_whitespace() => self.scan_whitespace(remains),
                 prefix @ [c, ..] if is_identifier_prefix(*c) => self.scan_identifier(prefix),
                 prefix @ [c, ..] if is_number_prefix(*c) => self.scan_number(prefix),
@@ -98,11 +93,10 @@ impl LexicalAnalyzer {
                 [':', ':', remains @ ..] => self.emit(2, TokenType::TypeAscribe, remains),
                 ['-', '>', remains @ ..] => self.emit(2, TokenType::Arrow, remains),
 
-                ['=', '=', remains @ ..] => self.emit_operator(2, Operator::Equals, remains),
-                ['>', '=', remains @ ..] => self.emit_operator(2, Operator::Gte, remains),
-                ['<', '=', remains @ ..] => self.emit_operator(2, Operator::Lte, remains),
-                ['>', remains @ ..] => self.emit_operator(1, Operator::Gt, remains),
-                ['<', remains @ ..] => self.emit_operator(1, Operator::Lt, remains),
+                ['>', '=', remains @ ..] => self.emit(2, TokenType::Gte, remains),
+                ['<', '=', remains @ ..] => self.emit(2, TokenType::Lte, remains),
+                ['>', remains @ ..] => self.emit(1, TokenType::Gt, remains),
+                ['<', remains @ ..] => self.emit(1, TokenType::Lt, remains),
 
                 ['=', remains @ ..] => self.emit(1, TokenType::Equals, remains),
                 [',', remains @ ..] => self.emit(1, TokenType::Comma, remains),
@@ -113,11 +107,11 @@ impl LexicalAnalyzer {
                 [';', remains @ ..] => self.emit(1, TokenType::Semicolon, remains),
                 ['.', remains @ ..] => self.emit(1, TokenType::Period, remains),
 
-                ['+', remains @ ..] => self.emit_operator(1, Operator::Plus, remains),
-                ['-', remains @ ..] => self.emit_operator(1, Operator::Minus, remains),
-                ['*', remains @ ..] => self.emit_operator(1, Operator::Times, remains),
-                ['/', remains @ ..] => self.emit_operator(1, Operator::Divides, remains),
-                ['%', remains @ ..] => self.emit_operator(1, Operator::Modulo, remains),
+                ['+', remains @ ..] => self.emit(1, TokenType::Plus, remains),
+                ['-', remains @ ..] => self.emit(1, TokenType::Minus, remains),
+                ['*', remains @ ..] => self.emit(1, TokenType::Star, remains),
+                ['/', remains @ ..] => self.emit(1, TokenType::Slash, remains),
+                ['%', remains @ ..] => self.emit(1, TokenType::Percent, remains),
 
                 [c, ..] => panic!("{c}"),
 
@@ -146,7 +140,7 @@ impl LexicalAnalyzer {
         let identifier = prefix.into_iter().collect::<String>();
         self.emit(
             identifier.len() as u32,
-            TokenType::decode_identifier(identifier),
+            TokenType::decode_reserved_words(identifier),
             remains,
         )
     }
@@ -164,10 +158,6 @@ impl LexicalAnalyzer {
             TokenType::Literal(Literal::Text(image)),
             remains,
         )
-    }
-
-    fn emit_operator<'a>(&mut self, length: u32, op: Operator, remains: &'a [char]) -> &'a [char] {
-        self.emit(length, TokenType::Operator(op), remains)
     }
 
     fn emit<'a>(&mut self, length: u32, token_type: TokenType, remains: &'a [char]) -> &'a [char] {
@@ -339,19 +329,27 @@ pub enum TokenType {
     SingleQuote, // '
     Semicolon,   // ;
     Period,      // .
+    Plus,        // +
+    Minus,       // -
+    Star,        // *
+    Slash,       // /
+    Percent,     // %
+    Gte,         // >=
+    Lte,         // <=
+    Gt,          // >
+    Lt,          // <
 
     Identifier(String),
 
     Keyword(Keyword),
     Literal(Literal),
-    Operator(Operator),
 
     Layout(Layout),
     End,
 }
 
 impl TokenType {
-    fn decode_identifier(id: String) -> Self {
+    fn decode_reserved_words(id: String) -> Self {
         match Keyword::try_from_identifier(&id) {
             Some(keyword) => Self::Keyword(keyword),
             None => id
@@ -370,8 +368,6 @@ pub enum Operator {
     Divides,
     Modulo,
 
-    Juxtaposition,
-
     Equals,
     Gte,
     Lte,
@@ -386,10 +382,32 @@ pub enum Operator {
 }
 
 impl Operator {
+    pub const fn is_defined(token: &TokenType) -> bool {
+        Self::try_from(&token).is_some()
+    }
+
+    pub const fn try_from(token: &TokenType) -> Option<Self> {
+        match token {
+            TokenType::Equals => Some(Operator::Equals),
+            TokenType::Plus => Some(Operator::Plus),
+            TokenType::Minus => Some(Operator::Minus),
+            TokenType::Star => Some(Operator::Times),
+            TokenType::Slash => Some(Operator::Divides),
+            TokenType::Percent => Some(Operator::Modulo),
+            TokenType::Gte => Some(Operator::Gte),
+            TokenType::Lte => Some(Operator::Lte),
+            TokenType::Gt => Some(Operator::Gt),
+            TokenType::Lt => Some(Operator::Lt),
+            TokenType::Keyword(Keyword::And) => Some(Operator::And),
+            TokenType::Keyword(Keyword::Or) => Some(Operator::Or),
+            TokenType::Keyword(Keyword::Xor) => Some(Operator::Xor),
+            TokenType::Keyword(Keyword::Not) => Some(Operator::Not),
+            _otherwise => None,
+        }
+    }
+
     pub fn precedence(&self) -> usize {
         match self {
-            Self::Juxtaposition => 69,
-
             Self::Times | Self::Divides | Self::Modulo => 6,
             Self::Plus | Self::Minus => 5,
 
@@ -425,8 +443,6 @@ impl Operator {
             Self::Or => "or",
             Self::Xor => "xor",
             Self::Not => "not",
-
-            Self::Juxtaposition => "$",
         }
     }
 }
@@ -440,7 +456,7 @@ impl fmt::Display for Operator {
             Self::Divides => write!(f, "/"),
             Self::Modulo => write!(f, "%"),
 
-            Self::Equals => write!(f, "=="),
+            Self::Equals => write!(f, "="),
 
             Self::Gte => write!(f, ">="),
             Self::Lte => write!(f, ">="),
@@ -451,8 +467,6 @@ impl fmt::Display for Operator {
             Self::Or => write!(f, "or"),
             Self::Xor => write!(f, "xor"),
             Self::Not => write!(f, "not"),
-
-            Self::Juxtaposition => write!(f, "$"),
         }
     }
 }
@@ -594,10 +608,18 @@ impl fmt::Display for TokenType {
             Self::SingleQuote => write!(f, "'"),
             Self::Semicolon => write!(f, ";"),
             Self::Period => write!(f, "."),
+            Self::Plus => write!(f, "+"),
+            Self::Minus => write!(f, "-"),
+            Self::Star => write!(f, "*"),
+            Self::Slash => write!(f, "/"),
+            Self::Percent => write!(f, "%"),
+            Self::Gte => write!(f, ">="),
+            Self::Lte => write!(f, "<="),
+            Self::Gt => write!(f, ">"),
+            Self::Lt => write!(f, "<"),
             Self::Identifier(id) => write!(f, "{id}"),
             Self::Keyword(keyword) => write!(f, "{keyword}"),
             Self::Literal(literal) => write!(f, "{literal}"),
-            Self::Operator(operator) => write!(f, "{operator}"),
             Self::Layout(layout) => write!(f, "{layout}"),
             Self::End => write!(f, "°"),
         }
@@ -668,7 +690,7 @@ mod tests {
                 TT::Literal(Literal::Integer(10)),
                 TT::Keyword(Keyword::In),
                 TT::Identifier("x".to_owned()),
-                TT::Operator(Operator::Plus),
+                TT::Plus,
                 TT::Literal(Literal::Integer(1)),
                 TT::End
             ]
@@ -699,10 +721,10 @@ mod tests {
                 TT::Layout(Layout::Newline),
                 TT::Keyword(Keyword::In),
                 TT::Literal(Literal::Integer(3)),
-                TT::Operator(Operator::Times),
+                TT::Star,
                 TT::Identifier("f".to_owned()),
                 TT::Literal(Literal::Integer(4)),
-                TT::Operator(Operator::Plus),
+                TT::Plus,
                 TT::Literal(Literal::Integer(5)),
                 TT::End,
             ]

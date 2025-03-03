@@ -593,14 +593,18 @@ fn parse_infix<'a>(
         }
 
         // <op> <expr>
-        [T(TT::Operator(op), pos), remains @ ..] => {
-            parse_operator(lhs, input, precedence, op, remains, *pos)
+        [T(op, pos), remains @ ..] if Operator::is_defined(op) => {
+            let op = Operator::try_from(op).expect("Failed to decode operator");
+            parse_operator(lhs, input, precedence, &op, remains, *pos)
         }
 
         // ( <Newline> | <Indent> ) <op> <expr>
         // -- a continuation of the infix operator sequence on the next line (possibly indented.)
-        [T(TT::Layout(Layout::Newline | Layout::Indent), ..), T(TT::Operator(op), pos), remains @ ..] => {
-            parse_operator(lhs, input, precedence, op, remains, *pos)
+        [T(TT::Layout(Layout::Newline | Layout::Indent), ..), T(op, pos), remains @ ..]
+            if Operator::is_defined(op) =>
+        {
+            let op = Operator::try_from(op).expect("Failed to decode operator");
+            parse_operator(lhs, input, precedence, &op, remains, *pos)
         }
 
         // <expr>
@@ -1049,7 +1053,7 @@ mod tests {
             r#"|create_window =
                |  lambda x.
                |    print_endline "Hi, mom"
-               |    if x == 0 then
+               |    if x = 0 then
                |      print "hi"
                |    else
                |      print "hi"

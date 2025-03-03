@@ -123,7 +123,7 @@ fn factorial20() {
     let mut lexer = LexicalAnalyzer::default();
     let source_text = into_input(
         r#"|factorial = lambda x.
-           |  if x == 0 then
+           |  if x = 0 then
            |      1
            |  else
            |      x * factorial (x - 1)
@@ -150,10 +150,10 @@ fn factorial20() {
 fn fibonacci23() {
     let source_text = into_input(
         r#"|fibonacci = lambda x.
-           |  if 0 == x then
+           |  if 0 = x then
            |    0
            |  else
-           |    if 1 == x
+           |    if 1 = x
            |      then 1
            |      else fibonacci (x - 1) + fibonacci (x - 2)
            |Perhaps ::= This a | Nope
