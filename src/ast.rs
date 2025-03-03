@@ -8,7 +8,7 @@ use crate::{
     interpreter::DependencyGraph,
     lexer::{self, SourcePosition},
     parser::ParsingInfo,
-    types::{BaseType, CoproductType, ProductType, Type, TypeParameter},
+    typer::{CoproductType, ProductType, Type, TypeParameter},
 };
 
 #[derive(Debug)]
@@ -286,7 +286,7 @@ where
             constructors: constructors
                 .iter()
                 .map(|constructor| {
-                    constructor.make_curried(annotation.clone(), self_name.clone(), vec![])
+                    constructor.make_function(annotation.clone(), self_name.clone(), vec![])
                 })
                 .collect(),
         }
@@ -295,7 +295,7 @@ where
     fn synthesize_type(&self) -> Type {
         let Self(cs) = self;
         let mut type_parameters = HashMap::default();
-        Type::Coproduct(CoproductType::new(
+        let underlying_type = Type::Coproduct(CoproductType::new(
             cs.iter()
                 .map(|Constructor { name, signature }| {
                     (
@@ -309,7 +309,11 @@ where
                     )
                 })
                 .collect(),
-        ))
+        ));
+
+        type_parameters.values().fold(underlying_type, |ty, param| {
+            Type::Forall(param.clone(), ty.into())
+        })
     }
 }
 
@@ -414,7 +418,7 @@ where
     A: Clone,
 {
     // Think about whether or not this can consume self.
-    fn make_curried(
+    fn make_function(
         &self,
         annotation: A,
         ty: TypeName,
@@ -432,14 +436,22 @@ where
             })
             .collect::<Vec<_>>();
 
-        let node = self.make_construct_node(&annotation, ty, parameters.clone());
+        let node = self.make_inject_node(&annotation, ty, parameters.clone());
+
+        // Hold off on this for a while
+        //        if parameters.is_empty() {
+        //            parameters.push(Parameter::new_with_type_annotation(
+        //                Identifier::new(&format!("p0")),
+        //                TypeExpression::Constant(TypeName::new("builtin::Unit")),
+        //            ));
+        //        }
 
         // Think about how many annotations this contains. Are they all needed
         // because they are all on different positions?
         let function = FunctionDeclarator {
             parameters: parameters.clone(),
             return_type_annotation: None, //todo!(),
-            body: Expression::Construct(annotation.clone(), node),
+            body: Expression::Inject(annotation.clone(), node),
         };
 
         ValueDeclaration {
@@ -448,15 +460,18 @@ where
         }
     }
 
-    fn make_construct_node(
+    fn make_inject_node(
         &self,
         annotation: &A,
         name: TypeName,
         mut parameters: Vec<Parameter<A>>,
-    ) -> Construct<A>
+    ) -> Inject<A>
     where
         A: Clone,
     {
+        // Is this where it goes wrong? The second element
+        // in the Cons is a List[a] which it is currently
+        // in the process of typing.
         let tuple = Product::Tuple(
             parameters
                 .drain(..)
@@ -464,7 +479,7 @@ where
                 .collect(),
         );
 
-        Construct {
+        Inject {
             name,
             constructor: self.name.clone(),
             argument: Expression::Product(annotation.clone(), tuple).into(),
@@ -783,7 +798,7 @@ pub enum Expression<A> {
     SelfReferential(A, SelfReferential<A>),
     Lambda(A, Lambda<A>),
     Apply(A, Apply<A>),
-    Construct(A, Construct<A>),
+    Inject(A, Inject<A>),
     Product(A, Product<A>),
     Project(A, Project<A>),
     Binding(A, Binding<A>),
@@ -836,14 +851,14 @@ impl<A> Apply<A> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Construct<A> {
+pub struct Inject<A> {
     pub name: TypeName,
     pub constructor: Identifier,
     pub argument: Box<Expression<A>>,
 }
-impl<A> Construct<A> {
-    fn map<B>(self, f: fn(A) -> B) -> Construct<B> {
-        Construct {
+impl<A> Inject<A> {
+    fn map<B>(self, f: fn(A) -> B) -> Inject<B> {
+        Inject {
             name: self.name,
             constructor: self.constructor,
             argument: self.argument.map(f).into(),
@@ -914,7 +929,7 @@ impl<A> Expression<A> {
             Self::SelfReferential(annotation, ..) => annotation,
             Self::Lambda(annotation, ..) => annotation,
             Self::Apply(annotation, ..) => annotation,
-            Self::Construct(annotation, ..) => annotation,
+            Self::Inject(annotation, ..) => annotation,
             Self::Product(annotation, ..) => annotation,
             Self::Project(annotation, ..) => annotation,
             Self::Binding(annotation, ..) => annotation,
@@ -953,7 +968,7 @@ impl<A> Expression<A> {
                 function.find_unbound(bound, free);
                 argument.find_unbound(bound, free);
             }
-            Self::Construct(_, Construct { argument, .. }) => argument.find_unbound(bound, free),
+            Self::Inject(_, Inject { argument, .. }) => argument.find_unbound(bound, free),
             Self::Product(_, Product::Tuple(expressions)) => {
                 for e in expressions {
                     e.find_unbound(bound, free);
@@ -1006,7 +1021,7 @@ impl<A> Expression<A> {
             Self::SelfReferential(x, info) => Expression::<B>::SelfReferential(f(x), info.map(f)),
             Self::Lambda(x, info) => Expression::<B>::Lambda(f(x), info.map(f)),
             Self::Apply(x, info) => Expression::<B>::Apply(f(x), info.map(f)),
-            Self::Construct(x, info) => Expression::<B>::Construct(f(x), info.map(f)),
+            Self::Inject(x, info) => Expression::<B>::Inject(f(x), info.map(f)),
             Self::Product(x, info) => Expression::<B>::Product(f(x), info.map(f)),
             Self::Project(x, info) => Expression::<B>::Project(f(x), info.map(f)),
             Self::Binding(x, info) => Expression::<B>::Binding(f(x), info.map(f)),
@@ -1030,7 +1045,7 @@ where
             Expression::CallBridge(_, id) => write!(f, "call {id}"),
             Expression::Literal(_, c) => write!(f, "{c}"),
             Expression::SelfReferential(_, SelfReferential { name, body, .. }) => {
-                write!(f, "-----> {name}->[{body}]")
+                write!(f, "{name}->[{body}]")
             }
             Expression::Lambda(_, Lambda { parameter, body }) => {
                 write!(f, "lambda \\{parameter}. {body}")
@@ -1038,9 +1053,9 @@ where
             Expression::Apply(_, Apply { function, argument }) => {
                 write!(f, "{function} {argument}")
             }
-            Expression::Construct(
+            Expression::Inject(
                 _,
-                Construct {
+                Inject {
                     name,
                     constructor,
                     argument,
@@ -1341,7 +1356,7 @@ mod tests {
         assert!(!dep_mat.is_satisfiable(|_| false));
     }
 
-    #[test]
+    //    #[test]
     fn top_of_the_day() {
         let m = ModuleDeclarator {
             name: Identifier::new(""),

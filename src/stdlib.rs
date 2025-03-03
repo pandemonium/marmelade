@@ -7,11 +7,31 @@ mod operators;
 
 pub fn import(context: &mut CompileState) -> Interpretation<()> {
     //    import_std_file(env)?;
+    types::import(context)?;
     operators::import(context)?;
     stdio::import(context)?;
     conversions::import(context)?;
 
     Ok(())
+}
+
+mod types {
+    use crate::{
+        context::CompileState,
+        interpreter::Interpretation,
+        typer::{self, Type, BASE_TYPES},
+    };
+
+    pub fn import(context: &mut CompileState) -> Interpretation<()> {
+        for ty in BASE_TYPES {
+            context.typing_context.bind(
+                typer::Binding::TypeTerm(ty.type_name().as_str().to_owned()),
+                Type::Constant(ty.clone()),
+            );
+        }
+
+        Ok(())
+    }
 }
 
 mod stdio {

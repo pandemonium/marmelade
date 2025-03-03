@@ -9,25 +9,22 @@ use marmelade::{
     context::CompileState,
     interpreter::Value,
     lexer::LexicalAnalyzer,
-    parser, stdlib,
+    parser::{self, ParsingInfo},
+    stdlib,
 };
 
 use Expression as E;
 
-pub fn decl_fixture(source: &str, rhs: Declaration<()>) {
+pub fn decl_fixture(source: &str, rhs: Declaration<ParsingInfo>) {
     let mut lexer = LexicalAnalyzer::default();
-    let lhs = parser::parse_declaration_phrase(lexer.tokenize(&into_unicode_text(source)))
-        .unwrap()
-        .map(|_| ());
+    let lhs = parser::parse_declaration_phrase(lexer.tokenize(&into_unicode_text(source))).unwrap();
 
-    assert_eq!(lhs, rhs)
+    assert_eq!(lhs.map(|_| ParsingInfo::default()), rhs)
 }
 
-pub fn expr_fixture(source: &str, rhs: E<()>) {
+pub fn expr_fixture(source: &str, rhs: E<ParsingInfo>) {
     let mut lexer = LexicalAnalyzer::default();
-    let lhs = parser::parse_expression_phrase(lexer.tokenize(&into_unicode_text(source)))
-        .unwrap()
-        .erase_annotation();
+    let lhs = parser::parse_expression_phrase(lexer.tokenize(&into_unicode_text(source))).unwrap();
 
     assert_eq!(lhs, rhs)
 }
@@ -53,17 +50,17 @@ where
     )
 }
 
-pub fn int(i: i64) -> E<()> {
-    E::Literal((), Constant::Int(i))
+pub fn int(i: i64) -> E<ParsingInfo> {
+    E::Literal(ParsingInfo::default(), Constant::Int(i))
 }
 
-pub fn text(s: &str) -> E<()> {
-    E::Literal((), Constant::Text(s.to_owned()))
+pub fn text(s: &str) -> E<ParsingInfo> {
+    E::Literal(ParsingInfo::default(), Constant::Text(s.to_owned()))
 }
 
-pub fn let_in(binder: &str, bound: E<()>, body: E<()>) -> E<()> {
+pub fn let_in(binder: &str, bound: E<ParsingInfo>, body: E<ParsingInfo>) -> E<ParsingInfo> {
     E::Binding(
-        (),
+        ParsingInfo::default(),
         Binding {
             binder: ident(binder),
             bound: bound.into(),
@@ -72,9 +69,13 @@ pub fn let_in(binder: &str, bound: E<()>, body: E<()>) -> E<()> {
     )
 }
 
-pub fn if_else(predicate: E<()>, consequent: E<()>, alternate: E<()>) -> E<()> {
+pub fn if_else(
+    predicate: E<ParsingInfo>,
+    consequent: E<ParsingInfo>,
+    alternate: E<ParsingInfo>,
+) -> E<ParsingInfo> {
     E::ControlFlow(
-        (),
+        ParsingInfo::default(),
         ControlFlow::If {
             predicate: predicate.into(),
             consequent: consequent.into(),
@@ -83,9 +84,9 @@ pub fn if_else(predicate: E<()>, consequent: E<()>, alternate: E<()>) -> E<()> {
     )
 }
 
-pub fn seq(this: E<()>, and_then: E<()>) -> E<()> {
+pub fn seq(this: E<ParsingInfo>, and_then: E<ParsingInfo>) -> E<ParsingInfo> {
     E::Sequence(
-        (),
+        ParsingInfo::default(),
         Sequence {
             this: this.into(),
             and_then: and_then.into(),
@@ -93,9 +94,9 @@ pub fn seq(this: E<()>, and_then: E<()>) -> E<()> {
     )
 }
 
-pub fn apply(f: E<()>, x: E<()>) -> E<()> {
+pub fn apply(f: E<ParsingInfo>, x: E<ParsingInfo>) -> E<ParsingInfo> {
     E::Apply(
-        (),
+        ParsingInfo::default(),
         Apply {
             function: f.into(),
             argument: x.into(),
@@ -103,8 +104,8 @@ pub fn apply(f: E<()>, x: E<()>) -> E<()> {
     )
 }
 
-pub fn var(id: &str) -> E<()> {
-    E::Variable((), ident(id))
+pub fn var(id: &str) -> E<ParsingInfo> {
+    E::Variable(ParsingInfo::default(), ident(id))
 }
 
 pub fn ident(id: &str) -> Identifier {
@@ -115,22 +116,25 @@ pub fn tyname(id: &str) -> TypeName {
     TypeName::new(id)
 }
 
-pub fn typar(id: &str) -> TypeExpression<()> {
+pub fn typar(id: &str) -> TypeExpression<ParsingInfo> {
     TypeExpression::Parameter(tyname(id))
 }
 
-pub fn tyref(id: &str) -> TypeExpression<()> {
+pub fn tyref(id: &str) -> TypeExpression<ParsingInfo> {
     TypeExpression::Constant(tyname(id))
 }
 
-pub fn constructor(id: &str, te: Vec<TypeExpression<()>>) -> Constructor<()> {
+pub fn constructor(id: &str, te: Vec<TypeExpression<ParsingInfo>>) -> Constructor<ParsingInfo> {
     Constructor {
         name: ident(id),
         signature: te,
     }
 }
 
-pub fn tyapp(f: TypeExpression<()>, a: TypeExpression<()>) -> TypeExpression<()> {
+pub fn tyapp(
+    f: TypeExpression<ParsingInfo>,
+    a: TypeExpression<ParsingInfo>,
+) -> TypeExpression<ParsingInfo> {
     TypeExpression::Apply(
         TypeApply {
             constructor: f.into(),
@@ -140,8 +144,8 @@ pub fn tyapp(f: TypeExpression<()>, a: TypeExpression<()>) -> TypeExpression<()>
     )
 }
 
-pub fn coproduct(constructors: Vec<Constructor<()>>) -> TypeDeclarator<()> {
-    TypeDeclarator::Coproduct((), Coproduct(constructors))
+pub fn coproduct(constructors: Vec<Constructor<ParsingInfo>>) -> TypeDeclarator<ParsingInfo> {
+    TypeDeclarator::Coproduct(ParsingInfo::default(), Coproduct(constructors))
 }
 
 pub fn into_unicode_text(source: &str) -> Vec<char> {

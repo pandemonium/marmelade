@@ -1,6 +1,7 @@
 use marmelade::{
     ast::{Declaration, Identifier, TypeDeclaration, TypeName},
     interpreter::{Base, Value},
+    parser::ParsingInfo,
 };
 use tools::*;
 
@@ -12,7 +13,7 @@ fn coproduct_perhaps() {
         r#"|Perhaps ::= This a | Nope
            "#,
         Declaration::Type(
-            (),
+            ParsingInfo::default(),
             TypeDeclaration {
                 binding: ident("Perhaps"),
                 declarator: coproduct(vec![
@@ -30,7 +31,7 @@ fn coproduct_list() {
         r#"|List ::= Cons a (List a) | Nil
            "#,
         Declaration::Type(
-            (),
+            ParsingInfo::default(),
             TypeDeclaration {
                 binding: ident("List"),
                 declarator: coproduct(vec![
@@ -44,8 +45,6 @@ fn coproduct_list() {
 
 #[test]
 fn eval_coproduct_list() {
-    // try_initialize blows up because it cannot type main. No such
-    // function Cons.
     eval_fixture(
         r#"|List ::= Cons a (List a) | Nil
            |main = Cons 1 Nil
@@ -53,7 +52,15 @@ fn eval_coproduct_list() {
         Value::Coproduct {
             name: TypeName::new("List"),
             constructor: Identifier::new("Cons"),
-            value: Value::Base(Base::Int(1)).into(),
+            value: Value::Tuple(vec![
+                Value::Base(Base::Int(1)),
+                Value::Coproduct {
+                    name: TypeName::new("List"),
+                    constructor: Identifier::new("Nil"),
+                    value: Value::Tuple(vec![]).into(),
+                },
+            ])
+            .into(),
         },
     );
 }
@@ -64,7 +71,7 @@ fn coproduct_binary_tree() {
         r#"|BinaryTree ::= Branch (BinaryTree a) a (BinaryTree a) | Leaf a
            "#,
         Declaration::Type(
-            (),
+            ParsingInfo::default(),
             TypeDeclaration {
                 binding: ident("BinaryTree"),
                 declarator: coproduct(vec![
@@ -86,7 +93,7 @@ fn coproduct_binary_tree() {
 #[test]
 fn coproduct_eval() {
     let rhs = Declaration::Type(
-        (),
+        ParsingInfo::default(),
         TypeDeclaration {
             binding: ident("Eval"),
             declarator: coproduct(vec![

@@ -9,7 +9,7 @@ use crate::{
         ValueDeclaration, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
-    types,
+    typer,
 };
 
 pub type ParseResult<'a, A> = Result<(A, &'a [Token]), ParseError>;
@@ -34,7 +34,7 @@ use Keyword::*;
 use Token as T;
 use TokenType as TT;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct ParsingInfo {
     pub position: SourcePosition,
 }
@@ -56,7 +56,7 @@ impl fmt::Display for ParsingInfo {
     }
 }
 
-impl types::Parsed for ParsingInfo {
+impl typer::Parsed for ParsingInfo {
     fn info(&self) -> &ParsingInfo {
         self
     }
@@ -66,7 +66,7 @@ static DEFAULT_PARSING_INFO: ParsingInfo = ParsingInfo {
     position: SourcePosition { row: 0, column: 0 },
 };
 
-impl types::Parsed for () {
+impl typer::Parsed for () {
     fn info(&self) -> &ParsingInfo {
         &DEFAULT_PARSING_INFO
     }

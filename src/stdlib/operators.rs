@@ -3,7 +3,7 @@ use crate::{
     context::CompileState,
     interpreter::{Base, Interpretation},
     lexer::Operator,
-    types::{BaseType, Type, TypeParameter},
+    typer::{BaseType, Type, TypeParameter},
 };
 
 // Think about the return type of this

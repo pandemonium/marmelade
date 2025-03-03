@@ -1,12 +1,14 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt,
+};
 
 use super::{Environment, LoadError, Loaded};
 use crate::{
     ast::{
-        Declaration, Identifier, ImportModule, ModuleDeclarator, TypeDeclarator, TypeName,
-        ValueDeclaration, ValueDeclarator,
+        Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration, ValueDeclarator,
     },
-    types::{Parsed, TypeError, TypeInference, Typing, TypingContext},
+    typer::{Parsed, TypeError, TypeInference, Typing, TypingContext},
 };
 
 pub struct ModuleLoader<'a, A> {
@@ -18,7 +20,7 @@ pub struct ModuleLoader<'a, A> {
 
 impl<'a, A> ModuleLoader<'a, A>
 where
-    A: Clone + Parsed,
+    A: fmt::Display + Clone + Parsed,
 {
     pub fn try_loading(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Loaded<Self> {
         let resolver = |id: &Identifier| prelude.is_defined(id);
@@ -45,7 +47,7 @@ where
     pub fn type_check(self, mut typing_context: TypingContext) -> Loaded<Self> {
         for id in self.dependency_graph.compute_resolution_order().drain(..) {
             if self.module.find_value_declaration(id).is_some() {
-                // Why is it like this?
+                println!("type_check: `{id}` ...");
                 let declaration_type = self
                     .infer_declaration_type(id, &typing_context)?
                     .inferred_type;
@@ -137,7 +139,7 @@ where
         typing_context: &TypingContext,
     ) -> Typing
     where
-        A: Parsed,
+        A: fmt::Display + Parsed,
     {
         let expression = match declarator.clone() {
             ValueDeclarator::Constant(constant) => constant.initializer,
@@ -147,6 +149,8 @@ where
                 function.into_lambda_tree(binder.clone())
             }
         };
+
+        println!("infer_declarator_type: {expression}");
 
         typing_context.infer_type(&expression)
     }

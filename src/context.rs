@@ -2,7 +2,7 @@ use crate::{
     interpreter::{Environment, Interpreter, Loaded, Value},
     lexer::LexicalAnalyzer,
     parser,
-    types::TypingContext,
+    typer::TypingContext,
 };
 
 #[derive(Debug, Clone, Default)]

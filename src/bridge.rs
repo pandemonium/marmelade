@@ -2,7 +2,7 @@ use crate::{
     ast::{Expression, Identifier, Lambda, Parameter},
     context::CompileState,
     interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
-    types::{BaseType, Type, TypeParameter},
+    typer::{BaseType, Type, TypeParameter},
 };
 
 pub type CallResult<A> = Result<A, RuntimeError>;

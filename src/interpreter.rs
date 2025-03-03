@@ -4,13 +4,13 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        Apply, Binding, CompilationUnit, Constant, Construct, ControlFlow, Declaration, Expression,
-        Identifier, ImportModule, Lambda, ModuleDeclarator, Product, Project, SelfReferential,
-        Sequence, TypeDeclaration, TypeDeclarator, TypeName, ValueDeclarator,
+        Apply, Binding, CompilationUnit, Constant, ControlFlow, Declaration, Expression,
+        Identifier, ImportModule, Inject, Lambda, ModuleDeclarator, Product, Project,
+        SelfReferential, Sequence, TypeDeclaration, TypeDeclarator, TypeName,
     },
     bridge::Bridge,
     parser::ParseError,
-    types::{BaseType, Parsed, Type, TypeError, TypingContext},
+    typer::{BaseType, Parsed, Type, TypeError, TypingContext},
 };
 
 mod module;
@@ -134,6 +134,7 @@ impl Interpreter {
                 .implementation_module(annotation.clone(), TypeName::new(binding.as_str()));
             typing_context.bind(coproduct.name.into(), coproduct.declaring_type);
 
+            // Should I bind types for the constructor functions here too?
             for constructor in coproduct.constructors {
                 module
                     .declarations
@@ -416,7 +417,7 @@ where
             Self::Apply(_, Apply { function, argument }) => {
                 apply_function(*function, *argument, env)
             }
-            Self::Construct(_, node) => reduce_construct_coproduct(node, env),
+            Self::Inject(_, node) => reduce_inject_coproduct(node, env),
             Self::Product(_, node) => reduce_product(node, env),
             Self::Project(_, Project { .. }) => todo!(),
             Self::Binding(
@@ -428,7 +429,7 @@ where
                     ..
                 },
             ) => reduce_binding(binder, *bound, *body, env),
-            Self::Sequence(_, Sequence { this, and_then }) => sequence(this, and_then, env),
+            Self::Sequence(_, Sequence { this, and_then }) => reduce_sequence(this, and_then, env),
             Self::ControlFlow(_, control) => reduce_control_flow(control, env),
         }
     }
@@ -454,7 +455,7 @@ where
     }
 }
 
-fn reduce_construct_coproduct<A>(node: Construct<A>, env: &mut Environment) -> Interpretation
+fn reduce_inject_coproduct<A>(node: Inject<A>, env: &mut Environment) -> Interpretation
 where
     A: Clone,
 {
@@ -493,7 +494,7 @@ fn immediate(constant: Constant) -> Interpretation {
     Ok(Value::Base(constant.into()))
 }
 
-fn sequence<A>(
+fn reduce_sequence<A>(
     this: Box<Expression<A>>,
     and_then: Box<Expression<A>>,
     env: &mut Environment,
