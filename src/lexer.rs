@@ -111,6 +111,7 @@ impl LexicalAnalyzer {
                 ['_', remains @ ..] => self.emit(1, TokenType::Underscore, remains),
                 ['|', remains @ ..] => self.emit(1, TokenType::Pipe, remains),
                 [';', remains @ ..] => self.emit(1, TokenType::Semicolon, remains),
+                ['.', remains @ ..] => self.emit(1, TokenType::Period, remains),
 
                 ['+', remains @ ..] => self.emit_operator(1, Operator::Plus, remains),
                 ['-', remains @ ..] => self.emit_operator(1, Operator::Minus, remains),
@@ -337,6 +338,7 @@ pub enum TokenType {
     DoubleQuote, // "
     SingleQuote, // '
     Semicolon,   // ;
+    Period,      // .
 
     Identifier(String),
 
@@ -484,7 +486,7 @@ pub enum Keyword {
     Alias,
     Module,
     Use,
-    Fun,
+    Lambda,
     And,
     Or,
     Xor,
@@ -504,7 +506,7 @@ impl Keyword {
             "alias" => Some(Keyword::Alias),
             "module" => Some(Keyword::Module),
             "use" => Some(Keyword::Use),
-            "fun" => Some(Keyword::Fun),
+            "lambda" => Some(Keyword::Lambda),
             "and" => Some(Keyword::And),
             "or" => Some(Keyword::Or),
             "xor" => Some(Keyword::Xor),
@@ -527,7 +529,7 @@ impl fmt::Display for Keyword {
             Self::Alias => write!(f, "Alias"),
             Self::Module => write!(f, "Module"),
             Self::Use => write!(f, "Use"),
-            Self::Fun => write!(f, "Fun"),
+            Self::Lambda => write!(f, "Lambda"),
             Self::And => write!(f, "And"),
             Self::Or => write!(f, "Or"),
             Self::Xor => write!(f, "Xor"),
@@ -591,6 +593,7 @@ impl fmt::Display for TokenType {
             Self::DoubleQuote => write!(f, "\""),
             Self::SingleQuote => write!(f, "'"),
             Self::Semicolon => write!(f, ";"),
+            Self::Period => write!(f, "."),
             Self::Identifier(id) => write!(f, "{id}"),
             Self::Keyword(keyword) => write!(f, "{keyword}"),
             Self::Literal(literal) => write!(f, "{literal}"),

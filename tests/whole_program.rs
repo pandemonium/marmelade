@@ -21,13 +21,13 @@ fn into_input(source: &str) -> Vec<char> {
 fn main1() {
     let mut lexer = LexicalAnalyzer::default();
     let source_text = into_input(
-        r#"|create_window = fun x y ->
+        r#"|create_window = lambda x y.
            |    let q = 1+2*x*8-1 + y in
            |       q
            |
            |create =
            |   create_window 20
-           |create_window2 = fun x y ->1+2*x*8-1 + y
+           |create_window2 = lambda x y.1+2*x*8-1 + y
            |
            |main = create 7 * create 7 / create 7
            |"#,
@@ -122,7 +122,7 @@ fn _make_fix_value(env: Environment) -> Value {
 fn factorial20() {
     let mut lexer = LexicalAnalyzer::default();
     let source_text = into_input(
-        r#"|factorial = fun x ->
+        r#"|factorial = lambda x.
            |  if x == 0 then
            |      1
            |  else
@@ -149,7 +149,7 @@ fn factorial20() {
 #[test]
 fn fibonacci23() {
     let source_text = into_input(
-        r#"|fibonacci = fun x ->
+        r#"|fibonacci = lambda x.
            |  if 0 == x then
            |    0
            |  else

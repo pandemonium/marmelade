@@ -1,7 +1,7 @@
-use std::{collections::HashMap, hash::Hash, marker::PhantomData};
+use std::{collections::HashMap, marker::PhantomData};
 
 use marmelade::{
-    ast::{Identifier, TypeApply, TypeDeclarator, TypeExpression, TypeName, ValueDeclarator},
+    ast::{TypeApply, TypeDeclarator, TypeExpression, TypeName, ValueDeclarator},
     parser::ParsingInfo,
     typer::{Binding, CoproductType, ProductType, Type, TypeParameter, TypingContext},
 };

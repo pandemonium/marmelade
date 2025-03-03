@@ -1,13 +1,32 @@
 use std::{collections::HashMap, fmt};
 
-use super::{
-    unification::Substitutions, BaseType, Parsed, ProductType, TypeError, Typing, TypingContext,
-};
 use crate::{
     ast,
     parser::ParsingInfo,
-    typer::{Binding, Type, TypeInference},
+    typer::{
+        unification::Substitutions, BaseType, Parsed, ProductType, Type, TypeError, TypeInference,
+        Typing, TypingContext,
+    },
 };
+
+impl ast::Constant {
+    fn synthesize_type(&self) -> Typing {
+        match self {
+            ast::Constant::Int(..) => synthesize_constant(BaseType::Int),
+            ast::Constant::Float(..) => synthesize_constant(BaseType::Float),
+            ast::Constant::Text(..) => synthesize_constant(BaseType::Text),
+            ast::Constant::Bool(..) => synthesize_constant(BaseType::Bool),
+            ast::Constant::Unit => synthesize_constant(BaseType::Unit),
+        }
+    }
+}
+
+fn synthesize_constant(ty: BaseType) -> Typing {
+    Ok(TypeInference {
+        substitutions: Substitutions::default(),
+        inferred_type: Type::Constant(ty),
+    })
+}
 
 pub fn infer_type<A>(expr: &ast::Expression<A>, ctx: &TypingContext) -> Typing
 where
@@ -15,7 +34,6 @@ where
 {
     match expr {
         ast::Expression::Variable(_, binding) | ast::Expression::CallBridge(_, binding) => {
-            // Ref-variants of Binding too?
             if let Some(ty) = ctx.lookup(&binding.clone().into()) {
                 Ok(TypeInference {
                     substitutions: Substitutions::default(),
@@ -25,7 +43,7 @@ where
                 Err(TypeError::UndefinedSymbol(binding.clone()))
             }
         }
-        ast::Expression::Literal(_, constant) => synthesize_type_of_constant(constant, ctx),
+        ast::Expression::Literal(_, constant) => constant.synthesize_type(),
         ast::Expression::SelfReferential(
             annotation,
             ast::SelfReferential {
@@ -34,7 +52,6 @@ where
                 body,
             },
         ) => {
-            println!("synthesize_type: Self Referential {name}");
             let mut ctx = ctx.clone();
             ctx.bind(name.clone().into(), Type::fresh());
             infer_lambda(parameter, body, &annotation.info(), &ctx)
@@ -109,7 +126,7 @@ where
     let annotation_unification = expected_param_type.unify(&inferred_param_type, info, &ctx)?;
 
     let function_type =
-        Type::Arrow(inferred_param_type.into(), body.inferred_type.into()).generalize_type(&ctx);
+        Type::Arrow(inferred_param_type.into(), body.inferred_type.into()).generalize(&ctx);
 
     Ok(TypeInference {
         substitutions: body.substitutions.compose(annotation_unification),
@@ -118,7 +135,7 @@ where
 }
 
 fn infer_struct<A>(
-    elements: &Vec<(ast::Identifier, ast::Expression<A>)>,
+    elements: &[(ast::Identifier, ast::Expression<A>)],
     ctx: &TypingContext,
 ) -> Typing
 where
@@ -161,13 +178,6 @@ where
     })
 }
 
-fn synthesize_trivial(ty: BaseType) -> Typing {
-    Ok(TypeInference {
-        substitutions: Substitutions::default(),
-        inferred_type: Type::Constant(ty),
-    })
-}
-
 fn infer_coproduct<A>(
     name: &ast::TypeName,
     constructor: &ast::Identifier,
@@ -183,6 +193,7 @@ where
         .ok_or_else(|| TypeError::UndefinedType(name.clone()))
         .map(|ty| ty.instantiate())?
     {
+        //        let constructed_type = constructed_type.instantiate();
         let argument = infer_type(argument, ctx)?;
         if let Some(rhs) = coproduct.find_constructor(constructor) {
             let lhs = &argument.inferred_type;
@@ -203,16 +214,6 @@ where
         }
     } else {
         Err(TypeError::UndefinedType(name.clone()))
-    }
-}
-
-fn synthesize_type_of_constant(c: &ast::Constant, _ctx: &TypingContext) -> Typing {
-    match c {
-        ast::Constant::Int(..) => synthesize_trivial(BaseType::Int),
-        ast::Constant::Float(..) => synthesize_trivial(BaseType::Float),
-        ast::Constant::Text(..) => synthesize_trivial(BaseType::Text),
-        ast::Constant::Bool(..) => synthesize_trivial(BaseType::Bool),
-        ast::Constant::Unit => synthesize_trivial(BaseType::Unit),
     }
 }
 
@@ -275,7 +276,7 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     let bound = infer_type(bound, ctx)?;
-    let bound_type = bound.inferred_type.generalize_type(ctx);
+    let bound_type = bound.inferred_type.generalize(ctx);
 
     let mut ctx = ctx.clone();
     ctx.bind(binding.clone().into(), bound_type);

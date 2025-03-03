@@ -6,11 +6,7 @@ use std::{
 use thiserror::Error;
 use unification::Substitutions;
 
-use crate::{
-    ast::{self, TypeName},
-    lexer::SourcePosition,
-    parser::ParsingInfo,
-};
+use crate::{ast, lexer::SourcePosition, parser::ParsingInfo};
 
 mod inferencing;
 mod unification;
@@ -34,7 +30,7 @@ pub enum Type {
     Coproduct(CoproductType),
     Arrow(Box<Type>, Box<Type>),
     Forall(TypeParameter, Box<Type>),
-    Named(TypeName),
+    Named(ast::TypeName),
     Apply(Box<Type>, Box<Type>),
 }
 
@@ -52,7 +48,7 @@ impl Type {
         }
     }
 
-    pub fn generalize_type(self, ctx: &TypingContext) -> Type {
+    pub fn generalize(self, ctx: &TypingContext) -> Type {
         let context_variables = ctx.free_variables();
         let type_variables = self.free_variables();
         let non_quantified = type_variables.difference(&context_variables);
@@ -221,8 +217,8 @@ pub enum BaseType {
 }
 
 impl BaseType {
-    pub fn type_name(&self) -> TypeName {
-        TypeName::new(match self {
+    pub fn type_name(&self) -> ast::TypeName {
+        ast::TypeName::new(match self {
             Self::Unit => "builtin::Unit",
             Self::Int => "builtin::Int",
             Self::Bool => "builtin::Bool",
@@ -271,7 +267,6 @@ impl fmt::Display for ProductType {
         match self {
             Self::Tuple(elements) => {
                 write!(f, "(")?;
-
                 write!(
                     f,
                     "{}",
@@ -281,12 +276,10 @@ impl fmt::Display for ProductType {
                         .collect::<Vec<_>>()
                         .join(", ")
                 )?;
-
                 write!(f, ")")
             }
             Self::Struct(elements) => {
                 write!(f, "{{")?;
-
                 write!(
                     f,
                     "{}",
@@ -296,7 +289,6 @@ impl fmt::Display for ProductType {
                         .collect::<Vec<_>>()
                         .join(", ")
                 )?;
-
                 write!(f, "}}")
             }
         }
@@ -504,7 +496,7 @@ pub mod internal {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, fmt};
+    use std::fmt;
 
     use super::{Binding, CoproductType, TypingContext};
     use crate::{

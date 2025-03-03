@@ -536,6 +536,7 @@ impl<A> TypeExpression<A> {
         }
     }
 
+    // Make a thing to capture this type_param_map later.
     pub fn synthesize_type(&self, type_param_map: &mut HashMap<String, TypeParameter>) -> Type {
         fn map_expression<A>(
             expr: &TypeExpression<A>,

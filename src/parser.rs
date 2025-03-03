@@ -328,9 +328,9 @@ fn parse_value_binding<'a>(
 // let foo :: Int -> String -> String = fun i s -> s
 fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclarator<ParsingInfo>> {
     match input {
-        [T(TT::Keyword(Fun), ..), remains @ ..] => {
+        [T(TT::Keyword(Lambda), ..), remains @ ..] => {
             let (parameters, remains) = parse_parameter_list(remains)?;
-            if starts_with(TokenType::Arrow, remains) {
+            if starts_with(TT::Period, remains) {
                 let (body, remains) = parse_expression(
                     strip_if_starts_with(TT::Layout(Layout::Indent), &remains[1..]),
                     0,
@@ -344,7 +344,7 @@ fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclar
                     remains,
                 ))
             } else {
-                Err(ParseError::ExpectedTokenType(TT::Arrow))
+                Err(ParseError::ExpectedTokenType(TT::Period))
             }
         }
         remains @ [..] => {
@@ -366,10 +366,10 @@ fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclar
 fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter<ParsingInfo>>> {
     let (params, remains) =
         // This pattern is quite common...
-        if let Some(end) = remains.iter().position(|t| t.token_type() == &TT::Arrow) {
+        if let Some(end) = remains.iter().position(|t| t.token_type() == &TT::Period) {
             (&remains[..end], &remains[end..])
         } else {
-            Err(ParseError::ExpectedTokenType(TokenType::Arrow))?
+            Err(ParseError::ExpectedTokenType(TT::Period))?
         };
 
     let parse_parameter = |t: &Token| {
@@ -995,7 +995,7 @@ mod tests {
         let mut lexer = LexicalAnalyzer::default();
         let (decl, _) = parse_declaration(lexer.tokenize(&into_input(
             r#"|create_window =
-               |    fun x ->
+               |    lambda x.
                |        1 + x"#,
         )))
         .unwrap();
@@ -1047,7 +1047,7 @@ mod tests {
         let mut lexer = LexicalAnalyzer::default();
         let unit = parse_compilation_unit(lexer.tokenize(&into_input(
             r#"|create_window =
-               |  fun x ->
+               |  lambda x.
                |    print_endline "Hi, mom"
                |    if x == 0 then
                |      print "hi"
@@ -1066,10 +1066,10 @@ mod tests {
         let mut lexer = LexicalAnalyzer::default();
         let (mut decls, _) = parse_declarations(lexer.tokenize(&into_input(
             r#"|create_window =
-               |    fun x ->
+               |    lambda x.
                |        1 + x
                |
-               |print_endline = fun s ->
+               |print_endline = lambda s.
                |    __print s
                |"#,
         )))
