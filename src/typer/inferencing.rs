@@ -1,22 +1,13 @@
 use std::{collections::HashMap, fmt};
 
+use super::{
+    unification::Substitutions, BaseType, Parsed, ProductType, TypeError, Typing, TypingContext,
+};
 use crate::{
     ast,
     parser::ParsingInfo,
     typer::{Binding, Type, TypeInference},
 };
-
-use super::{
-    unification::Substitutions, BaseType, Parsed, ProductType, TypeError, Typing, TypingContext,
-};
-
-pub fn generalize_type(ty: Type, ctx: &TypingContext) -> Type {
-    let context_variables = ctx.free_variables();
-    let type_variables = ty.free_variables();
-    let non_quantified = type_variables.difference(&context_variables);
-
-    non_quantified.fold(ty, |body, ty_var| Type::Forall(*ty_var, Box::new(body)))
-}
 
 pub fn infer_type<A>(expr: &ast::Expression<A>, ctx: &TypingContext) -> Typing
 where
@@ -98,16 +89,8 @@ fn infer_lambda<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    let expected_param_type = if let Some(param_type) = type_annotation {
-        // Why doesn't it have to look something up?
-        // It does.
-
-        let has_unit = ctx
-            .lookup(&Binding::TypeTerm("builtin::Unit".to_owned()))
-            .is_some();
-        println!("infer_lambda: has unit {}", has_unit);
-
-        param_type
+    let expected_param_type = if let Some(type_expr) = type_annotation {
+        type_expr
             .clone()
             .synthesize_type(&mut HashMap::default())
             .instantiate()
@@ -119,22 +102,14 @@ where
     let mut ctx = ctx.clone();
     ctx.bind(name.clone().into(), expected_param_type.clone());
 
-    println!("infer_lambda: XXXX {body}");
-
     let body = infer_type(body, &ctx)?;
-
-    println!("infer_lambda: YYYY {}", body.inferred_type);
 
     let inferred_param_type = expected_param_type.clone().apply(&body.substitutions);
 
     let annotation_unification = expected_param_type.unify(&inferred_param_type, info, &ctx)?;
 
-    let function_type = generalize_type(
-        Type::Arrow(inferred_param_type.into(), body.inferred_type.into()),
-        &ctx,
-    );
-
-    println!("infer_lambda: function type {function_type}");
+    let function_type =
+        Type::Arrow(inferred_param_type.into(), body.inferred_type.into()).generalize_type(&ctx);
 
     Ok(TypeInference {
         substitutions: body.substitutions.compose(annotation_unification),
@@ -143,7 +118,7 @@ where
 }
 
 fn infer_struct<A>(
-    elements: &HashMap<ast::Identifier, ast::Expression<A>>,
+    elements: &Vec<(ast::Identifier, ast::Expression<A>)>,
     ctx: &TypingContext,
 ) -> Typing
 where
@@ -247,7 +222,7 @@ where
 {
     match product {
         ast::Product::Tuple(elements) => infer_tuple(elements, ctx),
-        ast::Product::Struct { bindings } => infer_struct(bindings, ctx),
+        ast::Product::Struct(bindings) => infer_struct(bindings, ctx),
     }
 }
 
@@ -300,7 +275,7 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     let bound = infer_type(bound, ctx)?;
-    let bound_type = generalize_type(bound.inferred_type, ctx);
+    let bound_type = bound.inferred_type.generalize_type(ctx);
 
     let mut ctx = ctx.clone();
     ctx.bind(binding.clone().into(), bound_type);

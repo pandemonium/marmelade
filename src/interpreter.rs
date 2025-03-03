@@ -131,7 +131,7 @@ impl Interpreter {
 
         for (binding, coproduct) in type_bindings {
             let coproduct = coproduct
-                .implementation_module(annotation.clone(), TypeName::new(binding.as_str()));
+                .make_implementation_module(annotation.clone(), TypeName::new(binding.as_str()));
             typing_context.bind(coproduct.name.into(), coproduct.declaring_type);
 
             // Should I bind types for the constructor functions here too?
@@ -417,7 +417,7 @@ where
             Self::Apply(_, Apply { function, argument }) => {
                 apply_function(*function, *argument, env)
             }
-            Self::Inject(_, node) => reduce_inject_coproduct(node, env),
+            Self::Inject(_, inject) => reduce_inject_coproduct(inject, env),
             Self::Product(_, node) => reduce_product(node, env),
             Self::Project(_, Project { .. }) => todo!(),
             Self::Binding(
@@ -446,9 +446,9 @@ where
                 .map(|e| e.reduce(env))
                 .collect::<Interpretation<_>>()?,
         )),
-        Product::Struct { mut bindings } => Ok(Value::Struct(
+        Product::Struct(mut bindings) => Ok(Value::Struct(
             bindings
-                .drain()
+                .drain(..)
                 .map(|(field, expr)| expr.reduce(env).map(|v| (field, v)))
                 .collect::<Interpretation<_>>()?,
         )),

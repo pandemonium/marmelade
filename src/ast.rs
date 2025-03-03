@@ -277,7 +277,11 @@ where
         Coproduct(cs.drain(..).map(|c| c.map(f)).collect())
     }
 
-    pub fn implementation_module(&self, annotation: A, self_name: TypeName) -> CoproductModule<A> {
+    pub fn make_implementation_module(
+        &self,
+        annotation: A,
+        self_name: TypeName,
+    ) -> CoproductModule<A> {
         let Self(constructors) = self;
 
         CoproductModule {
@@ -974,8 +978,8 @@ impl<A> Expression<A> {
                     e.find_unbound(bound, free);
                 }
             }
-            Self::Product(_, Product::Struct { bindings }) => {
-                for e in bindings.values() {
+            Self::Product(_, Product::Struct(bindings)) => {
+                for (_, e) in bindings {
                     e.find_unbound(bound, free);
                 }
             }
@@ -1167,9 +1171,7 @@ impl From<lexer::Literal> for Constant {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Product<A> {
     Tuple(Vec<Expression<A>>),
-    Struct {
-        bindings: HashMap<Identifier, Expression<A>>,
-    },
+    Struct(Vec<(Identifier, Expression<A>)>),
 }
 impl<A> Product<A> {
     fn map<B>(self, f: fn(A) -> B) -> Product<B> {
@@ -1177,9 +1179,9 @@ impl<A> Product<A> {
             Self::Tuple(mut expressions) => {
                 Product::Tuple(expressions.drain(..).map(|x| x.map(f)).collect())
             }
-            Self::Struct { mut bindings } => Product::<B>::Struct {
-                bindings: bindings.drain().map(|(k, v)| (k, v.map(f))).collect(),
-            },
+            Self::Struct(mut bindings) => {
+                Product::<B>::Struct(bindings.drain(..).map(|(k, v)| (k, v.map(f))).collect())
+            }
         }
     }
 }
@@ -1197,7 +1199,7 @@ where
                 }
                 write!(f, ")")
             }
-            Self::Struct { bindings } => {
+            Self::Struct(bindings) => {
                 write!(f, "{{")?;
                 for (field, value) in bindings {
                     write!(f, "{field}: {value},")?;

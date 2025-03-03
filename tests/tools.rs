@@ -26,7 +26,7 @@ pub fn expr_fixture(source: &str, rhs: E<ParsingInfo>) {
     let mut lexer = LexicalAnalyzer::default();
     let lhs = parser::parse_expression_phrase(lexer.tokenize(&into_unicode_text(source))).unwrap();
 
-    assert_eq!(lhs, rhs)
+    assert_eq!(lhs.erase_annotation(), rhs.erase_annotation())
 }
 
 pub fn eval_fixture<A>(source: &str, rhs: A)

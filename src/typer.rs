@@ -52,6 +52,14 @@ impl Type {
         }
     }
 
+    pub fn generalize_type(self, ctx: &TypingContext) -> Type {
+        let context_variables = ctx.free_variables();
+        let type_variables = self.free_variables();
+        let non_quantified = type_variables.difference(&context_variables);
+
+        non_quantified.fold(self, |body, ty_var| Type::Forall(*ty_var, Box::new(body)))
+    }
+
     pub fn expand(self, ctx: &TypingContext) -> Typing<Self> {
         match self {
             Self::Named(name) => ctx
@@ -610,19 +618,17 @@ mod tests {
             mk_identity(),
             ast::Expression::Product(
                 ParsingInfo::default(),
-                ast::Product::Struct {
-                    bindings: HashMap::from([
-                        (ast::Identifier::new("id"), mk_identity()),
-                        (
-                            ast::Identifier::new("x"),
-                            mk_constant(ast::Constant::Int(1)),
-                        ),
-                        (
-                            ast::Identifier::new("y"),
-                            mk_constant(ast::Constant::Float(1.0)),
-                        ),
-                    ]),
-                },
+                ast::Product::Struct(Vec::from([
+                    (ast::Identifier::new("id"), mk_identity()),
+                    (
+                        ast::Identifier::new("x"),
+                        mk_constant(ast::Constant::Int(1)),
+                    ),
+                    (
+                        ast::Identifier::new("y"),
+                        mk_constant(ast::Constant::Float(1.0)),
+                    ),
+                ])),
             ),
         );
         let t = ctx.infer_type(&e).unwrap();
@@ -741,18 +747,16 @@ mod tests {
             ast::Expression::Variable(ParsingInfo::default(), ast::Identifier::new("id")),
             ast::Expression::Product(
                 ParsingInfo::default(),
-                ast::Product::Struct {
-                    bindings: HashMap::from([
-                        (
-                            ast::Identifier::new("x"),
-                            mk_apply(mk_identity(), mk_constant(ast::Constant::Int(1))),
-                        ),
-                        (
-                            ast::Identifier::new("y"),
-                            mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0))),
-                        ),
-                    ]),
-                },
+                ast::Product::Struct(Vec::from([
+                    (
+                        ast::Identifier::new("x"),
+                        mk_apply(mk_identity(), mk_constant(ast::Constant::Int(1))),
+                    ),
+                    (
+                        ast::Identifier::new("y"),
+                        mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0))),
+                    ),
+                ])),
             ),
         );
 

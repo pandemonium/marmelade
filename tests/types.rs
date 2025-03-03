@@ -44,9 +44,9 @@ fn type_expansions() {
     let list_type = list_declaration.synthesize_type();
     ctx.bind(Binding::TypeTerm("List".to_owned()), list_type);
 
-    if let TypeDeclarator::Coproduct(_, co) = &list_declaration {
-        for constructor in co
-            .implementation_module(ParsingInfo::default(), TypeName::new("List"))
+    if let TypeDeclarator::Coproduct(_, coproduct) = &list_declaration {
+        for constructor in coproduct
+            .make_implementation_module(ParsingInfo::default(), TypeName::new("List"))
             .constructors
         {
             println!("{}: {:?}", constructor.binder, constructor.declarator);
