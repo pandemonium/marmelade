@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, thread, time::Duration};
 
 use crate::{
     ast,
@@ -34,6 +34,7 @@ where
 {
     match expr {
         ast::Expression::Variable(_, binding) | ast::Expression::InvokeBridge(_, binding) => {
+            println!("infer_type: variable `{binding}`");
             if let Some(ty) = ctx.lookup(&binding.clone().into()) {
                 Ok(TypeInference {
                     substitutions: Substitutions::default(),
@@ -119,14 +120,19 @@ where
     let mut ctx = ctx.clone();
     ctx.bind(name.clone().into(), expected_param_type.clone());
 
+    println!("infer_lambda: >>> body {body}");
+
     let body = infer_type(body, &ctx)?;
 
     let inferred_param_type = expected_param_type.clone().apply(&body.substitutions);
 
     let annotation_unification = expected_param_type.unify(&inferred_param_type, info, &ctx)?;
 
-    let function_type =
-        Type::Arrow(inferred_param_type.into(), body.inferred_type.into()).generalize(&ctx);
+    let function_type = Type::Arrow(
+        inferred_param_type.apply(&annotation_unification).into(),
+        body.inferred_type.into(),
+    )
+    .generalize(&ctx);
 
     Ok(TypeInference {
         substitutions: body.substitutions.compose(annotation_unification),
@@ -164,12 +170,22 @@ where
     let mut substitutions = Substitutions::default();
     let mut types = Vec::with_capacity(elements.len());
 
-    for element in elements {
+    println!(">>>>>>>>>>>>> INFER TUPLE");
+
+    for element in elements.iter().rev() {
         let element = ctx.infer_type(element)?;
+
+        println!("infer_tuple: {}", element.inferred_type);
 
         substitutions = substitutions.compose(element.substitutions);
         types.push(element.inferred_type);
     }
+
+    let mut types = types
+        .drain(..)
+        .map(|t| t.apply(&substitutions))
+        .collect::<Vec<_>>();
+    types.reverse();
 
     Ok(TypeInference {
         substitutions,
@@ -359,7 +375,10 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     let function = infer_type(function, ctx)?;
-    let argument = infer_type(argument, &ctx.apply_substitutions(&function.substitutions))?;
+    println!("infer_application: {}", function.inferred_type);
+
+    let ctx = ctx.apply_substitutions(&function.substitutions);
+    let argument = infer_type(argument, &ctx)?;
 
     let return_type = Type::fresh();
 

@@ -144,33 +144,16 @@ impl Type {
         }
     }
 
-    // Re-write this without the rename
-    pub fn instantiate(&self) -> Self {
-        let mut map = HashMap::default();
-        fn rename(ty: Type, fresh: &mut HashMap<TypeParameter, Type>) -> Type {
-            match ty {
-                Type::Forall(ty_var, ty) => {
-                    fresh.insert(ty_var, Type::fresh());
-                    rename(*ty, fresh)
-                }
-                Type::Parameter(ty_var) => fresh
-                    .get(&ty_var)
-                    .cloned()
-                    .unwrap_or_else(|| Type::Parameter(ty_var)),
-                Type::Arrow(domain, codomain) => Type::Arrow(
-                    rename(*domain, fresh).into(),
-                    rename(*codomain, fresh).into(),
-                ),
-                Type::Apply(constructor, argument) => {
-                    let constructor = rename(*constructor, fresh);
-                    let argument = rename(*argument, fresh);
-                    Type::Apply(constructor.into(), argument.into())
-                }
-                _ => ty,
+    pub fn instantiate(&self) -> Type {
+        match self.clone() {
+            Type::Forall(param, body) => {
+                let fresh_param = TypeParameter::fresh();
+                let mut subs = Substitutions::default();
+                subs.add(param, Type::Parameter(fresh_param));
+                body.apply(&subs).instantiate()
             }
+            otherwise => otherwise,
         }
-
-        rename(self.clone(), &mut map)
     }
 
     pub fn fresh() -> Type {
@@ -296,6 +279,7 @@ impl fmt::Display for ProductType {
     }
 }
 
+// Change this from (String, Type) into (String, Vec<Type>)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CoproductType(Vec<(String, Type)>);
 

@@ -150,9 +150,10 @@ where
             }
         };
 
-        println!("infer_declarator_type: {expression}");
+        let infer_type = typing_context.infer_type(&expression);
 
-        typing_context.infer_type(&expression)
+        infer_type
+            .inspect(|t| println!("infer_declarator_type: {expression} :: {}", t.inferred_type))
     }
 }
 

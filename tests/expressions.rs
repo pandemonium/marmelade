@@ -190,13 +190,8 @@ fn precedence() {
 }
 
 #[test]
-fn tuples() {
-    //    eval_fixture(r#"|main = 1,2"#, (1, 2));
-    //    eval_fixture(r#"|main = (1,2,3,4,5,6) = (1,2,3,4,5,6)"#, true);
-    eval_fixture(
-        r#"|main = (1,2) = (1,2,"3")
-        "#,
-        true,
-    );
-    //    expr_fixture(r#"|(1,2) = (1,2)"#, cmp);
+fn tuples2() {
+    eval_fixture(r#"|main = 1,2"#, (1, 2));
+    eval_fixture(r#"|main = (1,2,3,4,5,6) = (1,2,3,4,5,6)"#, true);
+    eval_fixture(r#"|main = (1,2,3,4,5,6) = (1,2,3,4,5,7)"#, false);
 }

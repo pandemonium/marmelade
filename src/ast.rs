@@ -304,6 +304,8 @@ where
                 .map(|Constructor { name, signature }| {
                     (
                         name.as_str().to_owned(),
+                        // Don't. Store it in here as a Vec<Type>
+                        // No idea if this makes the slightest difference
                         Type::Product(ProductType::Tuple(
                             signature
                                 .iter()

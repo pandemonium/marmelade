@@ -125,7 +125,7 @@ where
                 )?;
                 Ok(constructor.compose(at))
             }
-            //            (lhs, rhs) if lhs == rhs => Ok(Substitutions::default()),
+            (lhs, rhs) if lhs == rhs => Ok(Substitutions::default()),
             (lhs, rhs) => Err(TypeError::UnifyImpossible {
                 lhs: lhs.clone(),
                 rhs: rhs.clone(),
@@ -270,6 +270,11 @@ impl Substitutions {
 
         let Self(lhs) = self;
         composed.extend(lhs.clone());
+
+        //        for (param, ty) in lhs {
+        //            let new_type = ty.clone().apply(&Self(composed.clone()));
+        //            composed.insert(param.clone(), new_type);
+        //        }
 
         Self(composed)
     }
