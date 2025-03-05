@@ -92,6 +92,7 @@ impl Type {
                 .cloned()
                 .map(|ty| ty.apply(subs))
                 .unwrap_or_else(|| Self::Parameter(param)),
+
             Self::Arrow(domain, codomain) => {
                 Self::Arrow(domain.apply(subs).into(), codomain.apply(subs).into())
             }

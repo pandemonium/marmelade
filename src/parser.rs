@@ -647,7 +647,14 @@ fn parse_operator<'a>(
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let operator_precedence = operator.precedence();
     if operator_precedence > context_precedence {
-        let (rhs, remains) = parse_expression(remains, operator_precedence)?;
+        let (rhs, remains) = parse_expression(
+            remains,
+            if operator.is_right_associative() {
+                operator_precedence - 1
+            } else {
+                operator_precedence
+            },
+        )?;
 
         parse_infix(
             apply_binary_operator(*operator, lhs, rhs, position),

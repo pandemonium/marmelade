@@ -20,7 +20,7 @@ pub struct ModuleLoader<'a, A> {
 
 impl<'a, A> ModuleLoader<'a, A>
 where
-    A: fmt::Display + Clone + Parsed,
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
     pub fn try_loading(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Loaded<Self> {
         let resolver = |id: &Identifier| prelude.is_defined(id);

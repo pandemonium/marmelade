@@ -56,7 +56,7 @@ impl Interpreter {
         program: CompilationUnit<A>,
     ) -> Loaded<Value>
     where
-        A: Clone + Parsed + fmt::Display,
+        A: Clone + Parsed + fmt::Debug + fmt::Display,
     {
         match program {
             CompilationUnit::Implicit(annotation, module) => {
@@ -78,7 +78,7 @@ impl Interpreter {
         mut module: ModuleDeclarator<A>,
     ) -> Loaded<Environment>
     where
-        A: Clone + Parsed + fmt::Display,
+        A: Clone + Parsed + fmt::Debug + fmt::Display,
     {
         self.inject_prelude(annotation.clone(), &mut module);
         self.inject_types_and_synthetics(annotation.clone(), &mut module, &mut typing_context);
@@ -396,7 +396,7 @@ pub type Interpretation<A = Value> = Result<A, RuntimeError>;
 
 impl<A> Expression<A>
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
@@ -437,7 +437,7 @@ where
 
 fn reduce_product<A>(node: Product<A>, env: &mut Environment) -> Interpretation
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     match node {
         Product::Tuple(mut elements) => Ok(Value::Tuple(
@@ -459,7 +459,7 @@ where
 
 fn reduce_inject_coproduct<A>(node: Inject<A>, env: &mut Environment) -> Interpretation
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     Ok(Value::Coproduct {
         constructor: node.constructor,
@@ -502,7 +502,7 @@ fn reduce_sequence<A>(
     env: &mut Environment,
 ) -> Interpretation
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     this.reduce(env)?;
     and_then.reduce(env)
@@ -522,7 +522,7 @@ fn invoke_bridge(id: Identifier, env: &mut Environment) -> Interpretation {
 
 fn reduce_control_flow<A>(control: ControlFlow<A>, env: &mut Environment) -> Interpretation
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     match control {
         ControlFlow::If {
@@ -550,7 +550,7 @@ fn reduce_binding<A>(
     env: &mut Environment,
 ) -> Interpretation
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     let bound = bound.reduce(env)?;
     env.insert_binding(binder.clone(), bound);
@@ -565,7 +565,7 @@ fn apply_function<A>(
     env: &mut Environment,
 ) -> Interpretation
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     match function.reduce(env)? {
         Value::Closure(Closure {

@@ -409,6 +409,10 @@ impl Operator {
         }
     }
 
+    pub fn is_right_associative(&self) -> bool {
+        matches!(self, Operator::TupleCons)
+    }
+
     pub fn precedence(&self) -> usize {
         match self {
             Self::Times | Self::Divides | Self::Modulo => 16,
@@ -438,7 +442,7 @@ impl Operator {
             Self::Divides => "/",
             Self::Modulo => "%",
 
-            Self::Equals => "==",
+            Self::Equals => "=",
             Self::Gte => ">=",
             Self::Lte => "<=",
             Self::Gt => ">",

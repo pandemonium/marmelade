@@ -10,7 +10,7 @@ use crate::{
 pub fn import(env: &mut CompileState) -> Interpretation<()> {
     use Operator::*;
 
-    //    let raw_lambda2 = |apply, signature| PartialRawLambda2 { apply, signature };
+    let raw_lambda2 = |apply, signature| PartialRawLambda2 { apply, signature };
 
     let base_lambda2 = |apply: fn(Base, Base) -> Option<Base>, signature| PartialRawLambda2 {
         apply: move |p: Value, q: Value| {
@@ -21,7 +21,7 @@ pub fn import(env: &mut CompileState) -> Interpretation<()> {
         signature,
     };
 
-    define(Equals.id(), base_lambda2(equals, binary_to_bool()), env)?;
+    define(Equals.id(), raw_lambda2(equals, binary_to_bool()), env)?;
     define(Gte.id(), base_lambda2(gte, binary_to_bool()), env)?;
     define(Lte.id(), base_lambda2(lte, binary_to_bool()), env)?;
     define(Gt.id(), base_lambda2(gt, binary_to_bool()), env)?;
@@ -64,12 +64,29 @@ fn binary() -> Type {
     )
 }
 
-pub fn equals(p: Base, q: Base) -> Option<Base> {
+pub fn equals(p: Value, q: Value) -> Option<Value> {
     match (p, q) {
-        (Base::Int(p), Base::Int(q)) => Some(Base::Bool(p == q)),
-        (Base::Float(p), Base::Float(q)) => Some(Base::Bool(p == q)),
-        (Base::Bool(p), Base::Bool(q)) => Some(Base::Bool(p == q)),
-        (Base::Text(p), Base::Text(q)) => Some(Base::Bool(p == q)),
+        (Value::Base(Base::Int(p)), Value::Base(Base::Int(q))) => {
+            Some(Value::Base(Base::Bool(p == q)))
+        }
+        (Value::Base(Base::Float(p)), Value::Base(Base::Float(q))) => {
+            Some(Value::Base(Base::Bool(p == q)))
+        }
+        (Value::Base(Base::Bool(p)), Value::Base(Base::Bool(q))) => {
+            Some(Value::Base(Base::Bool(p == q)))
+        }
+        (Value::Base(Base::Text(p)), Value::Base(Base::Text(q))) => {
+            Some(Value::Base(Base::Bool(p == q)))
+        }
+        (Value::Tuple(mut p), Value::Tuple(mut q)) => {
+            let result = p.len() == q.len()
+                && p.drain(..)
+                    .zip(q.drain(..))
+                    .map(|(p, q)| equals(p, q))
+                    .all(|v| matches!(v, Some(Value::Base(Base::Bool(true)))));
+
+            Some(Value::Base(Base::Bool(result)))
+        }
         _otherwise => None,
     }
 }

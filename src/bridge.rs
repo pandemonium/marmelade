@@ -179,26 +179,21 @@ impl Bridge for TupleConsSyntax {
     fn synthesize_type(&self) -> Type {
         let p = TypeParameter::fresh();
         let q = TypeParameter::fresh();
-        Type::Forall(
-            p.clone(),
-            Type::Forall(
-                q.clone(),
-                Type::Arrow(
-                    Type::Parameter(p).into(),
-                    Type::Arrow(
-                        Type::Parameter(q).into(),
-                        Type::Product(ProductType::Tuple(vec![
-                            Type::Parameter(p),
-                            Type::Parameter(q),
-                        ]))
-                        .into(),
-                    )
-                    .into(),
-                )
+        let arrow = Type::Arrow(
+            Type::Parameter(p).into(),
+            Type::Arrow(
+                Type::Parameter(q).into(),
+                Type::Product(ProductType::Tuple(vec![
+                    Type::Parameter(p),
+                    Type::Parameter(q),
+                ]))
                 .into(),
             )
             .into(),
         )
+        .into();
+
+        Type::Forall(p.clone(), Type::Forall(q.clone(), arrow).into())
     }
 }
 

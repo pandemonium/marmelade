@@ -21,10 +21,13 @@ where
 struct UnificationContext<'a, A> {
     annotation: &'a A,
     ctx: &'a TypingContext,
-    seen: HashSet<Type>,
+    seen: HashSet<(Type, Type)>,
 }
 
-impl<'a, A> UnificationContext<'a, A> {
+impl<'a, A> UnificationContext<'a, A>
+where
+    A: Parsed,
+{
     fn new(annotation: &'a A, ctx: &'a TypingContext) -> Self {
         Self {
             annotation,
@@ -33,25 +36,34 @@ impl<'a, A> UnificationContext<'a, A> {
         }
     }
 
-    fn unify(&mut self, lhs: &Type, rhs: &Type) -> Typing<Substitutions>
-    where
-        A: Parsed,
-    {
-        if self.seen.contains(lhs) && self.seen.contains(rhs) {
-            return Ok(Substitutions::default());
-        } else {
-            self.seen.insert(lhs.to_owned());
-            self.seen.insert(rhs.to_owned());
-        }
+    fn is_reentrant(&self, pair: &(Type, Type)) -> bool {
+        self.seen.contains(pair)
+    }
 
-        let lhs = &lhs.clone().instantiate().expand(self.ctx)?;
-        let rhs = &rhs.clone().instantiate().expand(self.ctx)?;
+    fn enter(&mut self, pair: (Type, Type)) {
+        self.seen.insert(pair);
+    }
 
-        println!(
-            "unify: expanded {} and {}",
-            lhs.description(),
-            rhs.description()
-        );
+    fn unify(&mut self, lhs: &Type, rhs: &Type) -> Typing<Substitutions> {
+        let uni = match (lhs, rhs) {
+            (Type::Constant(t), Type::Constant(u)) if t == u => Ok(Substitutions::default()),
+            //            (Type::Parameter(t), Type::Parameter(u)) if t == u => Ok(Substitutions::default()),
+            (Type::Apply(lhs_constructor, lhs_at), Type::Apply(rhs_constructor, rhs_at))
+                if lhs_constructor == rhs_constructor && lhs_at == rhs_at =>
+            {
+                Ok(Substitutions::default())
+            }
+            _otherwise => self.unify_expanded(
+                lhs.clone().instantiate().expand(self.ctx)?,
+                rhs.clone().instantiate().expand(self.ctx)?,
+            ),
+        };
+
+        uni.inspect(|x| println!("unify unified: {lhs} with {rhs}, with {x:?}"))
+    }
+
+    fn unify_expanded(&mut self, lhs: Type, rhs: Type) -> Typing<Substitutions> {
+        println!("unify: {} and {}", lhs.description(), rhs.description());
 
         match (lhs, rhs) {
             (Type::Constant(t), Type::Constant(u)) if t == u => Ok(Substitutions::default()),
@@ -60,26 +72,43 @@ impl<'a, A> UnificationContext<'a, A> {
                 Ok(Substitutions::default())
             }
             (Type::Parameter(param), ty) | (ty, Type::Parameter(param)) => {
-                if ty.free_variables().contains(param) {
+                if ty.free_variables().contains(&param) {
                     Err(TypeError::InfiniteType {
                         param: param.clone(),
                         ty: ty.clone(),
                     })
                 } else {
+                    // Create a nice constructor for this case.
                     let mut substitution = Substitutions::default();
                     substitution.add(param.clone(), ty.clone());
                     Ok(substitution)
                 }
             }
-            (Type::Product(ProductType::Tuple(lhs)), Type::Product(ProductType::Tuple(rhs))) => {
-                self.unify_tuples(lhs, rhs)
+            ref relation @ (
+                Type::Product(ProductType::Tuple(ref lhs_tuple)),
+                Type::Product(ProductType::Tuple(ref rhs_tuple)),
+            ) if !self.is_reentrant(&relation) => {
+                self.enter(relation.clone());
+                self.unify_tuples(lhs_tuple, rhs_tuple)
             }
-            (Type::Product(ProductType::Struct(lhs)), Type::Product(ProductType::Struct(rhs))) => {
-                self.unify_structs(lhs, rhs)
+            ref relation @ (
+                Type::Product(ProductType::Struct(ref lhs)),
+                Type::Product(ProductType::Struct(ref rhs)),
+            ) if !self.is_reentrant(&relation) => {
+                self.enter(relation.clone());
+                self.unify_structs(&lhs, &rhs)
             }
-            (Type::Coproduct(lhs), Type::Coproduct(rhs)) => self.unify_coproducts(lhs, rhs),
+            ref relation @ (Type::Coproduct(ref lhs), Type::Coproduct(ref rhs))
+                if true || !self.is_reentrant(&relation) =>
+            {
+                //                self.enter(relation.clone());
+                self.unify_coproducts(&lhs, &rhs)
+            }
             (Type::Arrow(lhs_domain, lhs_codomain), Type::Arrow(rhs_domain, rhs_codomain)) => {
-                let domain = self.unify(&lhs_domain.clone().expand(self.ctx)?, rhs_domain)?;
+                let domain = self.unify(
+                    &lhs_domain.clone().expand(self.ctx)?,
+                    &rhs_domain.clone().expand(self.ctx)?,
+                )?;
 
                 let codomain = self.unify(
                     &lhs_codomain.clone().apply(&domain),
@@ -89,14 +118,14 @@ impl<'a, A> UnificationContext<'a, A> {
                 Ok(domain.compose(codomain))
             }
             (Type::Apply(lhs_constructor, lhs_at), Type::Apply(rhs_constructor, rhs_at)) => {
-                let constructor_substitutions = self.unify(lhs_constructor, rhs_constructor)?;
-                let at_substitutions = self.unify(
-                    &lhs_at.clone().apply(&constructor_substitutions),
-                    &rhs_at.clone().apply(&constructor_substitutions),
+                let constructor = self.unify(&lhs_constructor, &rhs_constructor)?;
+                let at = self.unify(
+                    &lhs_at.clone().apply(&constructor),
+                    &rhs_at.clone().apply(&constructor),
                 )?;
-                Ok(constructor_substitutions.compose(at_substitutions))
+                Ok(constructor.compose(at))
             }
-            (Type::Named(lhs), Type::Named(rhs)) if lhs == rhs => Ok(Substitutions::default()),
+            //            (lhs, rhs) if lhs == rhs => Ok(Substitutions::default()),
             (lhs, rhs) => Err(TypeError::UnifyImpossible {
                 lhs: lhs.clone(),
                 rhs: rhs.clone(),
@@ -189,9 +218,13 @@ impl<'a, A> UnificationContext<'a, A> {
     where
         A: Parsed,
     {
+        println!("unify_tuples: ----> {:?} {:?}", lhs, rhs);
+
         if lhs.len() == rhs.len() {
             let mut substitution = Substitutions::default();
             for (lhs, rhs) in lhs.into_iter().zip(rhs.into_iter()) {
+                //                let lhs = &lhs.clone().expand(self.ctx)?;
+                //                let rhs = &rhs.clone().expand(self.ctx)?;
                 println!(
                     "unify_tuples: `{}` `{}`",
                     lhs.description(),
@@ -215,6 +248,7 @@ pub struct Substitutions(HashMap<TypeParameter, Type>);
 impl Substitutions {
     pub fn add(&mut self, param: TypeParameter, ty: Type) {
         let Self(map) = self;
+        println!("addsub: {param} -> {ty}");
         map.insert(param, ty);
     }
 

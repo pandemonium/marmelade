@@ -58,6 +58,10 @@ pub fn text(s: &str) -> E<ParsingInfo> {
     E::Literal(ParsingInfo::default(), Constant::Text(s.to_owned()))
 }
 
+pub fn float(f: f64) -> E<ParsingInfo> {
+    E::Literal(ParsingInfo::default(), Constant::Float(f))
+}
+
 pub fn let_in(binder: &str, bound: E<ParsingInfo>, body: E<ParsingInfo>) -> E<ParsingInfo> {
     E::Binding(
         ParsingInfo::default(),

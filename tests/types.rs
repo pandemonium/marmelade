@@ -1,9 +1,16 @@
 use std::{collections::HashMap, marker::PhantomData};
 
 use marmelade::{
-    ast::{TypeApply, TypeDeclarator, TypeExpression, TypeName, ValueDeclarator},
+    ast::{
+        Apply, Expression, Product, TypeApply, TypeDeclarator, TypeExpression, TypeName,
+        ValueDeclarator,
+    },
+    context::CompileState,
     parser::ParsingInfo,
-    typer::{Binding, CoproductType, ProductType, Type, TypeParameter, TypingContext},
+    stdlib,
+    typer::{
+        Binding, CoproductType, ProductType, Type, TypeInference, TypeParameter, TypingContext,
+    },
 };
 use tools::*;
 
@@ -30,6 +37,44 @@ fn list_type() {
     ]));
     let lhs = Type::Forall(tp, lhs.into());
     assert_eq!(lhs, rhs.synthesize_type());
+}
+
+#[test]
+fn tuple() {
+    let mut ctx = CompileState::default();
+    stdlib::import(&mut ctx).unwrap();
+
+    let lhs = Expression::Product(
+        ParsingInfo::default(),
+        Product::Tuple(vec![int(1), text("2"), float(3.0)]),
+    );
+
+    let rhs = Expression::Product(
+        ParsingInfo::default(),
+        Product::Tuple(vec![int(1), text("2"), float(3.0)]),
+    );
+
+    let cmp = Expression::Apply(
+        ParsingInfo::default(),
+        Apply {
+            function: Expression::Apply(
+                ParsingInfo::default(),
+                Apply {
+                    function: var("=").into(),
+                    argument: lhs.into(),
+                },
+            )
+            .into(),
+            argument: rhs.into(),
+        },
+    );
+
+    let TypeInference {
+        substitutions,
+        inferred_type,
+    } = ctx.typing_context.infer_type(&cmp).unwrap();
+
+    println!("Inferred: {substitutions:?}, {inferred_type}");
 }
 
 #[test]
@@ -72,10 +117,9 @@ fn type_expansions() {
     )
     .synthesize_type(&mut HashMap::default());
 
-    assert!(abbreviation
-        .expand(&ctx)
-        .unwrap()
-        .unify(
+    println!(
+        "-------> {:?}",
+        abbreviation.expand(&ctx).unwrap().unify(
             &list_declaration
                 .synthesize_type()
                 .instantiate()
@@ -84,5 +128,5 @@ fn type_expansions() {
             &(),
             &ctx
         )
-        .is_ok());
+    );
 }

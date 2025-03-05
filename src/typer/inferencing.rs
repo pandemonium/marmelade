@@ -365,7 +365,7 @@ where
 
     let unified_substitutions = function
         .inferred_type
-        .instantiate()
+        //        .instantiate()
         .apply(&function.substitutions)
         .unify(
             &Type::Arrow(

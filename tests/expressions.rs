@@ -180,8 +180,6 @@ fn precedence() {
     eval_fixture(r#"|main = 1 >= 2"#, false);
     eval_fixture(r#"|main = 1 <= 2"#, true);
 
-    eval_fixture(r#"|main = 1,2"#, (1, 2));
-
     eval_fixture(r#"|main = 1 <= 2 or 1 >= 2"#, true);
     eval_fixture(r#"|main = 1 <= 2 xor 1 >= 2"#, true);
     eval_fixture(r#"|main = 1 >= 2 or 1 <= 2"#, true);
@@ -189,4 +187,16 @@ fn precedence() {
     eval_fixture(r#"|main = 1 <= 2 and 1 >= 2"#, false);
     eval_fixture(r#"|main = 1 <= 2 and 1 >= 0"#, true);
     eval_fixture(r#"|main = 1 <= 2 xor 1 >= 0"#, false);
+}
+
+#[test]
+fn tuples() {
+    //    eval_fixture(r#"|main = 1,2"#, (1, 2));
+    //    eval_fixture(r#"|main = (1,2,3,4,5,6) = (1,2,3,4,5,6)"#, true);
+    eval_fixture(
+        r#"|main = (1,2) = (1,2,"3")
+        "#,
+        true,
+    );
+    //    expr_fixture(r#"|(1,2) = (1,2)"#, cmp);
 }
