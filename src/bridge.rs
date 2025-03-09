@@ -210,12 +210,12 @@ where
     }
 
     fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
-        // They have to be scalars.
+        // Is there any way to do this without the happy path clones?!
         let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
         let p1 = e.lookup(&Identifier::new("p1")).cloned()?;
 
-        self.apply.clone()(p0, p1).ok_or_else(|| RuntimeError::InapplicableLamda2)
-        // bring in arguments here later
+        self.apply.clone()(p0.clone(), p1.clone())
+            .ok_or_else(|| RuntimeError::InapplicableLamda2 { fst: p0, snd: p1 })
     }
 
     fn synthesize_type(&self) -> TypeScheme {

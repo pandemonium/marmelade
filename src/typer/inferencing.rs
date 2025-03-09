@@ -34,14 +34,9 @@ where
 {
     match expr {
         ast::Expression::Variable(_, binding) | ast::Expression::InvokeBridge(_, binding) => {
-            println!("infer_type: variable `{binding}`");
             if let Some(scheme) = ctx.lookup(&binding.clone().into()) {
-                Ok(TypeInference {
-                    // make a helper constructor for this
-                    // TypeInference::monotype(ty) or something
-                    substitutions: Substitutions::default(),
-                    inferred_type: scheme.instantiate(ctx)?,
-                })
+                let inferred = scheme.instantiate(ctx)?;
+                Ok(TypeInference::trivially(inferred))
             } else {
                 Err(TypeError::UndefinedSymbol(binding.clone()))
             }
@@ -147,10 +142,10 @@ where
         body.inferred_type.into(),
     );
 
-    Ok(TypeInference {
-        substitutions: body.substitutions.compose(annotation_unification),
-        inferred_type: function_type,
-    })
+    Ok(TypeInference::new(
+        body.substitutions.compose(annotation_unification),
+        function_type,
+    ))
 }
 
 fn infer_struct<A>(
@@ -170,10 +165,10 @@ where
         types.push((label.clone(), initializer.inferred_type));
     }
 
-    Ok(TypeInference {
+    Ok(TypeInference::new(
         substitutions,
-        inferred_type: Type::Product(ProductType::Struct(types.drain(..).collect())),
-    })
+        Type::Product(ProductType::Struct(types.drain(..).collect())),
+    ))
 }
 
 fn infer_tuple<A>(elements: &[ast::Expression<A>], ctx: &TypingContext) -> Typing
@@ -186,8 +181,6 @@ where
     for element in elements.iter().rev() {
         let element = ctx.infer_type(element)?;
 
-        println!("infer_tuple: {}", element.inferred_type);
-
         substitutions = substitutions.compose(element.substitutions);
         types.push(element.inferred_type);
     }
@@ -198,16 +191,13 @@ where
         .collect::<Vec<_>>();
     types.reverse();
 
-    Ok(TypeInference {
+    // todo: don't I have to substitute my element types?
+    Ok(TypeInference::new(
         substitutions,
-        // todo: don't I have to substitute my element types?
-        inferred_type: Type::Product(ProductType::Tuple(types)),
-    })
+        Type::Product(ProductType::Tuple(types)),
+    ))
 }
 
-// What does this function really do?
-// It should actually check the supplied parameters against the constructor (tuple) type
-// and it checks, then return the coproduct type scheme
 fn infer_coproduct<A>(
     name: &ast::TypeName,
     constructor: &ast::Identifier,
@@ -218,16 +208,12 @@ fn infer_coproduct<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    println!("infer_coproduct: {name} {constructor}");
-
     let type_constructor = ctx
         .lookup(&name.clone().into())
         .ok_or_else(|| TypeError::UndefinedType(name.clone()))?
         .instantiate(ctx)?;
 
-    println!("infer_coproduct: Type Constructor {type_constructor}");
-
-    if let Type::Coproduct(ref coproduct) = type_constructor.clone().expand(ctx)? {
+    if let Type::Coproduct(ref coproduct) = type_constructor.clone().expand_type(ctx)? {
         let argument = infer_type(argument, ctx)?;
 
         if let Some(lhs) = coproduct.find_constructor(constructor) {
@@ -237,14 +223,9 @@ where
                 .substitutions
                 .compose(lhs.unify(rhs, annotation, &ctx)?);
 
-            let inferred_type = type_constructor.clone().apply(&substitutions);
+            let inferred_type = type_constructor.apply(&substitutions);
 
-            println!("infer_coproduct: {name} {constructor} -> {inferred_type}");
-
-            Ok(TypeInference {
-                substitutions,
-                inferred_type,
-            })
+            Ok(TypeInference::new(substitutions, inferred_type))
         } else {
             Err(TypeError::UndefinedCoproductConstructor {
                 coproduct: name.to_owned(),
@@ -280,17 +261,17 @@ where
         (Type::Product(ProductType::Tuple(elements)), ast::ProductIndex::Tuple(index))
             if *index < elements.len() =>
         {
-            Ok(TypeInference {
-                substitutions: base.substitutions,
-                inferred_type: elements[*index].clone(),
-            })
+            Ok(TypeInference::new(
+                base.substitutions,
+                elements[*index].clone(),
+            ))
         }
         (Type::Product(ProductType::Struct(elements)), ast::ProductIndex::Struct(id)) => {
             if let Some((_, inferred_type)) = elements.iter().find(|(field, _)| field == id) {
-                Ok(TypeInference {
-                    substitutions: base.substitutions,
-                    inferred_type: inferred_type.clone(),
-                })
+                Ok(TypeInference::new(
+                    base.substitutions,
+                    inferred_type.clone(),
+                ))
             } else {
                 Err(TypeError::BadProjection {
                     base: base.inferred_type,
@@ -325,10 +306,11 @@ where
         inferred_type,
     } = infer_type(body, &ctx.apply_substitutions(&bound.substitutions))?;
 
-    Ok(TypeInference {
-        substitutions: bound.substitutions.compose(substitutions),
+    // Think about a map_substitutions function
+    Ok(TypeInference::new(
+        bound.substitutions.compose(substitutions),
         inferred_type,
-    })
+    ))
 }
 
 fn infer_if_expression<A>(

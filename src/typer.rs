@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     fmt,
     slice::Iter,
 };
@@ -56,11 +56,7 @@ impl TypeScheme {
         let type_apply_tree = quantifiers.iter().fold(Type::Named(name), |tree, param| {
             Type::Apply(tree.into(), Type::Parameter(param.clone()).into())
         });
-
-        Self {
-            quantifiers: self.quantifiers,
-            body: type_apply_tree,
-        }
+        Self::new(&self.quantifiers, type_apply_tree)
     }
 
     pub fn instantiate(self, _ctx: &TypingContext) -> Typing<Type> {
@@ -133,7 +129,7 @@ impl Type {
         }
     }
 
-    pub fn expand(self, ctx: &TypingContext) -> Typing<Type> {
+    pub fn expand_type(self, ctx: &TypingContext) -> Typing<Type> {
         match self {
             Type::Named(name) => ctx
                 .lookup(&name.clone().into())
@@ -414,6 +410,22 @@ pub type Typing<A = TypeInference> = Result<A, TypeError>;
 pub struct TypeInference {
     pub substitutions: Substitutions,
     pub inferred_type: Type,
+}
+
+impl TypeInference {
+    pub fn trivially(this: Type) -> Self {
+        Self {
+            substitutions: Substitutions::default(),
+            inferred_type: this,
+        }
+    }
+
+    pub fn new(substitutions: Substitutions, inferred_type: Type) -> Self {
+        Self {
+            substitutions,
+            inferred_type,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Error)]
@@ -825,7 +837,7 @@ mod tests {
         //        );
 
         assert!(matches!(
-            t.inferred_type.expand(&ctx).unwrap(),
+            t.inferred_type.expand_type(&ctx).unwrap(),
             Type::Coproduct(CoproductType(ref variants))
                 if variants.len() == 2
                 && matches!(variants.as_slice(),
@@ -845,7 +857,7 @@ mod tests {
         let t = ctx.infer_type(&e).unwrap();
 
         assert_eq!(
-            t.inferred_type.expand(&ctx).unwrap(),
+            t.inferred_type.expand_type(&ctx).unwrap(),
             Type::Coproduct(CoproductType::new(vec![
                 ("The".to_owned(), Type::Constant(BaseType::Float)),
                 ("Nil".to_owned(), Type::Constant(BaseType::Unit)),

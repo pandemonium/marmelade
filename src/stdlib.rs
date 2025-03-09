@@ -89,7 +89,7 @@ mod tests {
     use crate::{
         ast::{Apply, Constant, Expression as E, Identifier},
         context::CompileState,
-        interpreter::{Base, RuntimeError},
+        interpreter::{Base, RuntimeError, Value},
         stdlib,
     };
 
@@ -172,7 +172,10 @@ mod tests {
         );
 
         assert_eq!(
-            RuntimeError::InapplicableLamda2,
+            RuntimeError::InapplicableLamda2 {
+                fst: Value::Base(Base::Float(1.5)),
+                snd: Value::Base(Base::Int(2))
+            },
             e.reduce(&mut context.interpreter_environment).unwrap_err()
         );
     }

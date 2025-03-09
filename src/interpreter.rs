@@ -394,7 +394,7 @@ pub enum RuntimeError {
     ExpectedSynthetic(Identifier),
 
     #[error("Not applicable")]
-    InapplicableLamda2,
+    InapplicableLamda2 { fst: Value, snd: Value },
 }
 
 pub type Interpretation<A = Value> = Result<A, RuntimeError>;
