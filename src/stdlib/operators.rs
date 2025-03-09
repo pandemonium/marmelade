@@ -3,7 +3,7 @@ use crate::{
     context::CompileState,
     interpreter::{Base, Interpretation, Value},
     lexer::Operator,
-    typer::{BaseType, Type, TypeParameter},
+    typer::{BaseType, Type, TypeParameter, TypeScheme},
 };
 
 // Think about the return type of this
@@ -42,26 +42,26 @@ pub fn import(env: &mut CompileState) -> Interpretation<()> {
     define(Modulo.id(), base_lambda2(modulo, binary()), env)
 }
 
-fn binary_to_bool() -> Type {
+fn binary_to_bool() -> TypeScheme {
     let ty = TypeParameter::fresh();
     let tp = Box::new(Type::Parameter(ty.clone()));
-    Type::Forall(
-        ty.clone(),
-        Type::Arrow(
+    TypeScheme {
+        quantifiers: vec![ty.clone()],
+        body: Type::Arrow(
             tp.clone(),
             Type::Arrow(tp, Type::Constant(BaseType::Bool).into()).into(),
-        )
-        .into(),
-    )
+        ),
+    }
 }
 
-fn binary() -> Type {
+fn binary() -> TypeScheme {
     let ty = TypeParameter::fresh();
     let tp = Box::new(Type::Parameter(ty.clone()));
-    Type::Forall(
-        ty.clone(),
-        Type::Arrow(tp.clone(), Type::Arrow(tp.clone(), tp).into()).into(),
-    )
+
+    TypeScheme {
+        quantifiers: vec![ty.clone()],
+        body: Type::Arrow(tp.clone(), Type::Arrow(tp.clone(), tp).into()),
+    }
 }
 
 pub fn equals(p: Value, q: Value) -> Option<Value> {
@@ -137,10 +137,6 @@ fn or(p: bool, q: bool) -> bool {
 
 fn xor(p: bool, q: bool) -> bool {
     p ^ q
-}
-
-fn tuple_cons(p: Value, q: Value) -> Value {
-    Value::Tuple(vec![p, q])
 }
 
 pub fn plus(p: Base, q: Base) -> Option<Base> {

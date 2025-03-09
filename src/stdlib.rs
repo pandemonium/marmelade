@@ -26,7 +26,10 @@ mod types {
         for ty in BASE_TYPES {
             context.typing_context.bind(
                 typer::Binding::TypeTerm(ty.type_name().as_str().to_owned()),
-                Type::Constant(ty.clone()),
+                typer::TypeScheme {
+                    quantifiers: vec![],
+                    body: Type::Constant(ty.clone()),
+                },
             );
         }
 

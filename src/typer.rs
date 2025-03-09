@@ -1,12 +1,16 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
     slice::Iter,
 };
 use thiserror::Error;
-use unification::Substitutions;
 
-use crate::{ast, lexer::SourcePosition, parser::ParsingInfo};
+use crate::{
+    ast::{self, Constructor, TypeName},
+    lexer::SourcePosition,
+    parser::ParsingInfo,
+};
+use unification::Substitutions;
 
 mod inferencing;
 mod unification;
@@ -23,14 +27,85 @@ pub trait Parsed {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TypeScheme {
+    pub quantifiers: Vec<TypeParameter>,
+    pub body: Type,
+}
+
+impl TypeScheme {
+    pub fn is_type_constructor(&self) -> bool {
+        println!("is_type_constructor: {self}");
+        !self.quantifiers.is_empty()
+    }
+
+    fn into_type_apply_tree(self, name: TypeName) -> TypeScheme {
+        println!("into_type_apply_tree: {name}");
+
+        let quantifiers = &self.quantifiers;
+        let type_apply_tree = quantifiers.iter().fold(Type::Alias(name), |tree, param| {
+            Type::Apply(tree.into(), Type::Parameter(param.clone()).into())
+        });
+
+        Self {
+            quantifiers: self.quantifiers,
+            body: type_apply_tree,
+        }
+    }
+
+    pub fn instantiate(self, _ctx: &TypingContext) -> Typing<Type> {
+        let mut subs = Substitutions::default();
+        for param in self.quantifiers {
+            subs.add(param, Type::fresh());
+        }
+        Ok(self.body.apply(&subs))
+    }
+
+    pub fn free_variables(&self) -> &[TypeParameter] {
+        &self.quantifiers
+    }
+
+    // LOTS and LOTS of cloning of this poor Substitutions
+    // Will I ever want to _not_ apply subs to the type scheme inside
+    // the typing context? So perhaps &mut self.
+    fn apply(self, subs: &Substitutions) -> TypeScheme {
+        let Self { quantifiers, body } = self;
+
+        let mut subs = subs.clone();
+        for q in &quantifiers {
+            subs.remove(&q);
+        }
+
+        Self {
+            quantifiers,
+            body: body.apply(&subs),
+        }
+    }
+}
+
+impl fmt::Display for TypeScheme {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { quantifiers, body } = self;
+        write!(
+            f,
+            "forall {}. {}",
+            quantifiers
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+            body
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Parameter(TypeParameter),
     Constant(BaseType),
     Product(ProductType),
     Coproduct(CoproductType),
     Arrow(Box<Type>, Box<Type>),
-    Forall(TypeParameter, Box<Type>),
-    Named(ast::TypeName),
+    Alias(ast::TypeName),
     Apply(Box<Type>, Box<Type>),
 }
 
@@ -42,49 +117,62 @@ impl Type {
             Self::Product(ty) => format!("Product({ty})"),
             Self::Coproduct(ty) => format!("Coproduct({ty})"),
             Self::Arrow(ty0, ty1) => format!("({} -> {})", ty0.description(), ty1.description()),
-            Self::Forall(tv, body) => format!("Forall({tv}, {})", body.description()),
-            Self::Named(nm) => format!("Named({nm})"),
+            Self::Alias(nm) => format!("Alias({nm})"),
             Self::Apply(ty0, ty1) => format!("{}[{}]", ty0.description(), ty1.description()),
         }
     }
 
-    pub fn generalize(self, ctx: &TypingContext) -> Type {
-        let context_variables = ctx.free_variables();
-        let type_variables = self.free_variables();
-        let non_quantified = type_variables.difference(&context_variables);
-
-        non_quantified.fold(self, |body, ty_var| Type::Forall(*ty_var, Box::new(body)))
-    }
-
-    pub fn expand(self, ctx: &TypingContext) -> Typing<Self> {
+    pub fn expand(self, ctx: &TypingContext) -> Typing<Type> {
         match self {
-            Self::Named(name) => ctx
-                .lookup(&Binding::TypeTerm(name.as_str().to_owned()))
-                .cloned()
-                .ok_or_else(|| TypeError::UndefinedType(name)),
-            Self::Apply(constructor, ref argument) => {
-                constructor.apply_constructor(*argument.clone(), ctx)
-            }
+            Type::Alias(name) => ctx
+                .lookup(&name.clone().into())
+                .ok_or_else(|| TypeError::UndefinedType(name))?
+                .instantiate(ctx),
+            Type::Apply(constuctor, at) => constuctor.apply_constructor(&mut vec![*at], ctx),
             otherwise => Ok(otherwise),
         }
     }
 
-    fn apply_constructor(self, at: Type, ctx: &TypingContext) -> Typing<Type> {
+    fn apply_constructor(self, arguments: &mut Vec<Type>, ctx: &TypingContext) -> Typing<Type> {
         match self {
-            Self::Forall(param, body) => {
-                let mut subs = Substitutions::default();
-                subs.add(param, at);
-                // Should sub here.
-                Ok(body.instantiate())
-            }
-            Self::Named(..) => self.expand(ctx)?.apply_constructor(at, ctx),
+            Type::Alias(name) => {
+                let TypeScheme {
+                    mut quantifiers,
+                    body,
+                } = ctx
+                    .lookup_scheme(&name.clone().into())
+                    .cloned()
+                    .ok_or_else(|| TypeError::UndefinedType(name))?;
 
+                let mut subs = Substitutions::default();
+                for (param, arg) in quantifiers.drain(..).zip(arguments.drain(..)) {
+                    subs.add(param, arg);
+                }
+
+                Ok(body.apply(&subs))
+            }
+            Type::Apply(constructor, at) => {
+                arguments.push(*at);
+                constructor.apply_constructor(arguments, ctx)
+            }
             otherwise => Err(TypeError::WrongKind(otherwise)),
         }
     }
 
+    pub fn generalize(self, ctx: &TypingContext) -> TypeScheme {
+        let context_variables = ctx.free_variables();
+        let type_variables = self.free_variables();
+        let free = type_variables.difference(&context_variables);
+
+        TypeScheme {
+            quantifiers: free.cloned().collect(),
+            body: self,
+        }
+    }
+
     fn apply(self, subs: &Substitutions) -> Self {
-        match self {
+        //        println!("apply: {:?} to {self}", &subs);
+        let ty = match self {
             // Recurse into apply here to apply the whole chain of
             // substitutions?
             Self::Parameter(param) => subs
@@ -96,23 +184,20 @@ impl Type {
             Self::Arrow(domain, codomain) => {
                 Self::Arrow(domain.apply(subs).into(), codomain.apply(subs).into())
             }
-            Self::Forall(param, body) => {
-                // This can be done without a Clone. Can add a closure method instead:
-                // subs.except(param, |subs| Self::Forall, etc.)
-                let mut subs = subs.clone();
-                subs.remove(&param);
-                Self::Forall(param, body.apply(&subs).into())
-            }
             Self::Coproduct(coproduct) => Self::Coproduct(coproduct.apply(subs)),
             Self::Product(product) => Self::Product(product.apply(subs)),
             Self::Apply(constructor, argument) => {
                 Self::Apply(constructor.apply(subs).into(), argument.apply(subs).into())
             }
             trivial => trivial,
-        }
+        };
+
+        //        println!("apply: {}", ty);
+
+        ty
     }
 
-    fn free_variables(&self) -> HashSet<TypeParameter> {
+    pub fn free_variables(&self) -> HashSet<TypeParameter> {
         match self {
             Self::Parameter(param) => HashSet::from([*param]),
             Self::Arrow(tv0, tv1) => {
@@ -130,29 +215,12 @@ impl Type {
                     .flat_map(|(_, ty)| ty.free_variables())
                     .collect(),
             },
-            Self::Forall(ty_var, ty) => {
-                let mut unbound = ty.free_variables();
-                unbound.remove(ty_var);
-                unbound
-            }
             Self::Apply(tv0, tv1) => {
                 let mut vars = tv0.free_variables();
                 vars.extend(tv1.free_variables());
                 vars
             }
             _trivial => HashSet::default(),
-        }
-    }
-
-    pub fn instantiate(&self) -> Type {
-        match self.clone() {
-            Type::Forall(param, body) => {
-                let fresh_param = TypeParameter::fresh();
-                let mut subs = Substitutions::default();
-                subs.add(param, Type::Parameter(fresh_param));
-                body.apply(&subs).instantiate()
-            }
-            otherwise => otherwise,
         }
     }
 
@@ -176,8 +244,7 @@ impl fmt::Display for Type {
             Self::Coproduct(ty) => write!(f, "{ty}"),
             Self::Product(ty) => write!(f, "{ty}"),
             Self::Arrow(ty0, ty1) => write!(f, "{ty0}->{ty1}"),
-            Self::Forall(ty_var, ty) => write!(f, "forall {ty_var}.{ty}"),
-            Self::Named(cons) => write!(f, "{cons}"),
+            Self::Alias(cons) => write!(f, "{cons}"),
             Self::Apply(cons, arg) => write!(f, "{cons}[{arg}]"),
         }
     }
@@ -386,6 +453,27 @@ pub enum Binding {
     ValueTerm(String),
 }
 
+impl Binding {
+    pub fn is_value_binding(&self) -> bool {
+        matches!(self, Self::ValueTerm(..))
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Binding::TypeTerm(name) | Binding::ValueTerm(name) => &name,
+        }
+    }
+}
+
+impl fmt::Display for Binding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TypeTerm(name) => write!(f, "Type@{name}"),
+            Self::ValueTerm(name) => write!(f, "Value@{name}"),
+        }
+    }
+}
+
 impl From<ast::Identifier> for Binding {
     fn from(value: ast::Identifier) -> Self {
         Binding::ValueTerm(value.as_str().to_owned())
@@ -401,16 +489,32 @@ impl From<ast::TypeName> for Binding {
 // Couldn't this also be a Vec?
 // It ought to be hierarchical just like the Environment in the interpreter.
 #[derive(Debug, Clone, Default)]
-pub struct TypingContext(HashMap<Binding, Type>);
+pub struct TypingContext {
+    bindings: HashMap<Binding, TypeScheme>,
+}
 
 impl TypingContext {
-    pub fn bind(&mut self, binding: Binding, ty: Type) {
-        self.0.insert(binding, ty.clone());
+    pub fn bind(&mut self, binding: Binding, scheme: TypeScheme) {
+        println!("bind: {binding} {scheme}");
+        self.bindings.insert(binding, scheme);
     }
 
-    fn lookup(&self, binding: &Binding) -> Option<&Type> {
-        let Self(map) = self;
-        map.get(binding)
+    fn lookup(&self, binding: &Binding) -> Option<TypeScheme> {
+        let scheme = self.bindings.get(binding).cloned()?;
+
+        println!("lookup: {binding} -> {scheme}");
+
+        let scheme = if !binding.is_value_binding() && scheme.is_type_constructor() {
+            scheme.into_type_apply_tree(TypeName::new(binding.as_str()))
+        } else {
+            scheme
+        };
+
+        Some(scheme)
+    }
+
+    fn lookup_scheme(&self, binding: &Binding) -> Option<&TypeScheme> {
+        self.bindings.get(binding)
     }
 
     pub fn infer_type<A>(&self, e: &ast::Expression<A>) -> Typing
@@ -421,23 +525,31 @@ impl TypingContext {
     }
 
     fn free_variables(&self) -> HashSet<TypeParameter> {
-        let Self(map) = self;
-        map.values().flat_map(|ty| ty.free_variables()).collect()
+        let mut quantified = HashSet::new();
+        let mut parameters = HashSet::default();
+
+        for TypeScheme { quantifiers, body } in self.bindings.values() {
+            quantified.extend(quantifiers);
+            parameters.extend(body.free_variables());
+        }
+
+        parameters.difference(&quantified).cloned().collect()
     }
 
     fn apply_substitutions(&self, subs: &Substitutions) -> Self {
-        let Self(map) = self;
+        let mut ctx = self.clone();
 
-        let mut map = map.clone();
-        map.values_mut().for_each(|ty| *ty = ty.clone().apply(subs));
+        for scheme in ctx.bindings.values_mut() {
+            *scheme = scheme.clone().apply(subs)
+        }
 
-        Self(map)
+        ctx
     }
 }
 
 impl fmt::Display for TypingContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (binding, ty) in &self.0 {
+        for (binding, ty) in &self.bindings {
             match binding {
                 Binding::TypeTerm(id) => writeln!(f, "{id} ::= {ty}")?,
                 Binding::ValueTerm(id) => writeln!(f, "{id} :: {ty}")?,
@@ -487,7 +599,7 @@ mod tests {
     use crate::{
         ast::{self, Apply, Inject, Lambda, Project, TypeExpression, TypeName},
         parser::ParsingInfo,
-        typer::{BaseType, ProductType, Type, TypeParameter},
+        typer::{BaseType, ProductType, Type, TypeParameter, TypeScheme},
     };
 
     fn mk_apply<A>(f: ast::Expression<A>, arg: ast::Expression<A>) -> ast::Expression<A>
@@ -503,6 +615,7 @@ mod tests {
         )
     }
 
+    // Weird that it is unable to type this as forall a. \a. a
     fn mk_identity() -> ast::Expression<ParsingInfo> {
         ast::Expression::Lambda(
             ParsingInfo::default(),
@@ -584,14 +697,14 @@ mod tests {
         let mut ctx = TypingContext::default();
         ctx.bind(
             Binding::TypeTerm("builtin::Int".to_owned()),
-            Type::Constant(BaseType::Int),
+            Type::Constant(BaseType::Int).generalize(&ctx),
         );
         ctx.bind(
             Binding::TypeTerm("builtin::Float".to_owned()),
-            Type::Constant(BaseType::Float),
+            Type::Constant(BaseType::Float).generalize(&ctx),
         );
 
-        let e = mk_apply(
+        let _e = mk_apply(
             mk_identity(),
             ast::Expression::Product(
                 ParsingInfo::default(),
@@ -608,17 +721,39 @@ mod tests {
                 ])),
             ),
         );
-        let t = ctx.infer_type(&e).unwrap();
+
+        println!("applies: Killroy!");
+
+        let t = ctx
+            .infer_type(&ast::Expression::Product(
+                ParsingInfo::default(),
+                ast::Product::Struct(Vec::from([
+                    (ast::Identifier::new("id"), mk_identity()),
+                    (
+                        ast::Identifier::new("x"),
+                        mk_constant(ast::Constant::Int(1)),
+                    ),
+                    (
+                        ast::Identifier::new("y"),
+                        mk_constant(ast::Constant::Float(1.0)),
+                    ),
+                ])),
+            ))
+            .unwrap();
+        println!("Killroy: {}", t.inferred_type);
+
         let expected_type = Type::Product(ProductType::Struct(Vec::from([
             (ast::Identifier::new("id"), mk_identity_type()),
             (ast::Identifier::new("x"), mk_constant_type(BaseType::Int)),
             (ast::Identifier::new("y"), mk_constant_type(BaseType::Float)),
         ])));
+
         t.inferred_type.unify(&expected_type, &(), &ctx).unwrap();
 
         let e = mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0)));
         let t = ctx.infer_type(&e).unwrap();
 
+        // it has not applied the type parameters
         assert_eq!(t.inferred_type, mk_constant_type(BaseType::Float));
 
         let abs = ast::Expression::Lambda(
@@ -647,14 +782,14 @@ mod tests {
         let t = TypeParameter::fresh();
         ctx.bind(
             Binding::TypeTerm("Option".to_owned()),
-            Type::Forall(
-                t,
-                Type::Coproduct(CoproductType::new(vec![
+            TypeScheme {
+                quantifiers: vec![t],
+                body: Type::Coproduct(CoproductType::new(vec![
                     ("The".to_owned(), Type::Parameter(t)),
                     ("Nil".to_owned(), Type::Constant(BaseType::Unit)),
                 ]))
                 .into(),
-            ),
+            },
         );
 
         let e = ast::Expression::Inject(
@@ -679,7 +814,7 @@ mod tests {
         //        );
 
         assert!(matches!(
-            t.inferred_type,
+            t.inferred_type.expand(&ctx).unwrap(),
             Type::Coproduct(CoproductType(ref variants))
                 if variants.len() == 2
                 && matches!(variants.as_slice(),
@@ -699,7 +834,7 @@ mod tests {
         let t = ctx.infer_type(&e).unwrap();
 
         assert_eq!(
-            t.inferred_type,
+            t.inferred_type.expand(&ctx).unwrap(),
             Type::Coproduct(CoproductType::new(vec![
                 ("The".to_owned(), Type::Constant(BaseType::Float)),
                 ("Nil".to_owned(), Type::Constant(BaseType::Unit)),
@@ -714,10 +849,7 @@ mod tests {
         let t = TypeParameter::fresh();
         ctx.bind(
             Binding::ValueTerm("id".to_owned()),
-            Type::Arrow(Type::Parameter(t).into(), Type::Parameter(t).into()).into(),
-            //            Type::Forall(
-            //                t,
-            //            ),
+            Type::Arrow(Type::Parameter(t).into(), Type::Parameter(t).into()).generalize(&ctx),
         );
 
         let e = mk_apply(
@@ -751,7 +883,10 @@ mod tests {
     #[test]
     fn rank_n() {
         let mut gamma = TypingContext::default();
-        gamma.bind(Binding::TypeTerm("Id".to_owned()), mk_identity_type());
+        gamma.bind(
+            Binding::TypeTerm("Id".to_owned()),
+            mk_identity_type().generalize(&gamma),
+        );
 
         let apply_to_five_expr = ast::Expression::Lambda(
             ParsingInfo::default(),
@@ -781,7 +916,10 @@ mod tests {
         let t = gamma.infer_type(&apply_to_five_expr).unwrap();
         println!("t::{t:?}");
 
-        gamma.bind(Binding::ValueTerm("id".to_owned()), mk_identity_type());
+        gamma.bind(
+            Binding::ValueTerm("id".to_owned()),
+            mk_identity_type().generalize(&gamma),
+        );
 
         let apply_to_five_to_id = ast::Expression::Apply(
             ParsingInfo::default(),

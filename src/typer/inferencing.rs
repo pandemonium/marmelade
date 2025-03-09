@@ -1,11 +1,11 @@
-use std::{collections::HashMap, fmt, thread, time::Duration};
+use std::{collections::HashMap, fmt};
 
 use crate::{
     ast,
     parser::ParsingInfo,
     typer::{
         unification::Substitutions, BaseType, Parsed, ProductType, Type, TypeError, TypeInference,
-        Typing, TypingContext,
+        TypeScheme, Typing, TypingContext,
     },
 };
 
@@ -35,10 +35,12 @@ where
     match expr {
         ast::Expression::Variable(_, binding) | ast::Expression::InvokeBridge(_, binding) => {
             println!("infer_type: variable `{binding}`");
-            if let Some(ty) = ctx.lookup(&binding.clone().into()) {
+            if let Some(scheme) = ctx.lookup(&binding.clone().into()) {
                 Ok(TypeInference {
+                    // make a helper constructor for this
+                    // TypeInference::monotype(ty) or something
                     substitutions: Substitutions::default(),
-                    inferred_type: ty.instantiate(),
+                    inferred_type: scheme.instantiate(ctx)?,
                 })
             } else {
                 Err(TypeError::UndefinedSymbol(binding.clone()))
@@ -54,7 +56,13 @@ where
             },
         ) => {
             let mut ctx = ctx.clone();
-            ctx.bind(name.clone().into(), Type::fresh());
+            ctx.bind(
+                name.clone().into(),
+                TypeScheme {
+                    quantifiers: vec![],
+                    body: Type::fresh(),
+                },
+            );
             infer_lambda(parameter, body, &annotation.info(), &ctx)
         }
         ast::Expression::Lambda(annotation, ast::Lambda { parameter, body }) => {
@@ -108,21 +116,27 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     let expected_param_type = if let Some(type_expr) = type_annotation {
-        type_expr
-            .clone()
-            .synthesize_type(&mut HashMap::default())
-            .instantiate()
-            .expand(ctx)?
+        type_expr.clone().synthesize_type(&mut HashMap::default())
+        //            .expand(ctx)?
     } else {
         Type::fresh()
     };
 
+    let expected_param_type = Type::fresh();
+
     let mut ctx = ctx.clone();
-    ctx.bind(name.clone().into(), expected_param_type.clone());
+    ctx.bind(
+        name.clone().into(),
+        TypeScheme {
+            quantifiers: vec![],
+            body: expected_param_type.clone(),
+        },
+    );
 
-    println!("infer_lambda: >>> body {body}");
-
+    println!("infer_lambda: {body}");
     let body = infer_type(body, &ctx)?;
+
+    println!("infer_lambda2: {}", body.inferred_type);
 
     let inferred_param_type = expected_param_type.clone().apply(&body.substitutions);
 
@@ -131,8 +145,7 @@ where
     let function_type = Type::Arrow(
         inferred_param_type.apply(&annotation_unification).into(),
         body.inferred_type.into(),
-    )
-    .generalize(&ctx);
+    );
 
     Ok(TypeInference {
         substitutions: body.substitutions.compose(annotation_unification),
@@ -170,8 +183,6 @@ where
     let mut substitutions = Substitutions::default();
     let mut types = Vec::with_capacity(elements.len());
 
-    println!(">>>>>>>>>>>>> INFER TUPLE");
-
     for element in elements.iter().rev() {
         let element = ctx.infer_type(element)?;
 
@@ -194,6 +205,9 @@ where
     })
 }
 
+// What does this function really do?
+// It should actually check the supplied parameters against the constructor (tuple) type
+// and it checks, then return the coproduct type scheme
 fn infer_coproduct<A>(
     name: &ast::TypeName,
     constructor: &ast::Identifier,
@@ -204,20 +218,29 @@ fn infer_coproduct<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    if let ref constructed_type @ Type::Coproduct(ref coproduct) = ctx
+    println!("infer_coproduct: {name} {constructor}");
+
+    let type_constructor = ctx
         .lookup(&name.clone().into())
-        .ok_or_else(|| TypeError::UndefinedType(name.clone()))
-        .map(|ty| ty.instantiate())?
-    {
-        //        let constructed_type = constructed_type.instantiate();
+        .ok_or_else(|| TypeError::UndefinedType(name.clone()))?
+        .instantiate(ctx)?;
+
+    println!("infer_coproduct: Type Constructor {type_constructor}");
+
+    if let Type::Coproduct(ref coproduct) = type_constructor.clone().expand(ctx)? {
         let argument = infer_type(argument, ctx)?;
-        if let Some(rhs) = coproduct.find_constructor(constructor) {
-            let lhs = &argument.inferred_type;
+
+        if let Some(lhs) = coproduct.find_constructor(constructor) {
+            let rhs = &argument.inferred_type;
 
             let substitutions = argument
                 .substitutions
                 .compose(lhs.unify(rhs, annotation, &ctx)?);
-            let inferred_type = constructed_type.clone().apply(&substitutions);
+
+            let inferred_type = type_constructor.clone().apply(&substitutions);
+
+            println!("infer_coproduct: {name} {constructor} -> {inferred_type}");
+
             Ok(TypeInference {
                 substitutions,
                 inferred_type,
@@ -374,11 +397,11 @@ fn infer_application<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    let function = infer_type(function, ctx)?;
-    println!("infer_application: {}", function.inferred_type);
+    println!("infer_application1: {function}!");
+    let function = infer_type(function, &ctx)?;
 
-    let ctx = ctx.apply_substitutions(&function.substitutions);
-    let argument = infer_type(argument, &ctx)?;
+    let argument = infer_type(argument, &ctx.apply_substitutions(&function.substitutions))?;
+    println!("infer_application: {}", function.inferred_type);
 
     let return_type = Type::fresh();
 

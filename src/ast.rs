@@ -8,7 +8,7 @@ use crate::{
     interpreter::DependencyGraph,
     lexer::{self, SourcePosition},
     parser::ParsingInfo,
-    typer::{CoproductType, ProductType, Type, TypeParameter},
+    typer::{CoproductType, ProductType, Type, TypeParameter, TypeScheme},
 };
 
 #[derive(Debug)]
@@ -296,7 +296,7 @@ where
         }
     }
 
-    fn synthesize_type(&self) -> Type {
+    fn synthesize_type(&self) -> TypeScheme {
         let Self(cs) = self;
         let mut type_parameters = HashMap::default();
         let underlying_type = Type::Coproduct(CoproductType::new(
@@ -317,15 +317,16 @@ where
                 .collect(),
         ));
 
-        type_parameters.values().fold(underlying_type, |ty, param| {
-            Type::Forall(param.clone(), ty.into())
-        })
+        TypeScheme {
+            quantifiers: type_parameters.values().cloned().collect(),
+            body: underlying_type,
+        }
     }
 }
 
 pub struct CoproductModule<A> {
     pub name: TypeName,
-    pub declaring_type: Type,
+    pub declaring_type: TypeScheme,
     pub constructors: Vec<ValueDeclaration<A>>,
 }
 
@@ -359,7 +360,7 @@ where
         }
     }
 
-    pub fn synthesize_type(&self) -> Type {
+    pub fn synthesize_type(&self) -> TypeScheme {
         match self {
             Self::Alias(..) => todo!(),
             Self::Coproduct(_, coproduct) => coproduct.synthesize_type(),
@@ -545,7 +546,7 @@ impl<A> TypeExpression<A> {
             type_params: &mut HashMap<String, TypeParameter>,
         ) -> Type {
             match expr {
-                TypeExpression::Constant(name) => Type::Named(name.to_owned()),
+                TypeExpression::Constant(name) => Type::Alias(name.to_owned()),
                 TypeExpression::Parameter(TypeName(param)) => Type::Parameter(
                     *type_params
                         .entry(param.to_owned())
@@ -1362,7 +1363,7 @@ mod tests {
     }
 
     //    #[test]
-    fn top_of_the_day() {
+    fn _top_of_the_day() {
         let m = ModuleDeclarator {
             name: Identifier::new(""),
             declarations: vec![

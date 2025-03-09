@@ -2,7 +2,7 @@ use crate::{
     ast::{Expression, Identifier, Lambda, Parameter},
     context::CompileState,
     interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
-    typer::{BaseType, ProductType, Type, TypeParameter},
+    typer::{BaseType, ProductType, Type, TypeParameter, TypeScheme},
 };
 
 pub type InvocationResult<A> = Result<A, RuntimeError>;
@@ -23,7 +23,7 @@ impl BridgingInfo {
 pub trait Bridge {
     fn arity(&self) -> usize;
     fn evaluate(&self, e: &Environment) -> InvocationResult<Value>;
-    fn synthesize_type(&self) -> Type;
+    fn synthesize_type(&self) -> TypeScheme;
 
     fn generate_lambda_tree(&self, target: Identifier) -> Expression<BridgingInfo> {
         let info = BridgingInfo::new(target.clone());
@@ -86,9 +86,11 @@ where
         Ok(f(e.lookup(&Identifier::new("p0")).cloned()?.try_into()?).into())
     }
 
-    fn synthesize_type(&self) -> Type {
-        // Call into the typer here?
-        Type::Arrow(A::synthesize_type().into(), R::synthesize_type().into())
+    fn synthesize_type(&self) -> TypeScheme {
+        TypeScheme {
+            quantifiers: vec![],
+            body: Type::Arrow(A::synthesize_type().into(), R::synthesize_type().into()),
+        }
     }
 }
 
@@ -113,12 +115,14 @@ where
         .into())
     }
 
-    fn synthesize_type(&self) -> Type {
-        // Call into the typer here?
-        Type::Arrow(
-            A::synthesize_type().into(),
-            Type::Arrow(B::synthesize_type().into(), R::synthesize_type().into()).into(),
-        )
+    fn synthesize_type(&self) -> TypeScheme {
+        TypeScheme {
+            quantifiers: vec![],
+            body: Type::Arrow(
+                A::synthesize_type().into(),
+                Type::Arrow(B::synthesize_type().into(), R::synthesize_type().into()).into(),
+            ),
+        }
     }
 }
 
@@ -138,12 +142,13 @@ where
         Ok(self.0.clone()(p0).into())
     }
 
-    fn synthesize_type(&self) -> Type {
+    fn synthesize_type(&self) -> TypeScheme {
         let ty = TypeParameter::fresh();
-        Type::Forall(
-            ty.clone(),
-            Type::Arrow(Type::Parameter(ty).into(), R::synthesize_type().into()).into(),
-        )
+
+        TypeScheme {
+            quantifiers: vec![ty.clone()],
+            body: Type::Arrow(Type::Parameter(ty).into(), R::synthesize_type().into()).into(),
+        }
     }
 }
 
@@ -176,10 +181,10 @@ impl Bridge for TupleConsSyntax {
         Ok(tuple)
     }
 
-    fn synthesize_type(&self) -> Type {
+    fn synthesize_type(&self) -> TypeScheme {
         let p = TypeParameter::fresh();
         let q = TypeParameter::fresh();
-        let arrow = Type::Arrow(
+        let body = Type::Arrow(
             Type::Parameter(p).into(),
             Type::Arrow(
                 Type::Parameter(q).into(),
@@ -190,10 +195,12 @@ impl Bridge for TupleConsSyntax {
                 .into(),
             )
             .into(),
-        )
-        .into();
+        );
 
-        Type::Forall(p.clone(), Type::Forall(q.clone(), arrow).into())
+        TypeScheme {
+            quantifiers: vec![p, q],
+            body,
+        }
     }
 }
 
@@ -204,7 +211,7 @@ impl Bridge for TupleConsSyntax {
 #[derive(Debug, Clone)]
 pub struct PartialRawLambda2<F> {
     pub apply: F,
-    pub signature: Type,
+    pub signature: TypeScheme,
 }
 
 impl<F> Bridge for PartialRawLambda2<F>
@@ -224,7 +231,7 @@ where
         // bring in arguments here later
     }
 
-    fn synthesize_type(&self) -> Type {
+    fn synthesize_type(&self) -> TypeScheme {
         self.signature.clone()
     }
 }

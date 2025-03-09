@@ -9,7 +9,8 @@ use marmelade::{
     parser::ParsingInfo,
     stdlib,
     typer::{
-        Binding, CoproductType, ProductType, Type, TypeInference, TypeParameter, TypingContext,
+        Binding, CoproductType, ProductType, Type, TypeInference, TypeParameter, TypeScheme,
+        TypingContext,
     },
 };
 use tools::*;
@@ -30,12 +31,17 @@ fn list_type() {
             "Cons".to_owned(),
             Type::Product(ProductType::Tuple(vec![
                 ty.clone(),
-                Type::Apply(Type::Named(TypeName::new("List")).into(), ty.into()),
+                Type::Apply(Type::Alias(TypeName::new("List")).into(), ty.into()),
             ])),
         ),
         ("Nil".to_owned(), Type::Product(ProductType::Tuple(vec![]))), // hmm
     ]));
-    let lhs = Type::Forall(tp, lhs.into());
+
+    let lhs = TypeScheme {
+        quantifiers: vec![tp],
+        body: lhs,
+    };
+
     assert_eq!(lhs, rhs.synthesize_type());
 }
 
@@ -108,7 +114,7 @@ fn type_expansions() {
         }
     }
 
-    let abbreviation = TypeExpression::<()>::Apply(
+    let _abbreviation = TypeExpression::<()>::Apply(
         TypeApply {
             constructor: TypeExpression::Constant(TypeName::new("List")).into(),
             argument: TypeExpression::Parameter(TypeName::new("a")).into(),
@@ -117,16 +123,15 @@ fn type_expansions() {
     )
     .synthesize_type(&mut HashMap::default());
 
-    println!(
-        "-------> {:?}",
-        abbreviation.expand(&ctx).unwrap().unify(
-            &list_declaration
-                .synthesize_type()
-                .instantiate()
-                .expand(&ctx)
-                .unwrap(),
-            &(),
-            &ctx
-        )
-    );
+    //    println!(
+    //        "-------> {:?}",
+    //        abbreviation.expand(&ctx).unwrap().unify(
+    //            &list_declaration.synthesize_type(),
+    //            //                .instantiate()
+    //            //                .expand(&ctx)
+    //            //.unwrap(),
+    //            &(),
+    //            &ctx
+    //        )
+    //    );
 }

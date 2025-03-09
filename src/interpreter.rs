@@ -132,6 +132,11 @@ impl Interpreter {
         for (binding, coproduct) in type_bindings {
             let coproduct = coproduct
                 .make_implementation_module(annotation.clone(), TypeName::new(binding.as_str()));
+
+            println!(
+                "inject_types_and_synthetics: {} ::= {}",
+                coproduct.name, coproduct.declaring_type
+            );
             typing_context.bind(coproduct.name.into(), coproduct.declaring_type);
 
             // Should I bind types for the constructor functions here too?

@@ -8,7 +8,7 @@ use crate::{
     ast::{
         Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration, ValueDeclarator,
     },
-    typer::{Parsed, TypeError, TypeInference, Typing, TypingContext},
+    typer::{Parsed, TypeError, TypeInference, TypeScheme, Typing, TypingContext},
 };
 
 pub struct ModuleLoader<'a, A> {
@@ -52,19 +52,16 @@ where
                     .infer_declaration_type(id, &typing_context)?
                     .inferred_type;
 
-                println!("type_check: `{id}` `{declaration_type}`");
+                let scheme = TypeScheme {
+                    quantifiers: declaration_type.free_variables().iter().cloned().collect(),
+                    body: declaration_type,
+                };
 
-                typing_context.bind(
-                    id.clone().into(),
-                    // What about the substitutions?
-                    // Can I build a huge Substitutions table for
-                    // all symbols here?
-                    declaration_type,
-                );
+                println!("type_check: `{id}` `{scheme}`");
+
+                typing_context.bind(id.clone().into(), scheme);
             }
         }
-
-        // Make sure main exists and has the correct type
 
         Ok(self)
     }
@@ -150,10 +147,9 @@ where
             }
         };
 
-        let infer_type = typing_context.infer_type(&expression);
+        println!("infer_declarator_type: {}", expression);
 
-        infer_type
-            .inspect(|t| println!("infer_declarator_type: {expression} :: {}", t.inferred_type))
+        typing_context.infer_type(&expression)
     }
 }
 

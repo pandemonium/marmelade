@@ -29,6 +29,8 @@ where
     A: Parsed,
 {
     fn new(annotation: &'a A, ctx: &'a TypingContext) -> Self {
+        println!("-------> New Unification Context");
+
         Self {
             annotation,
             ctx,
@@ -47,23 +49,24 @@ where
     fn unify(&mut self, lhs: &Type, rhs: &Type) -> Typing<Substitutions> {
         let uni = match (lhs, rhs) {
             (Type::Constant(t), Type::Constant(u)) if t == u => Ok(Substitutions::default()),
-            //            (Type::Parameter(t), Type::Parameter(u)) if t == u => Ok(Substitutions::default()),
+            (Type::Parameter(t), Type::Parameter(u)) if t == u => Ok(Substitutions::default()),
             (Type::Apply(lhs_constructor, lhs_at), Type::Apply(rhs_constructor, rhs_at))
                 if lhs_constructor == rhs_constructor && lhs_at == rhs_at =>
             {
                 Ok(Substitutions::default())
             }
-            _otherwise => self.unify_expanded(
-                lhs.clone().instantiate().expand(self.ctx)?,
-                rhs.clone().instantiate().expand(self.ctx)?,
-            ),
+            _otherwise => self.unify_expanded(lhs.clone(), rhs.clone()),
         };
 
         uni.inspect(|x| println!("unify unified: {lhs} with {rhs}, with {x:?}"))
     }
 
     fn unify_expanded(&mut self, lhs: Type, rhs: Type) -> Typing<Substitutions> {
-        println!("unify: {} and {}", lhs.description(), rhs.description());
+        println!(
+            "unify_expanded: {} and {}",
+            lhs.description(),
+            rhs.description()
+        );
 
         match (lhs, rhs) {
             (Type::Constant(t), Type::Constant(u)) if t == u => Ok(Substitutions::default()),
@@ -99,15 +102,19 @@ where
                 self.unify_structs(&lhs, &rhs)
             }
             ref relation @ (Type::Coproduct(ref lhs), Type::Coproduct(ref rhs))
-                if true || !self.is_reentrant(&relation) =>
+                if !self.is_reentrant(&relation) =>
             {
-                //                self.enter(relation.clone());
+                //        self.enter(relation.clone());
                 self.unify_coproducts(&lhs, &rhs)
             }
             (Type::Arrow(lhs_domain, lhs_codomain), Type::Arrow(rhs_domain, rhs_codomain)) => {
+                //                let lhs_domain = self.expand_type(*lhs_domain.clone())?;
+                //                let rhs_domain = self.expand_type(*rhs_domain.clone())?;
                 let domain = self.unify(
-                    &lhs_domain.clone().expand(self.ctx)?,
-                    &rhs_domain.clone().expand(self.ctx)?,
+                    //                    &lhs_domain.clone().expand(self.ctx)?,
+                    //                    &rhs_domain.clone().expand(self.ctx)?,
+                    &lhs_domain,
+                    &rhs_domain,
                 )?;
 
                 let codomain = self.unify(
@@ -270,11 +277,6 @@ impl Substitutions {
 
         let Self(lhs) = self;
         composed.extend(lhs.clone());
-
-        //        for (param, ty) in lhs {
-        //            let new_type = ty.clone().apply(&Self(composed.clone()));
-        //            composed.insert(param.clone(), new_type);
-        //        }
 
         Self(composed)
     }
