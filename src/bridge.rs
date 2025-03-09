@@ -87,10 +87,10 @@ where
     }
 
     fn synthesize_type(&self) -> TypeScheme {
-        TypeScheme {
-            quantifiers: vec![],
-            body: Type::Arrow(A::synthesize_type().into(), R::synthesize_type().into()),
-        }
+        TypeScheme::from_constant(Type::Arrow(
+            A::synthesize_type().into(),
+            R::synthesize_type().into(),
+        ))
     }
 }
 
@@ -116,13 +116,10 @@ where
     }
 
     fn synthesize_type(&self) -> TypeScheme {
-        TypeScheme {
-            quantifiers: vec![],
-            body: Type::Arrow(
-                A::synthesize_type().into(),
-                Type::Arrow(B::synthesize_type().into(), R::synthesize_type().into()).into(),
-            ),
-        }
+        TypeScheme::from_constant(Type::Arrow(
+            A::synthesize_type().into(),
+            Type::Arrow(B::synthesize_type().into(), R::synthesize_type().into()).into(),
+        ))
     }
 }
 
@@ -143,12 +140,11 @@ where
     }
 
     fn synthesize_type(&self) -> TypeScheme {
-        let ty = TypeParameter::fresh();
-
-        TypeScheme {
-            quantifiers: vec![ty.clone()],
-            body: Type::Arrow(Type::Parameter(ty).into(), R::synthesize_type().into()).into(),
-        }
+        let alpha = TypeParameter::fresh();
+        TypeScheme::new(
+            &[alpha],
+            Type::Arrow(Type::Parameter(alpha).into(), R::synthesize_type().into()),
+        )
     }
 }
 
@@ -164,12 +160,6 @@ impl Bridge for TupleConsSyntax {
     fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
         let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
         let p1 = e.lookup(&Identifier::new("p1")).cloned()?;
-
-        // see what p1 is.
-        // if it is a tuple, then "cons" p0
-        // otherwise: cons p1 to (), and p0 to that
-        //
-        // But what is my type?
 
         let tuple = if let Value::Tuple(mut xs) = p1 {
             xs.insert(0, p0);
@@ -197,10 +187,7 @@ impl Bridge for TupleConsSyntax {
             .into(),
         );
 
-        TypeScheme {
-            quantifiers: vec![p, q],
-            body,
-        }
+        TypeScheme::new(&[p, q], body)
     }
 }
 

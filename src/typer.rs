@@ -6,7 +6,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    ast::{self, Constructor, TypeName},
+    ast::{self, TypeName},
     lexer::SourcePosition,
     parser::ParsingInfo,
 };
@@ -33,16 +33,27 @@ pub struct TypeScheme {
 }
 
 impl TypeScheme {
+    pub fn new(quantifiers: &[TypeParameter], body: Type) -> Self {
+        Self {
+            quantifiers: quantifiers.to_vec(),
+            body,
+        }
+    }
+
+    pub fn from_constant(body: Type) -> Self {
+        Self {
+            quantifiers: vec![],
+            body,
+        }
+    }
+
     pub fn is_type_constructor(&self) -> bool {
-        println!("is_type_constructor: {self}");
         !self.quantifiers.is_empty()
     }
 
     fn into_type_apply_tree(self, name: TypeName) -> TypeScheme {
-        println!("into_type_apply_tree: {name}");
-
         let quantifiers = &self.quantifiers;
-        let type_apply_tree = quantifiers.iter().fold(Type::Alias(name), |tree, param| {
+        let type_apply_tree = quantifiers.iter().fold(Type::Named(name), |tree, param| {
             Type::Apply(tree.into(), Type::Parameter(param.clone()).into())
         });
 
@@ -105,7 +116,7 @@ pub enum Type {
     Product(ProductType),
     Coproduct(CoproductType),
     Arrow(Box<Type>, Box<Type>),
-    Alias(ast::TypeName),
+    Named(ast::TypeName),
     Apply(Box<Type>, Box<Type>),
 }
 
@@ -117,14 +128,14 @@ impl Type {
             Self::Product(ty) => format!("Product({ty})"),
             Self::Coproduct(ty) => format!("Coproduct({ty})"),
             Self::Arrow(ty0, ty1) => format!("({} -> {})", ty0.description(), ty1.description()),
-            Self::Alias(nm) => format!("Alias({nm})"),
+            Self::Named(nm) => format!("Alias({nm})"),
             Self::Apply(ty0, ty1) => format!("{}[{}]", ty0.description(), ty1.description()),
         }
     }
 
     pub fn expand(self, ctx: &TypingContext) -> Typing<Type> {
         match self {
-            Type::Alias(name) => ctx
+            Type::Named(name) => ctx
                 .lookup(&name.clone().into())
                 .ok_or_else(|| TypeError::UndefinedType(name))?
                 .instantiate(ctx),
@@ -135,7 +146,7 @@ impl Type {
 
     fn apply_constructor(self, arguments: &mut Vec<Type>, ctx: &TypingContext) -> Typing<Type> {
         match self {
-            Type::Alias(name) => {
+            Type::Named(name) => {
                 let TypeScheme {
                     mut quantifiers,
                     body,
@@ -244,7 +255,7 @@ impl fmt::Display for Type {
             Self::Coproduct(ty) => write!(f, "{ty}"),
             Self::Product(ty) => write!(f, "{ty}"),
             Self::Arrow(ty0, ty1) => write!(f, "{ty0}->{ty1}"),
-            Self::Alias(cons) => write!(f, "{cons}"),
+            Self::Named(cons) => write!(f, "{cons}"),
             Self::Apply(cons, arg) => write!(f, "{cons}[{arg}]"),
         }
     }

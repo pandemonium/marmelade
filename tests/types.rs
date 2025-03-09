@@ -31,7 +31,7 @@ fn list_type() {
             "Cons".to_owned(),
             Type::Product(ProductType::Tuple(vec![
                 ty.clone(),
-                Type::Apply(Type::Alias(TypeName::new("List")).into(), ty.into()),
+                Type::Apply(Type::Named(TypeName::new("List")).into(), ty.into()),
             ])),
         ),
         ("Nil".to_owned(), Type::Product(ProductType::Tuple(vec![]))), // hmm

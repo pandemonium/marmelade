@@ -47,7 +47,30 @@ fn coproduct_list() {
 fn eval_coproduct_list() {
     eval_fixture(
         r#"|List ::= Cons a (List a) | Nil
-           |main = Cons 1 Nil
+           |main = Cons 1 (Cons 2 Nil)
+           "#,
+        Value::Coproduct {
+            name: TypeName::new("List"),
+            constructor: Identifier::new("Cons"),
+            value: Value::Tuple(vec![
+                Value::Base(Base::Int(1)),
+                Value::Coproduct {
+                    name: TypeName::new("List"),
+                    constructor: Identifier::new("Nil"),
+                    value: Value::Tuple(vec![]).into(),
+                },
+            ])
+            .into(),
+        },
+    );
+}
+
+#[test]
+fn eval_coproduct_eval() {
+    eval_fixture(
+        r#"|Eval ::= Return a | Fault e
+           |fail = Fault "hej"
+           |main = Return 1
            "#,
         Value::Coproduct {
             name: TypeName::new("List"),

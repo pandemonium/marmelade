@@ -546,7 +546,7 @@ impl<A> TypeExpression<A> {
             type_params: &mut HashMap<String, TypeParameter>,
         ) -> Type {
             match expr {
-                TypeExpression::Constant(name) => Type::Alias(name.to_owned()),
+                TypeExpression::Constant(name) => Type::Named(name.to_owned()),
                 TypeExpression::Parameter(TypeName(param)) => Type::Parameter(
                     *type_params
                         .entry(param.to_owned())
