@@ -110,13 +110,6 @@ fn infer_lambda<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    let expected_param_type = if let Some(type_expr) = type_annotation {
-        type_expr.clone().synthesize_type(&mut HashMap::default())
-        //            .expand(ctx)?
-    } else {
-        Type::fresh()
-    };
-
     let expected_param_type = Type::fresh();
 
     let mut ctx = ctx.clone();
@@ -128,14 +121,11 @@ where
         },
     );
 
-    println!("infer_lambda: {body}");
     let body = infer_type(body, &ctx)?;
-
-    println!("infer_lambda2: {}", body.inferred_type);
 
     let inferred_param_type = expected_param_type.clone().apply(&body.substitutions);
 
-    let annotation_unification = expected_param_type.unify(&inferred_param_type, info, &ctx)?;
+    let annotation_unification = expected_param_type.unify(&inferred_param_type, info)?;
 
     let function_type = Type::Arrow(
         inferred_param_type.apply(&annotation_unification).into(),
@@ -218,11 +208,7 @@ where
 
         if let Some(lhs) = coproduct.find_constructor(constructor) {
             let rhs = &argument.inferred_type;
-
-            let substitutions = argument
-                .substitutions
-                .compose(lhs.unify(rhs, annotation, &ctx)?);
-
+            let substitutions = argument.substitutions.compose(lhs.unify(rhs, annotation)?);
             let inferred_type = type_constructor.apply(&substitutions);
 
             Ok(TypeInference::new(substitutions, inferred_type))
@@ -326,7 +312,7 @@ where
     let predicate_type = infer_type(predicate, ctx)?;
     let predicate = predicate_type
         .inferred_type
-        .unify(&Type::Constant(BaseType::Bool), annotation, &ctx)
+        .unify(&Type::Constant(BaseType::Bool), annotation)
         .inspect_err(|e| println!("infer_if_expression: predicate unify error: {e}"))?;
 
     let ctx = ctx.apply_substitutions(&predicate_type.substitutions.clone());
@@ -336,7 +322,7 @@ where
     let branch = consequent
         .inferred_type
         .clone() //wtf
-        .unify(&alternate.inferred_type, annotation, &ctx)
+        .unify(&alternate.inferred_type, annotation)
         .inspect_err(|e| println!("infer_if_expression: branch unify error: {e}"))?;
 
     let substitutions = predicate
@@ -379,17 +365,11 @@ fn infer_application<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    println!("infer_application1: {function}!");
     let function = infer_type(function, &ctx)?;
-
     let argument = infer_type(argument, &ctx.apply_substitutions(&function.substitutions))?;
-    println!("infer_application: {}", function.inferred_type);
-
     let return_type = Type::fresh();
-
     let unified_substitutions = function
         .inferred_type
-        //        .instantiate()
         .apply(&function.substitutions)
         .unify(
             &Type::Arrow(
@@ -397,10 +377,7 @@ where
                 return_type.clone().into(),
             ),
             annotation,
-            &ctx,
         )?;
-
-    println!("infer_application: {unified_substitutions:?}");
 
     let return_type = return_type.apply(&unified_substitutions);
     Ok(TypeInference {

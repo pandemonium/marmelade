@@ -1,26 +1,20 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{CoproductType, Parsed, Type, TypeParameter, Typing, TypingContext};
+use super::{CoproductType, Parsed, Type, TypeParameter, Typing};
 use crate::{
     ast::Identifier,
     typer::{ProductType, TypeError},
 };
 
-pub fn unify<A>(
-    lhs: &Type,
-    rhs: &Type,
-    annotation: &A,
-    ctx: &TypingContext,
-) -> Typing<Substitutions>
+pub fn unify<A>(lhs: &Type, rhs: &Type, annotation: &A) -> Typing<Substitutions>
 where
     A: Parsed,
 {
-    UnificationContext::new(annotation, ctx).unify(lhs, rhs)
+    UnificationContext::new(annotation).unify(lhs, rhs)
 }
 
 struct UnificationContext<'a, A> {
     annotation: &'a A,
-    ctx: &'a TypingContext,
     seen: HashSet<(Type, Type)>,
 }
 
@@ -28,12 +22,9 @@ impl<'a, A> UnificationContext<'a, A>
 where
     A: Parsed,
 {
-    fn new(annotation: &'a A, ctx: &'a TypingContext) -> Self {
-        println!("-------> New Unification Context");
-
+    fn new(annotation: &'a A) -> Self {
         Self {
             annotation,
-            ctx,
             seen: HashSet::default(),
         }
     }
@@ -61,8 +52,6 @@ where
 
     fn unify_expanded(&mut self, lhs: Type, rhs: Type) -> Typing<Substitutions> {
         match (lhs, rhs) {
-            (Type::Constant(t), Type::Constant(u)) if t == u => Ok(Substitutions::default()),
-            (Type::Parameter(t), Type::Parameter(u)) if t == u => Ok(Substitutions::default()),
             (Type::Parameter(param), ty) | (ty, Type::Parameter(param)) => {
                 if ty.free_variables().contains(&param) {
                     Err(TypeError::InfiniteType {

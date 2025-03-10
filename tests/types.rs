@@ -2,7 +2,7 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use marmelade::{
     ast::{
-        Apply, Expression, Product, TypeApply, TypeDeclarator, TypeExpression, TypeName,
+        Apply, Expression, Forall, Product, TypeApply, TypeDeclarator, TypeExpression, TypeName,
         ValueDeclarator,
     },
     context::CompileState,
@@ -19,10 +19,13 @@ mod tools;
 
 #[test]
 fn list_type() {
-    let rhs = coproduct(vec![
-        constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
-        constructor("Nil", vec![]),
-    ]);
+    let rhs = coproduct(
+        Forall::default().add(TypeName::new("a")),
+        vec![
+            constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
+            constructor("Nil", vec![]),
+        ],
+    );
 
     let tp = TypeParameter::new_for_test(0);
     let ty = Type::Parameter(tp);
@@ -42,7 +45,7 @@ fn list_type() {
         body: lhs,
     };
 
-    assert_eq!(lhs, rhs.synthesize_type());
+    assert_eq!(lhs, rhs.synthesize_type().unwrap());
 }
 
 #[test]
@@ -87,17 +90,21 @@ fn tuple() {
 fn type_expansions() {
     let mut ctx = TypingContext::default();
 
-    let list_declaration = coproduct(vec![
-        constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
-        constructor("Nil", vec![]),
-    ]);
+    let list_declaration = coproduct(
+        Forall::default(),
+        vec![
+            constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
+            constructor("Nil", vec![]),
+        ],
+    );
 
-    let list_type = list_declaration.synthesize_type();
+    let list_type = list_declaration.synthesize_type().unwrap();
     ctx.bind(Binding::TypeTerm("List".to_owned()), list_type);
 
     if let TypeDeclarator::Coproduct(_, coproduct) = &list_declaration {
         for constructor in coproduct
             .make_implementation_module(ParsingInfo::default(), TypeName::new("List"))
+            .unwrap()
             .constructors
         {
             println!("{}: {:?}", constructor.binder, constructor.declarator);

@@ -518,6 +518,7 @@ pub enum Keyword {
     Or,
     Xor,
     Not,
+    Forall,
 }
 
 impl Keyword {
@@ -538,6 +539,7 @@ impl Keyword {
             "or" => Some(Keyword::Or),
             "xor" => Some(Keyword::Xor),
             "not" => Some(Keyword::Not),
+            "forall" => Some(Keyword::Forall),
             _otherwise => None,
         }
     }
@@ -561,6 +563,7 @@ impl fmt::Display for Keyword {
             Self::Or => write!(f, "Or"),
             Self::Xor => write!(f, "Xor"),
             Self::Not => write!(f, "Not"),
+            Self::Forall => write!(f, "Forall"),
         }
     }
 }

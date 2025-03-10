@@ -4,8 +4,8 @@ use std::{fmt, marker::PhantomData};
 use crate::{
     ast::{
         Apply, Binding, CompilationUnit, ConstantDeclarator, Constructor, ControlFlow, Coproduct,
-        Declaration, Expression, FunctionDeclarator, Identifier, ModuleDeclarator, Parameter,
-        Sequence, TypeApply, TypeDeclaration, TypeDeclarator, TypeExpression, TypeName,
+        Declaration, Expression, Forall, FunctionDeclarator, Identifier, ModuleDeclarator,
+        Parameter, Sequence, TypeApply, TypeDeclaration, TypeDeclarator, TypeExpression, TypeName,
         ValueDeclaration, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
@@ -183,29 +183,66 @@ fn parse_type_declarator<'a>(remains: &'a [Token]) -> ParseResult<'a, TypeDeclar
     ))
 }
 
-fn parse_coproduct<'a>(mut remains: &'a [Token]) -> ParseResult<'a, Coproduct<ParsingInfo>> {
-    let mut boofer = vec![];
+fn parse_forall_clause<'a>(remains: &'a [Token]) -> ParseResult<'a, Forall> {
+    let end = remains
+        .iter()
+        .position(|t| t.token_type() == &TT::Period)
+        .ok_or_else(|| ParseError::ExpectedTokenType(TT::Period))?;
+    let (params, remains) = remains.split_at(end);
+
+    let parse_parameter = |t: &Token| {
+        if let TT::Identifier(id) = t.token_type() {
+            Ok(TypeName::new(id))
+        } else {
+            Err(ParseError::UnexpectedToken(t.clone()))
+        }
+    };
+
+    Ok((
+        Forall(
+            params
+                .iter()
+                .map(parse_parameter)
+                .collect::<Result<_, _>>()?,
+        ),
+        &remains[1..],
+    ))
+}
+
+fn parse_coproduct<'a>(remains: &'a [Token]) -> ParseResult<'a, Coproduct<ParsingInfo>> {
+    let (forall, mut remains) = if starts_with(TT::Keyword(Keyword::Forall), remains) {
+        parse_forall_clause(&remains[1..])?
+    } else {
+        (Forall::default(), remains)
+    };
 
     // parse the first constructor to see:
     //   if there are more constructors and
     //   how they are separated. (Newline or Pipe.)
-    let (constructor, remains1) = parse_constructor(remains)?;
+    let mut boofer = vec![];
+    let (constructor, remains1) =
+        parse_constructor(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+
     remains = remains1;
     boofer.push(constructor);
 
     // Constructors are either inline, separated by |, or broken down, separated by Newline
     if let [T(separator @ (TT::Pipe | TT::Layout(Layout::Newline)), ..), ..] = remains {
         while matches!(remains, [t, ..] if t.token_type() == separator) {
-            let (constructor, remains1) = parse_constructor(&remains1[1..])?;
+            let (constructor, remains1) = parse_constructor(&remains[1..])?;
             boofer.push(constructor);
+
             remains = remains1;
         }
-
-        Ok((Coproduct(boofer), remains))
-    } else {
-        // Caller solves a possibly divered parser
-        Ok((Coproduct(boofer), remains))
     }
+
+    Ok((
+        Coproduct {
+            forall,
+            constructors: boofer,
+        },
+        remains,
+    ))
 }
 
 fn parse_constructor<'a>(remains: &'a [Token]) -> ParseResult<'a, Constructor<ParsingInfo>> {
@@ -220,7 +257,7 @@ fn parse_constructor<'a>(remains: &'a [Token]) -> ParseResult<'a, Constructor<Pa
         ))
     } else {
         Err(ParseError::ExpectedTokenType(TT::Identifier(
-            "<constructor>".to_owned(),
+            "<constructor2>".to_owned(),
         )))
     }
 }
@@ -267,9 +304,12 @@ fn parse_type_expression_prefix<'a>(
                 Err(ParseError::ExpectedTokenType(TT::RightParen))
             }
         }
-        _otherwise => Err(ParseError::ExpectedTokenType(TT::Identifier(
-            "<Constructor>".to_owned(),
-        ))),
+        otherwise => {
+            println!("parse_type_expression_prefix: {otherwise:?}");
+            Err(ParseError::ExpectedTokenType(TT::Identifier(
+                "<Constructor>".to_owned(),
+            )))
+        }
     }
 }
 
@@ -364,13 +404,11 @@ fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclar
 // Should this function eat the -> ?
 // a | pattern
 fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter<ParsingInfo>>> {
-    let (params, remains) =
-        // This pattern is quite common...
-        if let Some(end) = remains.iter().position(|t| t.token_type() == &TT::Period) {
-            (&remains[..end], &remains[end..])
-        } else {
-            Err(ParseError::ExpectedTokenType(TT::Period))?
-        };
+    let end = remains
+        .iter()
+        .position(|t| t.token_type() == &TT::Period)
+        .ok_or_else(|| ParseError::ExpectedTokenType(TT::Period))?;
+    let (params, remains) = remains.split_at(end);
 
     let parse_parameter = |t: &Token| {
         if let TT::Identifier(id) = t.token_type() {

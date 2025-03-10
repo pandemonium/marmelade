@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use marmelade::{
     ast::{
         Apply, Binding, Constant, Constructor, ControlFlow, Coproduct, Declaration, Expression,
-        Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
+        Forall, Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
     },
     context::CompileState,
     interpreter::Value,
@@ -148,8 +148,17 @@ pub fn tyapp(
     )
 }
 
-pub fn coproduct(constructors: Vec<Constructor<ParsingInfo>>) -> TypeDeclarator<ParsingInfo> {
-    TypeDeclarator::Coproduct(ParsingInfo::default(), Coproduct(constructors))
+pub fn coproduct(
+    forall: Forall,
+    constructors: Vec<Constructor<ParsingInfo>>,
+) -> TypeDeclarator<ParsingInfo> {
+    TypeDeclarator::Coproduct(
+        ParsingInfo::default(),
+        Coproduct {
+            forall,
+            constructors,
+        },
+    )
 }
 
 pub fn into_unicode_text(source: &str) -> Vec<char> {

@@ -98,8 +98,6 @@ where
             ValueDeclarator::Function(function) => function.into_lambda_tree(id.clone()),
         };
 
-        println!("initialize_binding: {id}");
-
         let env = &mut self.initialized;
         let value = expression.reduce(env)?;
         env.insert_binding(id.clone(), value);
@@ -146,8 +144,6 @@ where
                 function.into_lambda_tree(binder.clone())
             }
         };
-
-        println!("infer_declarator_type: {}", expression);
 
         typing_context.infer_type(&expression)
     }

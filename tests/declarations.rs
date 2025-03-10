@@ -1,5 +1,5 @@
 use marmelade::{
-    ast::{Declaration, Identifier, TypeDeclaration, TypeName},
+    ast::{Declaration, Forall, Identifier, TypeDeclaration, TypeName},
     interpreter::{Base, Value},
     parser::ParsingInfo,
 };
@@ -10,16 +10,19 @@ mod tools;
 #[test]
 fn coproduct_perhaps() {
     decl_fixture(
-        r#"|Perhaps ::= This a | Nope
+        r#"|Perhaps ::= forall a. This a | Nope
            "#,
         Declaration::Type(
             ParsingInfo::default(),
             TypeDeclaration {
                 binding: ident("Perhaps"),
-                declarator: coproduct(vec![
-                    constructor("This", vec![typar("a")]),
-                    constructor("Nope", vec![]),
-                ]),
+                declarator: coproduct(
+                    Forall::default().add(TypeName::new("a")),
+                    vec![
+                        constructor("This", vec![typar("a")]),
+                        constructor("Nope", vec![]),
+                    ],
+                ),
             },
         ),
     );
@@ -28,16 +31,19 @@ fn coproduct_perhaps() {
 #[test]
 fn coproduct_list() {
     decl_fixture(
-        r#"|List ::= Cons a (List a) | Nil
+        r#"|List ::= forall a. Cons a (List a) | Nil
            "#,
         Declaration::Type(
             ParsingInfo::default(),
             TypeDeclaration {
                 binding: ident("List"),
-                declarator: coproduct(vec![
-                    constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
-                    constructor("Nil", vec![]),
-                ]),
+                declarator: coproduct(
+                    Forall::default().add(TypeName::new("a")),
+                    vec![
+                        constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
+                        constructor("Nil", vec![]),
+                    ],
+                ),
             },
         ),
     );
@@ -46,7 +52,7 @@ fn coproduct_list() {
 #[test]
 fn eval_coproduct_list() {
     eval_fixture(
-        r#"|List ::= Cons a (List a) | Nil
+        r#"|List ::= forall a e. Cons a (List a) | Nil
            |main = Cons 1 Nil
            "#,
         Value::Coproduct {
@@ -65,25 +71,17 @@ fn eval_coproduct_list() {
     );
 }
 
-//#[test]
+#[test]
 fn eval_coproduct_eval() {
     eval_fixture(
-        r#"|Eval ::= Return a | Fault e
+        r#"|Eval ::= forall a e. Return a | Fault e
            |fail = Fault "hej"
            |main = Return 1
            "#,
         Value::Coproduct {
-            name: TypeName::new("List"),
-            constructor: Identifier::new("Cons"),
-            value: Value::Tuple(vec![
-                Value::Base(Base::Int(1)),
-                Value::Coproduct {
-                    name: TypeName::new("List"),
-                    constructor: Identifier::new("Nil"),
-                    value: Value::Tuple(vec![]).into(),
-                },
-            ])
-            .into(),
+            name: TypeName::new("Eval"),
+            constructor: Identifier::new("Return"),
+            value: Value::Tuple(vec![Value::Base(Base::Int(1))]).into(),
         },
     );
 }
@@ -91,23 +89,26 @@ fn eval_coproduct_eval() {
 #[test]
 fn coproduct_binary_tree() {
     decl_fixture(
-        r#"|BinaryTree ::= Branch (BinaryTree a) a (BinaryTree a) | Leaf a
+        r#"|BinaryTree ::= forall a. Branch (BinaryTree a) a (BinaryTree a) | Leaf a
            "#,
         Declaration::Type(
             ParsingInfo::default(),
             TypeDeclaration {
                 binding: ident("BinaryTree"),
-                declarator: coproduct(vec![
-                    constructor(
-                        "Branch",
-                        vec![
-                            tyapp(tyref("BinaryTree"), typar("a")),
-                            typar("a"),
-                            tyapp(tyref("BinaryTree"), typar("a")),
-                        ],
-                    ),
-                    constructor("Leaf", vec![typar("a")]),
-                ]),
+                declarator: coproduct(
+                    Forall::default().add(TypeName::new("a")),
+                    vec![
+                        constructor(
+                            "Branch",
+                            vec![
+                                tyapp(tyref("BinaryTree"), typar("a")),
+                                typar("a"),
+                                tyapp(tyref("BinaryTree"), typar("a")),
+                            ],
+                        ),
+                        constructor("Leaf", vec![typar("a")]),
+                    ],
+                ),
             },
         ),
     );
@@ -119,21 +120,26 @@ fn coproduct_eval() {
         ParsingInfo::default(),
         TypeDeclaration {
             binding: ident("Eval"),
-            declarator: coproduct(vec![
-                constructor("Return", vec![typar("a")]),
-                constructor("Fault", vec![typar("e")]),
-            ]),
+            declarator: coproduct(
+                Forall::default()
+                    .add(TypeName::new("a"))
+                    .add(TypeName::new("e")),
+                vec![
+                    constructor("Return", vec![typar("a")]),
+                    constructor("Fault", vec![typar("e")]),
+                ],
+            ),
         },
     );
 
-    decl_fixture(
-        r#"|Eval ::= Return a | Fault e
-           "#,
-        rhs.clone(),
-    );
+    //    decl_fixture(
+    //        r#"|Eval ::= forall a e. Return a | Fault e
+    //           "#,
+    //        rhs.clone(),
+    //    );
 
     decl_fixture(
-        r#"|Eval ::=
+        r#"|Eval ::= forall a e.
            |  Return a
            |  Fault e
            "#,

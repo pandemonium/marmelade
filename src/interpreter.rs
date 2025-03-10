@@ -10,7 +10,7 @@ use crate::{
     },
     bridge::Bridge,
     parser::ParseError,
-    typer::{BaseType, Parsed, Type, TypeError, TypingContext},
+    typer::{BaseType, Parsed, Type, TypeError, Typing, TypingContext},
 };
 
 mod module;
@@ -81,7 +81,7 @@ impl Interpreter {
         A: Clone + Parsed + fmt::Debug + fmt::Display,
     {
         self.inject_prelude(annotation.clone(), &mut module);
-        self.inject_types_and_synthetics(annotation.clone(), &mut module, &mut typing_context);
+        self.inject_types_and_synthetics(annotation.clone(), &mut module, &mut typing_context)?;
         println!("load_module: types and synthetics loaded");
         ModuleLoader::try_loading(&module, self.prelude)?
             .type_check(typing_context)?
@@ -107,7 +107,8 @@ impl Interpreter {
         annotation: A,
         module: &mut ModuleDeclarator<A>,
         typing_context: &mut TypingContext,
-    ) where
+    ) -> Typing<()>
+    where
         A: fmt::Display + Clone,
     {
         let type_bindings = module
@@ -131,7 +132,7 @@ impl Interpreter {
 
         for (binding, coproduct) in type_bindings {
             let coproduct = coproduct
-                .make_implementation_module(annotation.clone(), TypeName::new(binding.as_str()));
+                .make_implementation_module(annotation.clone(), TypeName::new(binding.as_str()))?;
 
             println!(
                 "inject_types_and_synthetics: {} ::= {}",
@@ -146,6 +147,8 @@ impl Interpreter {
                     .push(Declaration::Value(annotation.clone(), constructor));
             }
         }
+
+        Ok(())
     }
 }
 

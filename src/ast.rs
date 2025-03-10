@@ -8,7 +8,7 @@ use crate::{
     interpreter::DependencyGraph,
     lexer::{self, SourcePosition},
     parser::ParsingInfo,
-    typer::{CoproductType, ProductType, Type, TypeParameter, TypeScheme},
+    typer::{CoproductType, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing},
 };
 
 #[derive(Debug)]
@@ -265,62 +265,119 @@ where
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Forall(pub Vec<TypeName>);
+
+impl Forall {
+    pub fn add(self, quantifier: TypeName) -> Self {
+        let Self(mut quantifiers) = self;
+        quantifiers.push(quantifier);
+        Self(quantifiers)
+    }
+
+    pub fn type_variables(&self) -> &[TypeName] {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
-pub struct Coproduct<A>(pub Vec<Constructor<A>>);
+pub struct Coproduct<A> {
+    pub forall: Forall,
+    pub constructors: Vec<Constructor<A>>,
+}
 
 impl<A> Coproduct<A>
 where
     A: Clone,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Coproduct<B> {
-        let Self(mut cs) = self;
-        Coproduct(cs.drain(..).map(|c| c.map(f)).collect())
+        let Self {
+            forall,
+            mut constructors,
+        } = self;
+        Coproduct {
+            forall,
+            constructors: constructors.drain(..).map(|c| c.map(f)).collect(),
+        }
     }
 
     pub fn make_implementation_module(
         &self,
         annotation: A,
         self_name: TypeName,
-    ) -> CoproductModule<A> {
-        let Self(constructors) = self;
-
-        CoproductModule {
+    ) -> Typing<CoproductModule<A>> {
+        Ok(CoproductModule {
             name: self_name.clone(),
-            declaring_type: self.synthesize_type(),
-            constructors: constructors
+            declaring_type: self.synthesize_type()?,
+            constructors: self
+                .constructors
                 .iter()
                 .map(|constructor| {
                     constructor.make_function(annotation.clone(), self_name.clone(), vec![])
                 })
                 .collect(),
+        })
+    }
+
+    fn synthesize_type(&self) -> Typing<TypeScheme> {
+        let mut universals = HashMap::default();
+        let coproduct_type = self.synthesize_coproduct_type(&mut universals);
+        let mut superfluous = self
+            .forall
+            .type_variables()
+            .iter()
+            .filter(|&var| !universals.contains_key(var.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if superfluous.is_empty() {
+            self.make_type_scheme(universals, coproduct_type)
+        } else {
+            // Only reports the first
+            Err(TypeError::SuperfluousQuantification {
+                quantifier: superfluous.drain(..).next().expect("safe"),
+                in_type: coproduct_type.clone(),
+            })
         }
     }
 
-    fn synthesize_type(&self) -> TypeScheme {
-        let Self(cs) = self;
-        let mut type_parameters = HashMap::default();
-        let underlying_type = Type::Coproduct(CoproductType::new(
-            cs.iter()
+    fn make_type_scheme(
+        &self,
+        universals: HashMap<String, TypeParameter>,
+        body: Type,
+    ) -> Typing<TypeScheme> {
+        let mut boofer = vec![];
+        for var in self.forall.type_variables() {
+            let param =
+                universals
+                    .get(var.as_str())
+                    .ok_or_else(|| TypeError::UndefinedQuantifier {
+                        quantifier: var.clone(),
+                        in_type: body.clone(),
+                    })?;
+
+            boofer.push(param.clone());
+        }
+
+        Ok(TypeScheme::new(boofer.as_slice(), body))
+    }
+
+    fn synthesize_coproduct_type(&self, universals: &mut HashMap<String, TypeParameter>) -> Type {
+        Type::Coproduct(CoproductType::new(
+            self.constructors
+                .iter()
                 .map(|Constructor { name, signature }| {
+                    let tuple_signature = signature
+                        .iter()
+                        .map(|expr| expr.synthesize_type(universals))
+                        .collect();
                     (
                         name.as_str().to_owned(),
-                        // Don't. Store it in here as a Vec<Type>
-                        // No idea if this makes the slightest difference
-                        Type::Product(ProductType::Tuple(
-                            signature
-                                .iter()
-                                .map(|expr| expr.synthesize_type(&mut type_parameters))
-                                .collect(),
-                        )),
+                        Type::Product(ProductType::Tuple(tuple_signature)),
                     )
                 })
                 .collect(),
-        ));
-
-        TypeScheme {
-            quantifiers: type_parameters.values().cloned().collect(),
-            body: underlying_type,
-        }
+        ))
     }
 }
 
@@ -360,7 +417,7 @@ where
         }
     }
 
-    pub fn synthesize_type(&self) -> TypeScheme {
+    pub fn synthesize_type(&self) -> Typing<TypeScheme> {
         match self {
             Self::Alias(..) => todo!(),
             Self::Coproduct(_, coproduct) => coproduct.synthesize_type(),
@@ -378,8 +435,8 @@ where
             Self::Alias(_, type_expr) => {
                 write!(f, "{type_expr}")
             }
-            Self::Coproduct(_, Coproduct(constructors)) => {
-                for c in constructors {
+            Self::Coproduct(_, coproduct) => {
+                for c in &coproduct.constructors {
                     write!(f, "{c}")?;
                 }
                 Ok(())

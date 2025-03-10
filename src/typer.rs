@@ -235,11 +235,11 @@ impl Type {
         Self::Parameter(TypeParameter::fresh())
     }
 
-    pub fn unify<A>(&self, rhs: &Type, annotation: &A, ctx: &TypingContext) -> Typing<Substitutions>
+    pub fn unify<A>(&self, rhs: &Type, annotation: &A) -> Typing<Substitutions>
     where
         A: Parsed,
     {
-        unification::unify(self, rhs, annotation, ctx)
+        unification::unify(self, rhs, annotation)
     }
 }
 
@@ -468,6 +468,12 @@ pub enum TypeError {
     },
     #[error("{0} does not take type parameters")]
     WrongKind(Type),
+
+    #[error("Undefined quantifier {quantifier} in {in_type}")]
+    UndefinedQuantifier { quantifier: TypeName, in_type: Type },
+
+    #[error("Superfluous quantifier {quantifier} in {in_type}")]
+    SuperfluousQuantification { quantifier: TypeName, in_type: Type },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -518,15 +524,11 @@ pub struct TypingContext {
 
 impl TypingContext {
     pub fn bind(&mut self, binding: Binding, scheme: TypeScheme) {
-        println!("bind: {binding} {scheme}");
         self.bindings.insert(binding, scheme);
     }
 
     fn lookup(&self, binding: &Binding) -> Option<TypeScheme> {
         let scheme = self.bindings.get(binding).cloned()?;
-
-        println!("lookup: {binding} -> {scheme}");
-
         let scheme = if !binding.is_value_binding() && scheme.is_type_constructor() {
             scheme.into_type_apply_tree(TypeName::new(binding.as_str()))
         } else {
@@ -771,7 +773,7 @@ mod tests {
             (ast::Identifier::new("y"), mk_constant_type(BaseType::Float)),
         ])));
 
-        t.inferred_type.unify(&expected_type, &(), &ctx).unwrap();
+        t.inferred_type.unify(&expected_type, &()).unwrap();
 
         let e = mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0)));
         let t = ctx.infer_type(&e).unwrap();
