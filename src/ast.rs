@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     interpreter::DependencyGraph,
-    lexer::{self, SourcePosition},
+    lexer::{self, Literal, SourcePosition},
     parser::ParsingInfo,
     typer::{CoproductType, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing},
 };
@@ -912,6 +912,7 @@ pub enum Pattern<A> {
     // First argument should be A, for god's sake.
     Coproduct(ConstructorPattern<A>, PhantomData<A>),
     Tuple(TuplePattern<A>, PhantomData<A>),
+    Literally(Constant),
     Otherwise(Identifier),
 }
 
@@ -922,6 +923,7 @@ impl<A> Pattern<A> {
                 Pattern::Coproduct(pattern.map(f), PhantomData::default())
             }
             Self::Tuple(pattern, _) => Pattern::Tuple(pattern.map(f), PhantomData::default()),
+            Self::Literally(literal) => Pattern::Literally(literal),
             Self::Otherwise(id) => Pattern::Otherwise(id),
         }
     }
@@ -986,6 +988,7 @@ where
                 _,
             ) => write!(f, "{constructor} ({argument})"),
             Self::Tuple(pattern, _) => write!(f, "{pattern}"),
+            Self::Literally(literal) => write!(f, "{literal}"),
             Self::Otherwise(id) => write!(f, "{id}"),
         }
     }

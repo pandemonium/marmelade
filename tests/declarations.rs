@@ -1,7 +1,9 @@
+use std::marker::PhantomData;
+
 use marmelade::{
     ast::{
-        Declaration, DeconstructInto, Expression, Forall, Identifier, MatchClause, Pattern,
-        TypeDeclaration, TypeName,
+        Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Forall, Identifier,
+        MatchClause, Pattern, TuplePattern, TypeDeclaration, TypeName,
     },
     interpreter::{Base, Value},
     parser::ParsingInfo,
@@ -11,7 +13,7 @@ use tools::*;
 mod tools;
 
 #[test]
-fn pattern_matching() {
+fn pattern_match_basic() {
     expr_fixture(
         r#"|deconstruct 1 into a_number -> 2
        "#,
@@ -20,8 +22,59 @@ fn pattern_matching() {
             DeconstructInto {
                 scrutinee: int(1).into(),
                 match_clauses: vec![MatchClause {
-                    pattern: Pattern::Otherwise(Identifier::new("a_number")),
+                    pattern: Pattern::Otherwise(ident("a_number")),
                     consequent: int(2).into(),
+                }],
+            },
+        ),
+    );
+}
+
+#[test]
+fn pattern_match_tuple_match() {
+    expr_fixture(
+        r#"|deconstruct x into (1,2) -> 2
+       "#,
+        Expression::DeconstructInto(
+            ParsingInfo::default(),
+            DeconstructInto {
+                scrutinee: var("x").into(),
+                match_clauses: vec![MatchClause {
+                    pattern: Pattern::Tuple(
+                        TuplePattern {
+                            elements: vec![
+                                Pattern::Literally(Constant::Int(1)),
+                                Pattern::Literally(Constant::Int(2)),
+                            ],
+                        },
+                        PhantomData::default(),
+                    ),
+                    consequent: int(2).into(),
+                }],
+            },
+        ),
+    );
+}
+#[test]
+fn pattern_match_constructor() {
+    expr_fixture(
+        r#"|deconstruct "x" into This x -> x
+       "#,
+        Expression::DeconstructInto(
+            ParsingInfo::default(),
+            DeconstructInto {
+                scrutinee: text("x").into(),
+                match_clauses: vec![MatchClause {
+                    pattern: Pattern::Coproduct(
+                        ConstructorPattern {
+                            constructor: ident("This"),
+                            argument: TuplePattern {
+                                elements: vec![Pattern::Otherwise(ident("x"))],
+                            },
+                        },
+                        PhantomData::default(),
+                    ),
+                    consequent: var("x").into(),
                 }],
             },
         ),

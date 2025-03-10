@@ -569,10 +569,7 @@ fn parse_deconstruct_into<'a>(
 
 fn parse_match_clause<'a>(remains: &'a [Token]) -> ParseResult<'a, MatchClause<ParsingInfo>> {
     let (pattern, remains) = parse_pattern(remains)?;
-
-    println!("parse_match_clause: {:?}", remains);
     let remains = expect(TT::Arrow, remains)?;
-
     let (consequent, remains) = parse_expression(remains, 0)?;
 
     Ok((
@@ -589,14 +586,16 @@ fn parse_pattern<'a>(remains: &'a [Token]) -> ParseResult<'a, Pattern<ParsingInf
     // This x -> print_endline (show x)      XX Coproduct constructor
     // others -> print_endline (show others) XX catch all
     match remains {
-        [T(TT::Identifier(id), position), remains @ ..] if is_capital_case(id) => {
-            println!("parse_pattern: {id}");
-
+        [T(TT::Identifier(id), position), ..] if is_capital_case(id) => {
             parse_constructor_pattern(remains, position)
         }
 
         [T(TT::Identifier(id), position), remains @ ..] => {
             Ok((Pattern::Otherwise(Identifier::new(id)), remains))
+        }
+
+        [T(TT::Literal(lit), position), remains @ ..] => {
+            Ok((Pattern::Literally(lit.clone().into()), remains))
         }
 
         [T(TT::LeftParen, position), remains @ ..] => parse_tuple_pattern(remains, position)
@@ -614,14 +613,15 @@ fn parse_constructor_pattern<'a>(
     remains: &'a [Token],
     position: &SourcePosition,
 ) -> ParseResult<'a, Pattern<ParsingInfo>> {
-    if let [T(TT::Identifier(constructor), position), T(TT::LeftParen, ..), remains @ ..] = remains
-    {
-        let (pattern, remains) = parse_tuple_pattern(remains, position)?;
+    println!("parse_constructor_pattern: {:?}", remains);
+
+    if let [T(TT::Identifier(constructor), position), remains @ ..] = remains {
+        let (patterns, remains) = parse_pattern_list(remains)?;
         Ok((
             Pattern::Coproduct(
                 ConstructorPattern {
                     constructor: Identifier::new(&constructor),
-                    argument: pattern,
+                    argument: TuplePattern { elements: patterns },
                 },
                 PhantomData::default(),
             ),
@@ -630,6 +630,18 @@ fn parse_constructor_pattern<'a>(
     } else {
         panic!("{remains:?}")
     }
+}
+
+fn parse_pattern_list<'a>(mut remains: &'a [Token]) -> ParseResult<'a, Vec<Pattern<ParsingInfo>>> {
+    let mut boofer = vec![];
+
+    while !matches!(remains, [T(TT::Arrow, ..), ..]) {
+        let (pattern, remains1) = parse_pattern(remains)?;
+        boofer.push(pattern);
+        remains = remains1;
+    }
+
+    Ok((boofer, remains))
 }
 
 fn parse_tuple_pattern<'a>(
