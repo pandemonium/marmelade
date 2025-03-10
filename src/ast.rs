@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     marker::PhantomData,
+    path::Display,
 };
 
 use crate::{
@@ -869,6 +870,136 @@ pub enum Expression<A> {
     Binding(A, Binding<A>),
     Sequence(A, Sequence<A>),
     ControlFlow(A, ControlFlow<A>),
+    DeconstructInto(A, DeconstructInto<A>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeconstructInto<A> {
+    pub scrutinee: Box<Expression<A>>,
+    pub match_clauses: Vec<MatchClause<A>>,
+}
+
+impl<A> DeconstructInto<A> {
+    pub fn map<B>(mut self, f: fn(A) -> B) -> DeconstructInto<B> {
+        DeconstructInto {
+            scrutinee: self.scrutinee.map(f).into(),
+            match_clauses: self
+                .match_clauses
+                .drain(..)
+                .map(|clause| clause.map(f))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchClause<A> {
+    pub pattern: Pattern<A>,
+    pub consequent: Box<Expression<A>>,
+}
+
+impl<A> MatchClause<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> MatchClause<B> {
+        MatchClause {
+            pattern: self.pattern.map(f),
+            consequent: self.consequent.map(f).into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern<A> {
+    Coproduct(ConstructorPattern<A>, PhantomData<A>),
+    Tuple(TuplePattern<A>, PhantomData<A>),
+    Otherwise(Identifier),
+}
+
+impl<A> Pattern<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> Pattern<B> {
+        match self {
+            Self::Coproduct(pattern, _) => {
+                Pattern::Coproduct(pattern.map(f), PhantomData::default())
+            }
+            Self::Tuple(pattern, _) => Pattern::Tuple(pattern.map(f), PhantomData::default()),
+            Self::Otherwise(id) => Pattern::Otherwise(id),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstructorPattern<A> {
+    pub constructor: Identifier,
+    pub argument: TuplePattern<A>,
+}
+
+impl<A> ConstructorPattern<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> ConstructorPattern<B> {
+        ConstructorPattern {
+            constructor: self.constructor,
+            argument: self.argument.map(f),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TuplePattern<A> {
+    pub elements: Vec<Pattern<A>>,
+}
+
+impl<A> TuplePattern<A> {
+    pub fn map<B>(mut self, f: fn(A) -> B) -> TuplePattern<B> {
+        TuplePattern {
+            elements: self.elements.drain(..).map(|p| p.map(f)).collect(),
+        }
+    }
+}
+
+impl<A> fmt::Display for DeconstructInto<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            scrutinee,
+            match_clauses,
+        } = self;
+        writeln!(f, "match ({scrutinee})")?;
+        for clause in match_clauses {
+            writeln!(f, "case {} -> {}", clause.pattern, clause.consequent)?;
+        }
+        Ok(())
+    }
+}
+
+impl<A> fmt::Display for Pattern<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Coproduct(
+                ConstructorPattern {
+                    constructor,
+                    argument,
+                },
+                _,
+            ) => write!(f, "{constructor} ({argument})"),
+            Self::Tuple(pattern, _) => write!(f, "{pattern}"),
+            Self::Otherwise(id) => write!(f, "{id}"),
+        }
+    }
+}
+
+impl<A> fmt::Display for TuplePattern<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for pattern in &self.elements {
+            write!(f, "{pattern}")?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -988,18 +1119,19 @@ impl Expression<ParsingInfo> {
 impl<A> Expression<A> {
     pub fn annotation(&self) -> &A {
         match self {
-            Self::Variable(annotation, ..) => annotation,
-            Self::InvokeBridge(annotation, ..) => annotation,
-            Self::Literal(annotation, ..) => annotation,
-            Self::SelfReferential(annotation, ..) => annotation,
-            Self::Lambda(annotation, ..) => annotation,
-            Self::Apply(annotation, ..) => annotation,
-            Self::Inject(annotation, ..) => annotation,
-            Self::Product(annotation, ..) => annotation,
-            Self::Project(annotation, ..) => annotation,
-            Self::Binding(annotation, ..) => annotation,
-            Self::Sequence(annotation, ..) => annotation,
-            Self::ControlFlow(annotation, ..) => annotation,
+            Self::Variable(annotation, ..)
+            | Self::InvokeBridge(annotation, ..)
+            | Self::Literal(annotation, ..)
+            | Self::SelfReferential(annotation, ..)
+            | Self::Lambda(annotation, ..)
+            | Self::Apply(annotation, ..)
+            | Self::Inject(annotation, ..)
+            | Self::Product(annotation, ..)
+            | Self::Project(annotation, ..)
+            | Self::Binding(annotation, ..)
+            | Self::Sequence(annotation, ..)
+            | Self::ControlFlow(annotation, ..)
+            | Self::DeconstructInto(annotation, ..) => annotation,
         }
     }
 
@@ -1092,6 +1224,7 @@ impl<A> Expression<A> {
             Self::Binding(x, info) => Expression::<B>::Binding(f(x), info.map(f)),
             Self::Sequence(x, info) => Expression::<B>::Sequence(f(x), info.map(f)),
             Self::ControlFlow(x, info) => Expression::<B>::ControlFlow(f(x), info.map(f)),
+            Self::DeconstructInto(x, info) => Expression::DeconstructInto(f(x), info.map(f)),
         }
     }
 
@@ -1141,6 +1274,7 @@ where
                 writeln!(f, "{this}\n{and_then}")
             }
             Expression::ControlFlow(_, control) => writeln!(f, "{control}"),
+            Expression::DeconstructInto(_, deconstruct) => writeln!(f, "{deconstruct}"),
         }
     }
 }

@@ -52,7 +52,7 @@ fn coproduct_list() {
 #[test]
 fn eval_coproduct_list() {
     eval_fixture(
-        r#"|List ::= forall a e. Cons a (List a) | Nil
+        r#"|List ::= forall a. Cons a (List a) | Nil
            |main = Cons 1 Nil
            "#,
         Value::Coproduct {

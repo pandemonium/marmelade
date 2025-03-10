@@ -418,14 +418,13 @@ impl Operator {
             Self::Times | Self::Divides | Self::Modulo => 16,
             Self::Plus | Self::Minus => 15,
 
-            Self::Equals | Self::Gte | Self::Lte | Self::Gt | Self::Lt => 14,
+            Self::TupleCons => 14,
 
-            Self::Not => 13,
+            Self::Equals | Self::Gte | Self::Lte | Self::Gt | Self::Lt => 13,
+            Self::Not => 12,
 
-            Self::And => 12,
-            Self::Xor | Self::Or => 11,
-
-            Self::TupleCons => 10,
+            Self::And => 11,
+            Self::Xor | Self::Or => 10,
         }
     }
 

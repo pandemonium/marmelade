@@ -94,6 +94,9 @@ where
         ast::Expression::ControlFlow(annotation, control) => {
             infer_control_flow(control, &annotation, ctx)
         }
+        ast::Expression::DeconstructInto(_annotation, _deconstruct) => {
+            todo!()
+        }
     }
 }
 

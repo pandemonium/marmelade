@@ -439,6 +439,7 @@ where
             ) => reduce_binding(binder, *bound, *body, env),
             Self::Sequence(_, Sequence { this, and_then }) => reduce_sequence(this, and_then, env),
             Self::ControlFlow(_, control) => reduce_control_flow(control, env),
+            Self::DeconstructInto(_, _match_construct) => todo!(),
         }
     }
 }

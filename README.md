@@ -54,17 +54,24 @@ With the caveat that: If there is an Indent following <=>, then the Dedent is op
         render_the_thing x y z
 
     Option module
-        T a coproduct The of a | Nil
+        T ::= forall a. The of a | Nil
 
-        make x = The x
+        make = lambda x. The x
 
-        map f self =
-            deconstruct self into
+        map = lambda f self.
+          deconstruct self into
+            The x -> f x | Nil -> Nil
+
+        map2 = lambda f self.
+          deconstruct self into The x -> f x | Nil -> Nil
+
+        map3 = lambda f self.
+          deconstruct self into
             The x -> f x
             Nil   -> Nil
 
-        bind f =
-            function The x -> f x | Nil -> Nil
+        bind f =                                // I like this syntax, but I would like to get
+            function The x -> f x | Nil -> Nil  // away from the function keyword
 
 
     width =
