@@ -3,10 +3,11 @@ use std::{fmt, marker::PhantomData};
 
 use crate::{
     ast::{
-        Apply, Binding, CompilationUnit, ConstantDeclarator, Constructor, ControlFlow, Coproduct,
-        Declaration, Expression, Forall, FunctionDeclarator, Identifier, ModuleDeclarator,
-        Parameter, Sequence, TypeApply, TypeDeclaration, TypeDeclarator, TypeExpression, TypeName,
-        ValueDeclaration, ValueDeclarator,
+        Apply, Binding, CompilationUnit, ConstantDeclarator, Constructor, ConstructorPattern,
+        ControlFlow, Coproduct, Declaration, DeconstructInto, Expression, Forall,
+        FunctionDeclarator, Identifier, MatchClause, ModuleDeclarator, Parameter, Pattern,
+        Sequence, TuplePattern, TypeApply, TypeDeclaration, TypeDeclarator, TypeExpression,
+        TypeName, ValueDeclaration, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
     typer,
@@ -314,11 +315,15 @@ fn parse_type_expression_prefix<'a>(
 }
 
 fn simple_type_expr_term(id: &str) -> TypeExpression<ParsingInfo> {
-    if id.chars().all(char::is_lowercase) {
+    if is_lowercasse(id) {
         TypeExpression::<ParsingInfo>::Parameter(TypeName::new(id))
     } else {
         TypeExpression::Constant(TypeName::new(id))
     }
+}
+
+fn is_lowercasse(id: &str) -> bool {
+    id.chars().all(char::is_lowercase)
 }
 
 fn parse_type_expression_infix<'a>(
@@ -460,6 +465,9 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression<ParsingIn
             parse_binding(*position, binder, remains)
         }
         [T(TT::Keyword(If), position), remains @ ..] => parse_if_expression(*position, remains),
+        [T(TT::Keyword(Deconstruct), position), remains @ ..] => {
+            parse_deconstruct_into(*position, remains)
+        }
         [T(TT::Literal(literal), position), remains @ ..] => Ok((
             Expression::Literal(ParsingInfo::new(*position), literal.clone().into()),
             remains,
@@ -495,11 +503,7 @@ fn parse_if_expression<'a>(
         let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
         let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
 
-        //        println!("parse_if_expression: {:?}", &remains[..5]);
-
         let (consequent, remains) = parse_expression(remains, 0)?;
-
-        //        println!("parse_if_expression(2): {:?}", &remains[..5]);
 
         let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
         let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
@@ -527,6 +531,133 @@ fn parse_if_expression<'a>(
         }
     } else {
         Err(ParseError::ExpectedTokenType(TokenType::Keyword(Then)))
+    }
+}
+
+fn parse_deconstruct_into<'a>(
+    position: SourcePosition,
+    remains: &'a [Token],
+) -> ParseResult<'a, Expression<ParsingInfo>> {
+    let (scrutinee, remains) = parse_expression(remains, 0)?;
+
+    let mut remains = expect(TT::Keyword(Into), remains)?;
+    let mut boofer = vec![];
+
+    let (match_clause, remains1) = parse_match_clause(remains)?;
+    remains = remains1;
+    boofer.push(match_clause);
+
+    if let [T(separator @ (TT::Pipe | TT::Layout(Layout::Newline)), ..), ..] = remains {
+        while matches!(remains, [t, ..] if t.token_type() == separator) {
+            let (match_clause, remains1) = parse_match_clause(&remains[1..])?;
+            boofer.push(match_clause);
+            remains = remains1;
+        }
+    }
+
+    Ok((
+        Expression::DeconstructInto(
+            ParsingInfo::new(position),
+            DeconstructInto {
+                scrutinee: scrutinee.into(),
+                match_clauses: boofer,
+            },
+        ),
+        remains,
+    ))
+}
+
+fn parse_match_clause<'a>(remains: &'a [Token]) -> ParseResult<'a, MatchClause<ParsingInfo>> {
+    let (pattern, remains) = parse_pattern(remains)?;
+
+    println!("parse_match_clause: {:?}", remains);
+    let remains = expect(TT::Arrow, remains)?;
+
+    let (consequent, remains) = parse_expression(remains, 0)?;
+
+    Ok((
+        MatchClause {
+            pattern,
+            consequent: consequent.into(),
+        },
+        remains,
+    ))
+}
+
+fn parse_pattern<'a>(remains: &'a [Token]) -> ParseResult<'a, Pattern<ParsingInfo>> {
+    // (1, 2, 3) -> print_endline "1, 2, 3"` XX tuple (flattened?)
+    // This x -> print_endline (show x)      XX Coproduct constructor
+    // others -> print_endline (show others) XX catch all
+    match remains {
+        [T(TT::Identifier(id), position), remains @ ..] if is_capital_case(id) => {
+            println!("parse_pattern: {id}");
+
+            parse_constructor_pattern(remains, position)
+        }
+
+        [T(TT::Identifier(id), position), remains @ ..] => {
+            Ok((Pattern::Otherwise(Identifier::new(id)), remains))
+        }
+
+        [T(TT::LeftParen, position), remains @ ..] => parse_tuple_pattern(remains, position)
+            .map(|(tuple, remains)| (Pattern::Tuple(tuple, PhantomData::default()), remains)),
+
+        otherwise => panic!("{otherwise:?}"),
+    }
+}
+
+fn is_capital_case(id: &str) -> bool {
+    id.starts_with(char::is_uppercase)
+}
+
+fn parse_constructor_pattern<'a>(
+    remains: &'a [Token],
+    position: &SourcePosition,
+) -> ParseResult<'a, Pattern<ParsingInfo>> {
+    if let [T(TT::Identifier(constructor), position), T(TT::LeftParen, ..), remains @ ..] = remains
+    {
+        let (pattern, remains) = parse_tuple_pattern(remains, position)?;
+        Ok((
+            Pattern::Coproduct(
+                ConstructorPattern {
+                    constructor: Identifier::new(&constructor),
+                    argument: pattern,
+                },
+                PhantomData::default(),
+            ),
+            remains,
+        ))
+    } else {
+        panic!("{remains:?}")
+    }
+}
+
+fn parse_tuple_pattern<'a>(
+    mut remains: &'a [Token],
+    position: &SourcePosition,
+) -> ParseResult<'a, TuplePattern<ParsingInfo>> {
+    let mut boofer = vec![];
+
+    let (pattern, remains1) = parse_pattern(remains)?;
+    remains = remains1;
+    boofer.push(pattern);
+
+    while matches!(remains, [T(TT::Comma, ..), ..]) {
+        let (pattern, remains1) = parse_pattern(&remains[1..])?;
+        boofer.push(pattern);
+        remains = remains1;
+    }
+
+    remains = expect(TT::RightParen, remains)?;
+
+    Ok((TuplePattern { elements: boofer }, remains))
+}
+
+fn expect<'a>(token_type: TokenType, remains: &'a [Token]) -> Result<&'a [Token], ParseError> {
+    if starts_with(token_type.clone(), remains) {
+        Ok(&remains[1..])
+    } else {
+        Err(ParseError::ExpectedTokenType(token_type))
     }
 }
 

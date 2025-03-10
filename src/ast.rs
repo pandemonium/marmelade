@@ -909,6 +909,7 @@ impl<A> MatchClause<A> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern<A> {
+    // First argument should be A, for god's sake.
     Coproduct(ConstructorPattern<A>, PhantomData<A>),
     Tuple(TuplePattern<A>, PhantomData<A>),
     Otherwise(Identifier),

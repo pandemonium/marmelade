@@ -518,6 +518,8 @@ pub enum Keyword {
     Xor,
     Not,
     Forall,
+    Deconstruct,
+    Into,
 }
 
 impl Keyword {
@@ -539,6 +541,8 @@ impl Keyword {
             "xor" => Some(Keyword::Xor),
             "not" => Some(Keyword::Not),
             "forall" => Some(Keyword::Forall),
+            "deconstruct" => Some(Keyword::Deconstruct),
+            "into" => Some(Keyword::Into),
             _otherwise => None,
         }
     }
@@ -563,6 +567,8 @@ impl fmt::Display for Keyword {
             Self::Xor => write!(f, "Xor"),
             Self::Not => write!(f, "Not"),
             Self::Forall => write!(f, "Forall"),
+            Self::Deconstruct => write!(f, "Deconstruct"),
+            Self::Into => write!(f, "Into"),
         }
     }
 }

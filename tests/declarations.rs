@@ -1,11 +1,32 @@
 use marmelade::{
-    ast::{Declaration, Forall, Identifier, TypeDeclaration, TypeName},
+    ast::{
+        Declaration, DeconstructInto, Expression, Forall, Identifier, MatchClause, Pattern,
+        TypeDeclaration, TypeName,
+    },
     interpreter::{Base, Value},
     parser::ParsingInfo,
 };
 use tools::*;
 
 mod tools;
+
+#[test]
+fn pattern_matching() {
+    expr_fixture(
+        r#"|deconstruct 1 into a_number -> 2
+       "#,
+        Expression::DeconstructInto(
+            ParsingInfo::default(),
+            DeconstructInto {
+                scrutinee: int(1).into(),
+                match_clauses: vec![MatchClause {
+                    pattern: Pattern::Otherwise(Identifier::new("a_number")),
+                    consequent: int(2).into(),
+                }],
+            },
+        ),
+    );
+}
 
 #[test]
 fn coproduct_perhaps() {
