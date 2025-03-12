@@ -613,8 +613,6 @@ fn parse_constructor_pattern<'a>(
     remains: &'a [Token],
     position: &SourcePosition,
 ) -> ParseResult<'a, Pattern<ParsingInfo>> {
-    println!("parse_constructor_pattern: {:?}", remains);
-
     if let [T(TT::Identifier(constructor), position), remains @ ..] = remains {
         let (patterns, remains) = parse_pattern_list(remains)?;
         Ok((

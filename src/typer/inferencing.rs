@@ -94,8 +94,16 @@ where
         ast::Expression::ControlFlow(annotation, control) => {
             infer_control_flow(control, &annotation, ctx)
         }
-        ast::Expression::DeconstructInto(_annotation, _deconstruct) => {
-            todo!()
+        ast::Expression::DeconstructInto(_annotation, deconstruct) => {
+            println!("infer_type: ----> TEMPORARY infer_type FOR deconstruct_into. ALWAYS Int");
+            //infer_type(
+            //    &deconstruct.match_clauses.iter().next().unwrap().consequent,
+            //    ctx, // THIS IS TEMPORARY, etc
+            //)
+            Ok(TypeInference {
+                substitutions: Substitutions::default(),
+                inferred_type: Type::Constant(BaseType::Int),
+            })
         }
     }
 }

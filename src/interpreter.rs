@@ -1,14 +1,15 @@
-use module::ModuleLoader;
-use std::{any::Any, cell::RefCell, fmt, rc::Rc};
+use std::{any::Any, cell::RefCell, fmt, marker::PhantomData, rc::Rc};
 use thiserror::Error;
 
 use crate::{
     ast::{
-        Apply, Binding, CompilationUnit, Constant, ControlFlow, Declaration, Expression,
-        Identifier, ImportModule, Inject, Lambda, ModuleDeclarator, Product, Project,
-        SelfReferential, Sequence, TypeDeclaration, TypeDeclarator, TypeName,
+        self, Apply, Binding, CompilationUnit, Constant, ControlFlow, Declaration, DeconstructInto,
+        Expression, Identifier, ImportModule, Inject, Lambda, MatchClause, ModuleDeclarator,
+        Pattern, Product, Project, SelfReferential, Sequence, TypeDeclaration, TypeDeclarator,
+        TypeName,
     },
     bridge::Bridge,
+    interpreter::module::ModuleLoader,
     parser::ParseError,
     typer::{BaseType, Parsed, Type, TypeError, Typing, TypingContext},
 };
@@ -396,8 +397,11 @@ pub enum RuntimeError {
     #[error("Expected a synthetic closure {0}")]
     ExpectedSynthetic(Identifier),
 
-    #[error("Not applicable")]
+    #[error("Function not applicable to {fst} and {snd}")]
     InapplicableLamda2 { fst: Value, snd: Value },
+
+    #[error("{scrutinee} did not match any case")]
+    ExpectedMatch { scrutinee: Value },
 }
 
 pub type Interpretation<A = Value> = Result<A, RuntimeError>;
@@ -410,7 +414,7 @@ where
         match self {
             Self::Variable(_, id) => env.lookup(&id).cloned(),
             Self::InvokeBridge(_, id) => invoke_bridge(id, env),
-            Self::Literal(_, constant) => immediate(constant),
+            Self::Literal(_, constant) => Ok(reduce_immediate(constant)),
             Self::SelfReferential(
                 _,
                 SelfReferential {
@@ -439,10 +443,91 @@ where
             ) => reduce_binding(binder, *bound, *body, env),
             Self::Sequence(_, Sequence { this, and_then }) => reduce_sequence(this, and_then, env),
             Self::ControlFlow(_, control) => reduce_control_flow(control, env),
-            Self::DeconstructInto(_, _match_construct) => todo!(),
+            Self::DeconstructInto(_, deconstruct) => reduce_deconstruction(deconstruct, env),
         }
     }
 }
+
+fn reduce_deconstruction<A>(
+    DeconstructInto {
+        scrutinee,
+        mut match_clauses,
+    }: DeconstructInto<A>,
+    env: &mut Environment,
+) -> Interpretation
+where
+    A: fmt::Debug + Clone,
+{
+    let scrutinee = scrutinee.reduce(env)?;
+    match_clauses
+        .drain(..)
+        .find_map(|clause| clause.match_with(&scrutinee))
+        .ok_or_else(|| RuntimeError::ExpectedMatch { scrutinee })
+        .and_then(|matched| reduce_consequent(matched, env))
+}
+
+fn reduce_consequent<A>(matched: Match<A>, env: &Environment) -> Interpretation
+where
+    A: fmt::Debug + Clone,
+{
+    println!("reduce_consequent: Yes");
+
+    let mut env = env.clone();
+    for (binding, value) in matched.bindings {
+        println!("reduce_consequent: {binding}->{value}");
+        env.insert_binding(binding, value);
+    }
+    matched.consequent.reduce(&mut env)
+}
+
+pub struct Match<A> {
+    pub bindings: Vec<(Identifier, Value)>,
+    pub consequent: Expression<A>,
+}
+
+impl<A> MatchClause<A> {
+    pub fn match_with(self, scrutinee: &Value) -> Option<Match<A>>
+    where
+        A: fmt::Debug + Clone,
+    {
+        Some(Match {
+            bindings: extract_matched_bindings(scrutinee, self.pattern)?,
+            consequent: *self.consequent,
+        })
+    }
+}
+
+fn extract_matched_bindings<A>(
+    scrutinee: &Value,
+    pattern: Pattern<A>,
+) -> Option<Vec<(Identifier, Value)>> {
+    match (scrutinee, pattern) {
+        (
+            Value::Coproduct {
+                constructor, value, ..
+            },
+            Pattern::Coproduct(pattern, _),
+        ) if constructor == &pattern.constructor => extract_matched_bindings(
+            value,
+            Pattern::Tuple(pattern.argument, PhantomData::default()),
+        ),
+        (Value::Tuple(elements), Pattern::Tuple(pattern, _))
+            if elements.len() == pattern.elements.len() =>
+        {
+            let mut bindings = vec![];
+            for (value, pattern) in elements.iter().zip(pattern.elements) {
+                bindings.extend(extract_matched_bindings(value, pattern)?);
+            }
+
+            Some(bindings)
+        }
+        (_, Pattern::Literally(this)) => (scrutinee == &reduce_immediate(this)).then(|| vec![]),
+        (_, Pattern::Otherwise(binding)) => Some(vec![(binding, scrutinee.clone())]),
+        _otherwise => None,
+    }
+}
+
+impl<A> Pattern<A> {}
 
 fn reduce_product<A>(node: Product<A>, env: &mut Environment) -> Interpretation
 where
@@ -501,8 +586,8 @@ fn make_recursive_closure(
     Ok(Value::Closure(closure.clone()))
 }
 
-fn immediate(constant: Constant) -> Interpretation {
-    Ok(Value::Base(constant.into()))
+fn reduce_immediate(constant: Constant) -> Value {
+    Value::Base(constant.into())
 }
 
 fn reduce_sequence<A>(

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    interpreter::DependencyGraph,
+    interpreter::{DependencyGraph, Value},
     lexer::{self, Literal, SourcePosition},
     parser::ParsingInfo,
     typer::{CoproductType, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing},

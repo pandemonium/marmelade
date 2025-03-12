@@ -31,6 +31,15 @@ fn pattern_match_basic() {
 }
 
 #[test]
+fn pattern_match_eval_basic() {
+    eval_fixture(
+        r#"|main = deconstruct (1,2) into (a_number, two) -> a_number
+          "#,
+        Value::Base(Base::Int(1)),
+    );
+}
+
+#[test]
 fn pattern_match_tuple_match() {
     expr_fixture(
         r#"|deconstruct x into (1,2) -> 2
@@ -58,7 +67,7 @@ fn pattern_match_tuple_match() {
 #[test]
 fn pattern_match_constructor() {
     expr_fixture(
-        r#"|deconstruct "x" into This x -> x
+        r#"|deconstruct "x" into This (x, y) -> x
        "#,
         Expression::DeconstructInto(
             ParsingInfo::default(),
@@ -69,7 +78,15 @@ fn pattern_match_constructor() {
                         ConstructorPattern {
                             constructor: ident("This"),
                             argument: TuplePattern {
-                                elements: vec![Pattern::Otherwise(ident("x"))],
+                                elements: vec![Pattern::Tuple(
+                                    TuplePattern {
+                                        elements: vec![
+                                            Pattern::Otherwise(ident("x")),
+                                            Pattern::Otherwise(ident("y")),
+                                        ],
+                                    },
+                                    PhantomData::default(),
+                                )],
                             },
                         },
                         PhantomData::default(),
