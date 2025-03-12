@@ -1,7 +1,7 @@
-use std::{collections::HashMap, fmt};
+use std::{fmt, marker::PhantomData};
 
 use crate::{
-    ast,
+    ast::{self, ConstructorPattern, Expression, Identifier, MatchClause, Pattern, TuplePattern},
     parser::ParsingInfo,
     typer::{
         unification::Substitutions, BaseType, Parsed, ProductType, Type, TypeError, TypeInference,
@@ -94,16 +94,140 @@ where
         ast::Expression::ControlFlow(annotation, control) => {
             infer_control_flow(control, &annotation, ctx)
         }
-        ast::Expression::DeconstructInto(_annotation, deconstruct) => {
-            println!("infer_type: ----> TEMPORARY infer_type FOR deconstruct_into. ALWAYS Int");
-            //infer_type(
-            //    &deconstruct.match_clauses.iter().next().unwrap().consequent,
-            //    ctx, // THIS IS TEMPORARY, etc
-            //)
-            Ok(TypeInference {
-                substitutions: Substitutions::default(),
-                inferred_type: Type::Constant(BaseType::Int),
-            })
+        ast::Expression::DeconstructInto(
+            annotation,
+            ast::DeconstructInto {
+                scrutinee,
+                match_clauses,
+            },
+        ) => infer_deconstruct_into(annotation, scrutinee, match_clauses, ctx),
+    }
+}
+
+fn infer_deconstruct_into<A>(
+    annotation: &A,
+    scrutinee: &Expression<A>,
+    match_clauses: &[MatchClause<A>],
+    ctx: &TypingContext,
+) -> Typing
+where
+    A: fmt::Display + Clone + Parsed,
+{
+    let mut ctx = ctx.clone();
+    let scrutinee = infer_type(scrutinee, &ctx)?;
+    let mut consequents = vec![];
+
+    for MatchClause {
+        pattern,
+        consequent,
+    } in match_clauses
+    {
+        let bindings = pattern.check_type(annotation, &scrutinee.inferred_type, &ctx)?;
+
+        for (binding, scrutinee) in bindings {
+            ctx.bind(binding.into(), scrutinee.generalize(&ctx));
+        }
+
+        consequents.push(infer_type(consequent, &ctx)?);
+    }
+
+    let TypeInference {
+        mut substitutions,
+        mut inferred_type,
+    } = consequents.remove(0);
+
+    for consequent in consequents {
+        let consequent_ty = consequent.inferred_type.apply(&substitutions);
+        substitutions =
+            substitutions.compose(inferred_type.unify(&consequent_ty, annotation)?.clone());
+        inferred_type = inferred_type.apply(&substitutions);
+    }
+
+    Ok(TypeInference {
+        substitutions,
+        inferred_type,
+    })
+}
+
+#[derive(Debug, Default)]
+struct Match {
+    bindings: Vec<(Identifier, Type)>,
+}
+
+impl Match {
+    fn add(&mut self, id: Identifier, ty: Type) {
+        self.bindings.push((id, ty));
+    }
+}
+
+// For some Pattern types, a type can actually be inferred
+// independently of the scrutinee. 1, for instance. Or Some.
+// I
+impl<A> Pattern<A>
+where
+    A: fmt::Display + Clone + Parsed,
+{
+    fn check_type(
+        &self,
+        annotation: &A,
+        scrutinee: &Type,
+        ctx: &TypingContext,
+    ) -> Typing<Vec<(Identifier, Type)>> {
+        match (self, scrutinee) {
+            (
+                Self::Coproduct(
+                    ConstructorPattern {
+                        constructor,
+                        argument,
+                    },
+                    _,
+                ),
+                Type::Coproduct(coproduct),
+            ) => {
+                if let Some(constructor) = coproduct.construction_parameters(constructor) {
+                    Self::Tuple(argument.clone(), PhantomData::default()).check_type(
+                        annotation,
+                        constructor,
+                        ctx,
+                    )
+                } else {
+                    Err(TypeError::PatternMatchImpossible {
+                        pattern: self.clone().map(|annotation| annotation.info().clone()),
+                        scrutinee: scrutinee.clone(),
+                    })
+                }
+            }
+
+            (
+                Self::Tuple(TuplePattern { elements }, _),
+                Type::Product(ProductType::Tuple(tuple)),
+            ) if elements.len() == tuple.len() => {
+                let mut matched = vec![];
+                for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
+                    matched.extend(pattern.check_type(annotation, scrutinee, ctx)?);
+                }
+                Ok(matched)
+            }
+
+            (Self::Literally(pattern), scrutinee) => {
+                let pattern_type = pattern.synthesize_type()?.inferred_type;
+                if scrutinee == &pattern_type {
+                    Ok(vec![])
+                } else {
+                    Err(TypeError::UnifyImpossible {
+                        lhs: pattern_type,
+                        rhs: scrutinee.clone(),
+                        position: annotation.info().location().clone(),
+                    })
+                }
+            }
+
+            (Self::Otherwise(pattern), scrutinee) => Ok(vec![(pattern.clone(), scrutinee.clone())]),
+
+            (pattern, scrutinee) => Err(TypeError::PatternMatchImpossible {
+                pattern: pattern.clone().map(|annotation| annotation.info().clone()),
+                scrutinee: scrutinee.clone(),
+            }),
         }
     }
 }
@@ -122,7 +246,6 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     let expected_param_type = Type::fresh();
-
     let mut ctx = ctx.clone();
     ctx.bind(
         name.clone().into(),
@@ -133,11 +256,8 @@ where
     );
 
     let body = infer_type(body, &ctx)?;
-
     let inferred_param_type = expected_param_type.clone().apply(&body.substitutions);
-
     let annotation_unification = expected_param_type.unify(&inferred_param_type, info)?;
-
     let function_type = Type::Arrow(
         inferred_param_type.apply(&annotation_unification).into(),
         body.inferred_type.into(),
@@ -217,7 +337,7 @@ where
     if let Type::Coproduct(ref coproduct) = type_constructor.clone().expand_type(ctx)? {
         let argument = infer_type(argument, ctx)?;
 
-        if let Some(lhs) = coproduct.find_constructor(constructor) {
+        if let Some(lhs) = coproduct.construction_parameters(constructor) {
             let rhs = &argument.inferred_type;
             let substitutions = argument.substitutions.compose(lhs.unify(rhs, annotation)?);
             let inferred_type = type_constructor.apply(&substitutions);

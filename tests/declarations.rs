@@ -33,7 +33,7 @@ fn pattern_match_basic() {
 #[test]
 fn pattern_match_eval_basic() {
     eval_fixture(
-        r#"|main = deconstruct (1,2) into (a_number, two) -> a_number
+        r#"|main = deconstruct (1, 2) into (a, b) -> b
           "#,
         Value::Base(Base::Int(1)),
     );

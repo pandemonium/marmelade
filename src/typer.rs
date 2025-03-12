@@ -6,7 +6,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    ast::{self, TypeName},
+    ast::{self, Pattern, TypeName},
     lexer::SourcePosition,
     parser::ParsingInfo,
 };
@@ -363,7 +363,7 @@ impl CoproductType {
         Self(signature)
     }
 
-    fn find_constructor(&self, name: &ast::Identifier) -> Option<&Type> {
+    fn construction_parameters(&self, name: &ast::Identifier) -> Option<&Type> {
         let Self(constructors) = self;
         constructors
             .iter()
@@ -474,6 +474,12 @@ pub enum TypeError {
 
     #[error("Superfluous quantifier {quantifier} in {in_type}")]
     SuperfluousQuantification { quantifier: TypeName, in_type: Type },
+
+    #[error("Impossible to match {pattern} with {scrutinee}")]
+    PatternMatchImpossible {
+        pattern: Pattern<ParsingInfo>,
+        scrutinee: Type,
+    },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
