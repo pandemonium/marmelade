@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        self, Apply, Binding, CompilationUnit, Constant, ControlFlow, Declaration, DeconstructInto,
+        Apply, Binding, CompilationUnit, Constant, ControlFlow, Declaration, DeconstructInto,
         Expression, Identifier, ImportModule, Inject, Lambda, MatchClause, ModuleDeclarator,
         Pattern, Product, Project, SelfReferential, Sequence, TypeDeclaration, TypeDeclarator,
         TypeName,

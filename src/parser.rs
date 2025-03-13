@@ -540,19 +540,26 @@ fn parse_deconstruct_into<'a>(
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (scrutinee, remains) = parse_expression(remains, 0)?;
 
-    let mut remains = expect(TT::Keyword(Into), remains)?;
+    let mut remains = expect(
+        TT::Keyword(Into),
+        strip_if_starts_with(TT::Layout(Layout::Indent), remains),
+    )?;
+
     let mut boofer = vec![];
 
-    let (match_clause, remains1) = parse_match_clause(remains)?;
-    remains = remains1;
+    let (match_clause, remains1) =
+        parse_match_clause(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+    remains = strip_if_starts_with(TT::Layout(Layout::Dedent), remains1);
+    remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
     boofer.push(match_clause);
 
-    if let [T(separator @ (TT::Pipe | TT::Layout(Layout::Newline)), ..), ..] = remains {
-        while matches!(remains, [t, ..] if t.token_type() == separator) {
-            let (match_clause, remains1) = parse_match_clause(&remains[1..])?;
-            boofer.push(match_clause);
-            remains = remains1;
-        }
+    // This syntax won't work because Newline triggers the
+    // sequence parse rule so the expression in the consequent
+    // continues
+    while matches!(remains, [T(TT::Pipe, ..), ..]) {
+        let (match_clause, remains1) = parse_match_clause(&remains[1..])?;
+        boofer.push(match_clause);
+        remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains1);
     }
 
     Ok((
@@ -727,10 +734,10 @@ fn parse_binding<'a>(
 }
 
 pub fn parse_expression<'a>(
-    tokens: &'a [Token],
+    input: &'a [Token],
     precedence: usize,
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
-    let (prefix, remains) = parse_prefix(tokens)?;
+    let (prefix, remains) = parse_prefix(input)?;
 
     parse_infix(prefix, remains, precedence)
 }
@@ -739,10 +746,11 @@ fn is_expression_terminator(t: &Token) -> bool {
     //        println!("is_done: {t:?}");
     matches!(
         t.token_type(),
-        TT::Keyword(Keyword::In | Keyword::Else | Keyword::Then)
+        TT::Keyword(Keyword::In | Keyword::Else | Keyword::Then | Keyword::Into)
             | TT::End
             | TT::Layout(Layout::Dedent)
-            | TT::RightParen,
+            | TT::RightParen
+            | TT::Pipe,
     )
 }
 

@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use marmelade::{
     ast::{
         Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Forall, Identifier,
-        MatchClause, Pattern, TuplePattern, TypeDeclaration, TypeName,
+        MatchClause, Pattern, Product, TuplePattern, TypeDeclaration, TypeName,
     },
     interpreter::{Base, Value},
     parser::ParsingInfo,
@@ -31,11 +31,76 @@ fn pattern_match_basic() {
 }
 
 #[test]
-fn pattern_match_eval_basic() {
-    eval_fixture(
-        r#"|main = deconstruct (1, 2) into (a, b) -> b
+fn pattern_match_basic2() {
+    expr_fixture(
+        r#"|deconstruct 1, 2 into
+           |  (a, b)    -> b
+           || otherwise -> 3
+           || (x, y)    -> x
           "#,
-        Value::Base(Base::Int(1)),
+        Expression::DeconstructInto(
+            ParsingInfo::default(),
+            DeconstructInto {
+                scrutinee: Expression::Product(
+                    ParsingInfo::default(),
+                    Product::Tuple(vec![int(1), int(2)]),
+                )
+                .into(),
+                match_clauses: vec![
+                    MatchClause {
+                        pattern: Pattern::Tuple(
+                            TuplePattern {
+                                elements: vec![
+                                    Pattern::Otherwise(ident("a")),
+                                    Pattern::Otherwise(ident("b")),
+                                ],
+                            },
+                            PhantomData::default(),
+                        ),
+                        consequent: var("b").into(),
+                    },
+                    MatchClause {
+                        pattern: Pattern::Otherwise(ident("otherwise")),
+                        consequent: int(3).into(),
+                    },
+                    MatchClause {
+                        pattern: Pattern::Tuple(
+                            TuplePattern {
+                                elements: vec![
+                                    Pattern::Otherwise(ident("x")),
+                                    Pattern::Otherwise(ident("y")),
+                                ],
+                            },
+                            PhantomData::default(),
+                        ),
+                        consequent: var("x").into(),
+                    },
+                ],
+            },
+        ),
+    );
+}
+
+#[test]
+fn pattern_match_eval_basic_piped_down() {
+    eval_fixture(
+        r#"|main =
+           |  deconstruct 1, 2
+           |    into (a, b) -> b
+           |       | otherwise -> 3
+           |       | (x, z)    -> z
+          "#,
+        Value::Base(Base::Int(2)),
+    );
+}
+
+#[test]
+fn pattern_match_eval_basic_inline() {
+    eval_fixture(
+        r#"|main =
+           |  deconstruct 1, 2 into (a, b) -> b | otherwise -> 3 | (x, z) -> z
+          "#,
+        Value::Base(Base::Int(2)),
     );
 }
 
