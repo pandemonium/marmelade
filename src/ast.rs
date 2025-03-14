@@ -9,7 +9,10 @@ use crate::{
     interpreter::{DependencyGraph, Value},
     lexer::{self, Literal, SourcePosition},
     parser::ParsingInfo,
-    typer::{CoproductType, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing},
+    typer::{
+        CoproductType, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing,
+        TypingContext,
+    },
 };
 
 #[derive(Debug)]
@@ -501,7 +504,7 @@ where
             })
             .collect::<Vec<_>>();
 
-        let node = self.make_inject_node(&annotation, ty, parameters.clone());
+        let node = self.make_injector(&annotation, ty, parameters.clone());
 
         // Hold off on this for a while
         //        if parameters.is_empty() {
@@ -525,7 +528,7 @@ where
         }
     }
 
-    fn make_inject_node(
+    fn make_injector(
         &self,
         annotation: &A,
         name: TypeName,
@@ -534,9 +537,6 @@ where
     where
         A: Clone,
     {
-        // Is this where it goes wrong? The second element
-        // in the Cons is a List[a] which it is currently
-        // in the process of typing.
         let tuple = Product::Tuple(
             parameters
                 .drain(..)
@@ -556,6 +556,20 @@ where
             name: self.name,
             signature: self.signature.drain(..).map(|expr| expr.map(f)).collect(),
         }
+    }
+
+    pub fn constructed_type(id: &Identifier, ctx: &TypingContext) -> Option<TypeScheme> {
+        fn ultimate_codomain(ty: Type) -> Type {
+            println!("ultimate_codomain: {}", ty);
+            match ty {
+                Type::Arrow(_, codomain) => ultimate_codomain(*codomain),
+                otherwise => otherwise,
+            }
+        }
+
+        println!("constructed_type: {}", id);
+        ctx.lookup_scheme(&id.clone().into())
+            .map(|scheme| scheme.clone().map_body(ultimate_codomain))
     }
 }
 

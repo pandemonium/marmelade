@@ -60,6 +60,7 @@ impl TypeScheme {
     }
 
     pub fn instantiate(self, _ctx: &TypingContext) -> Typing<Type> {
+        println!("instantiate: {}", self);
         let mut subs = Substitutions::default();
         for param in self.quantifiers {
             subs.add(param, Type::fresh());
@@ -85,6 +86,14 @@ impl TypeScheme {
         Self {
             quantifiers,
             body: body.apply(&subs),
+        }
+    }
+
+    pub fn map_body(self, f: fn(Type) -> Type) -> Self {
+        let Self { quantifiers, body } = self;
+        Self {
+            quantifiers,
+            body: f(body),
         }
     }
 }
@@ -117,6 +126,10 @@ pub enum Type {
 }
 
 impl Type {
+    pub fn is_arrow(&self) -> bool {
+        matches!(self, Self::Arrow(..))
+    }
+
     pub fn description(&self) -> String {
         match self {
             Self::Parameter(tp) => format!("Parameter({tp})"),
@@ -130,6 +143,7 @@ impl Type {
     }
 
     pub fn expand_type(self, ctx: &TypingContext) -> Typing<Type> {
+        println!("expand_type: {}", self);
         match self {
             Type::Named(name) => ctx
                 .lookup(&name.clone().into())
@@ -178,8 +192,7 @@ impl Type {
     }
 
     fn apply(self, subs: &Substitutions) -> Self {
-        //        println!("apply: {:?} to {self}", &subs);
-        let ty = match self {
+        match self {
             // Recurse into apply here to apply the whole chain of
             // substitutions?
             Self::Parameter(param) => subs
@@ -197,11 +210,7 @@ impl Type {
                 Self::Apply(constructor.apply(subs).into(), argument.apply(subs).into())
             }
             trivial => trivial,
-        };
-
-        //        println!("apply: {}", ty);
-
-        ty
+        }
     }
 
     pub fn free_variables(&self) -> HashSet<TypeParameter> {
@@ -363,7 +372,7 @@ impl CoproductType {
         Self(signature)
     }
 
-    fn construction_parameters(&self, name: &ast::Identifier) -> Option<&Type> {
+    fn constructor_parameter_type(&self, name: &ast::Identifier) -> Option<&Type> {
         let Self(constructors) = self;
         constructors
             .iter()
@@ -413,6 +422,13 @@ pub struct TypeInference {
 }
 
 impl TypeInference {
+    pub fn new(substitutions: Substitutions, inferred_type: Type) -> Self {
+        Self {
+            substitutions,
+            inferred_type,
+        }
+    }
+
     pub fn trivially(this: Type) -> Self {
         Self {
             substitutions: Substitutions::default(),
@@ -420,11 +436,8 @@ impl TypeInference {
         }
     }
 
-    pub fn new(substitutions: Substitutions, inferred_type: Type) -> Self {
-        Self {
-            substitutions,
-            inferred_type,
-        }
+    pub fn fresh() -> Self {
+        Self::trivially(Type::fresh())
     }
 }
 
@@ -544,7 +557,7 @@ impl TypingContext {
         Some(scheme)
     }
 
-    fn lookup_scheme(&self, binding: &Binding) -> Option<&TypeScheme> {
+    pub fn lookup_scheme(&self, binding: &Binding) -> Option<&TypeScheme> {
         self.bindings.get(binding)
     }
 

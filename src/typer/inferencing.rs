@@ -1,7 +1,10 @@
 use std::{fmt, marker::PhantomData};
 
 use crate::{
-    ast::{self, ConstructorPattern, Expression, Identifier, MatchClause, Pattern, TuplePattern},
+    ast::{
+        self, Constructor, ConstructorPattern, Expression, Identifier, MatchClause, Pattern,
+        TuplePattern,
+    },
     parser::ParsingInfo,
     typer::{
         unification::Substitutions, BaseType, Parsed, ProductType, Type, TypeError, TypeInference,
@@ -122,7 +125,25 @@ where
         consequent,
     } in match_clauses
     {
-        let bindings = pattern.check_type(annotation, &scrutinee.inferred_type, &ctx)?;
+        let pattern_type = pattern.synthesize_type(&ctx)?;
+
+        println!(
+            "infer_deconstruct_into: pattern {}, scrutinee {}",
+            pattern_type.inferred_type, scrutinee.inferred_type
+        );
+
+        let unification = pattern_type
+            .inferred_type
+            .unify(&scrutinee.inferred_type, annotation)?;
+
+        // Yeah?
+        // ctx = ctx.apply_substitutions(&unification);
+
+        let bindings = pattern.check_type(
+            annotation,
+            &scrutinee.inferred_type.clone().apply(&unification),
+            &ctx,
+        )?;
 
         for (binding, scrutinee) in bindings {
             ctx.bind(binding.into(), scrutinee.generalize(&ctx));
@@ -167,12 +188,58 @@ impl<A> Pattern<A>
 where
     A: fmt::Display + Clone + Parsed,
 {
+    fn synthesize_type(&self, ctx: &TypingContext) -> Typing {
+        match self {
+            Self::Coproduct(pattern, _) => {
+                let coproduct_type = Constructor::<A>::constructed_type(&pattern.constructor, ctx)
+                    .ok_or_else(|| TypeError::UndefinedSymbol(pattern.constructor.clone()))?
+                    .instantiate(ctx)?
+                    .expand_type(ctx)?;
+
+                println!("synthesize_type: {}", coproduct_type);
+
+                Ok(TypeInference::trivially(coproduct_type))
+            }
+            Self::Tuple(TuplePattern { elements }, _) => {
+                let elements = elements
+                    .iter()
+                    .map(|pattern| pattern.synthesize_type(ctx))
+                    .collect::<Typing<Vec<_>>>()?;
+
+                let (substitutions, element_types) = elements.into_iter().fold(
+                    (Substitutions::default(), vec![]),
+                    |(subs, mut el_tys),
+                     TypeInference {
+                         substitutions,
+                         inferred_type,
+                     }| {
+                        el_tys.push(inferred_type);
+                        (subs.compose(substitutions), el_tys)
+                    },
+                );
+
+                Ok(TypeInference {
+                    substitutions,
+                    inferred_type: Type::Product(ProductType::Tuple(element_types)),
+                })
+            }
+            Self::Literally(pattern) => pattern.synthesize_type(),
+            Self::Otherwise(_) => Ok(TypeInference::fresh()),
+        }
+    }
+
     fn check_type(
         &self,
         annotation: &A,
         scrutinee: &Type,
         ctx: &TypingContext,
     ) -> Typing<Vec<(Identifier, Type)>> {
+        println!(
+            "check_type : {} {}",
+            matches!(self, Pattern::Tuple(..)),
+            scrutinee
+        );
+
         match (self, scrutinee) {
             (
                 Self::Coproduct(
@@ -184,7 +251,7 @@ where
                 ),
                 Type::Coproduct(coproduct),
             ) => {
-                if let Some(constructor) = coproduct.construction_parameters(constructor) {
+                if let Some(constructor) = coproduct.constructor_parameter_type(constructor) {
                     Self::Tuple(argument.clone(), PhantomData::default()).check_type(
                         annotation,
                         constructor,
@@ -199,9 +266,14 @@ where
             }
 
             (
+                // This does not hit because Cons takes two arguments,
+                // these are in the first element of the argument tuple. As a tuple.
+                // Wtf, patrik.
                 Self::Tuple(TuplePattern { elements }, _),
                 Type::Product(ProductType::Tuple(tuple)),
             ) if elements.len() == tuple.len() => {
+                println!("check_type: Sometimes it type checks list before Cons?");
+
                 let mut matched = vec![];
                 for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
                     matched.extend(pattern.check_type(annotation, scrutinee, ctx)?);
@@ -224,10 +296,15 @@ where
 
             (Self::Otherwise(pattern), scrutinee) => Ok(vec![(pattern.clone(), scrutinee.clone())]),
 
-            (pattern, scrutinee) => Err(TypeError::PatternMatchImpossible {
-                pattern: pattern.clone().map(|annotation| annotation.info().clone()),
-                scrutinee: scrutinee.clone(),
-            }),
+            // This ought to  be all bindings in the pattern, but with
+            // fresh types
+            (pattern, scrutinee) => {
+                println!("check_type: Waldo");
+                Err(TypeError::PatternMatchImpossible {
+                    pattern: pattern.clone().map(|annotation| annotation.info().clone()),
+                    scrutinee: scrutinee.clone(),
+                })
+            }
         }
     }
 }
@@ -337,7 +414,7 @@ where
     if let Type::Coproduct(ref coproduct) = type_constructor.clone().expand_type(ctx)? {
         let argument = infer_type(argument, ctx)?;
 
-        if let Some(lhs) = coproduct.construction_parameters(constructor) {
+        if let Some(lhs) = coproduct.constructor_parameter_type(constructor) {
             let rhs = &argument.inferred_type;
             let substitutions = argument.substitutions.compose(lhs.unify(rhs, annotation)?);
             let inferred_type = type_constructor.apply(&substitutions);
