@@ -6,7 +6,7 @@ use marmelade::{
         Apply, Binding, Constant, Constructor, ControlFlow, Coproduct, Declaration, Expression,
         Forall, Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
     },
-    context::CompileState,
+    context::Linkage,
     interpreter::Value,
     lexer::LexicalAnalyzer,
     parser::{self, ParsingInfo},
@@ -34,7 +34,7 @@ where
     A: Into<Value>,
 {
     let source_text = into_unicode_text(source);
-    let mut compilation = CompileState::new(&source_text);
+    let mut compilation = Linkage::new(&source_text);
     stdlib::import(&mut compilation).unwrap();
 
     let return_value = compilation.typecheck_and_interpret();

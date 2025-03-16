@@ -2,12 +2,11 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     marker::PhantomData,
-    path::Display,
 };
 
 use crate::{
-    interpreter::{DependencyGraph, Value},
-    lexer::{self, Literal, SourcePosition},
+    interpreter::DependencyGraph,
+    lexer::{self, SourcePosition},
     parser::ParsingInfo,
     typer::{
         CoproductType, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing,
@@ -28,7 +27,7 @@ pub enum CompilationUnit<A> {
 }
 impl<A> CompilationUnit<A>
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> CompilationUnit<B> {
         match self {
@@ -71,7 +70,7 @@ pub struct ModuleDeclarator<A> {
 
 impl<A> ModuleDeclarator<A>
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     pub fn find_value_declaration<'a>(&'a self, id: &'a Identifier) -> Option<&'a Declaration<A>> {
         self.declarations
@@ -110,28 +109,31 @@ where
 
 // Could this be an enum?
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Identifier(String);
+pub enum Identifier {
+    Atom(String),
+    Select(Box<Identifier>, String),
+}
 
 impl Identifier {
     pub fn new(x: &str) -> Self {
-        Self(x.to_owned())
+        Self::Atom(x.to_owned())
     }
 
-    pub fn as_str(&self) -> &str {
-        let Self(x) = self;
-        x
+    pub fn as_str(&self) -> String {
+        match self {
+            Self::Atom(this) => this.to_owned(),
+            Self::Select(parent, this) => format!("{}::{this}", parent.as_str()),
+        }
     }
 
     pub fn scoped_with(&self, scope: &str) -> Self {
-        let Self(id) = self;
-        Self(format!("{scope}::{id}"))
+        Self::Select(Self::Atom(scope.to_owned()).into(), self.as_str())
     }
 }
 
 impl fmt::Display for Identifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self(id) = self;
-        write!(f, "{id}")
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -199,7 +201,7 @@ impl Declaration<ParsingInfo> {
 
 impl<A> Declaration<A>
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Declaration<B> {
         match self {
@@ -560,14 +562,12 @@ where
 
     pub fn constructed_type(id: &Identifier, ctx: &TypingContext) -> Option<TypeScheme> {
         fn ultimate_codomain(ty: Type) -> Type {
-            println!("ultimate_codomain: {}", ty);
             match ty {
                 Type::Arrow(_, codomain) => ultimate_codomain(*codomain),
                 otherwise => otherwise,
             }
         }
 
-        println!("constructed_type: {}", id);
         ctx.lookup_scheme(&id.clone().into())
             .map(|scheme| scheme.clone().map_body(ultimate_codomain))
     }
@@ -684,7 +684,7 @@ pub enum ValueDeclarator<A> {
 
 impl<A> ValueDeclarator<A>
 where
-    A: Clone,
+    A: fmt::Debug + Clone,
 {
     pub fn dependencies(&self) -> HashSet<&Identifier> {
         let mut free = match self {
@@ -759,23 +759,37 @@ pub struct FunctionDeclarator<A> {
 
 impl<A> FunctionDeclarator<A>
 where
-    A: Clone,
+    A: Clone + fmt::Debug,
 {
-    // does this function really go here?
-    pub fn into_lambda_tree(mut self, self_name: Identifier) -> Expression<A> {
-        self.parameters
-            .drain(..)
-            .rev()
-            .fold(self.body, |body, parameter| {
-                Expression::SelfReferential(
+    pub fn into_lambda_tree(self, self_name: Identifier) -> Expression<A> {
+        let tree = self
+            .parameters
+            .into_iter()
+            .rfold(self.body.clone(), |body, parameter| {
+                println!("into_lambda_tree: {}", parameter.name);
+                Expression::Lambda(
                     body.annotation().clone(),
-                    SelfReferential {
-                        name: self_name.clone(),
+                    Lambda {
                         parameter,
                         body: body.into(),
                     },
                 )
-            })
+            });
+
+        println!("into_lambda_tree: {tree:?}");
+
+        if let Expression::Lambda(ann, Lambda { parameter, body }) = tree {
+            Expression::SelfReferential(
+                ann.clone(),
+                SelfReferential {
+                    name: self_name.clone(),
+                    parameter,
+                    body: body.into(),
+                },
+            )
+        } else {
+            tree
+        }
     }
 
     pub fn free_identifiers(&self) -> HashSet<&Identifier> {
@@ -939,6 +953,20 @@ impl<A> Pattern<A> {
             Self::Tuple(pattern, _) => Pattern::Tuple(pattern.map(f), PhantomData::default()),
             Self::Literally(literal) => Pattern::Literally(literal),
             Self::Otherwise(id) => Pattern::Otherwise(id),
+        }
+    }
+
+    fn bindings<'a>(&'a self) -> Vec<&'a Identifier> {
+        match self {
+            Self::Coproduct(pattern, _) => pattern
+                .argument
+                .elements
+                .iter()
+                .flat_map(|p| p.bindings())
+                .collect(),
+            Self::Tuple(pattern, _) => pattern.elements.iter().flat_map(|p| p.bindings()).collect(),
+            Self::Literally(_) => vec![],
+            Self::Otherwise(pattern) => vec![pattern],
         }
     }
 }
@@ -1183,7 +1211,9 @@ impl<A> Expression<A> {
                 function.find_unbound(bound, free);
                 argument.find_unbound(bound, free);
             }
-            Self::Inject(_, Inject { argument, .. }) => argument.find_unbound(bound, free),
+            Self::Inject(_, inject) => {
+                inject.argument.find_unbound(bound, free);
+            }
             Self::Product(_, Product::Tuple(expressions)) => {
                 for e in expressions {
                     e.find_unbound(bound, free);
@@ -1223,6 +1253,14 @@ impl<A> Expression<A> {
                 predicate.find_unbound(bound, free);
                 consequent.find_unbound(bound, free);
                 alternate.find_unbound(bound, free);
+            }
+            Self::DeconstructInto(_, deconstruct) => {
+                deconstruct.scrutinee.find_unbound(bound, free);
+                for clause in deconstruct.match_clauses.iter() {
+                    let bindings = clause.pattern.bindings();
+                    bound.extend(bindings);
+                    clause.consequent.find_unbound(bound, free);
+                }
             }
             _otherwise => (),
         }

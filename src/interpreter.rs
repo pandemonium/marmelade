@@ -62,6 +62,7 @@ impl Interpreter {
         match program {
             CompilationUnit::Implicit(annotation, module) => {
                 let env = self.load_module(annotation, typing_context, module)?;
+
                 match env.lookup(&Identifier::new("main"))? {
                     Value::Closure { .. } => todo!(),
                     Value::Bridge { .. } => todo!(),
@@ -83,6 +84,7 @@ impl Interpreter {
     {
         self.inject_prelude(annotation.clone(), &mut module);
         self.inject_types_and_synthetics(annotation.clone(), &mut module, &mut typing_context)?;
+
         println!("load_module: types and synthetics loaded");
         ModuleLoader::try_loading(&module, self.prelude)?
             .type_check(typing_context)?
@@ -110,7 +112,7 @@ impl Interpreter {
         typing_context: &mut TypingContext,
     ) -> Typing<()>
     where
-        A: fmt::Display + Clone,
+        A: fmt::Display + Clone + Parsed,
     {
         let type_bindings = module
             .declarations
@@ -133,7 +135,7 @@ impl Interpreter {
 
         for (binding, coproduct) in type_bindings {
             let coproduct = coproduct
-                .make_implementation_module(annotation.clone(), TypeName::new(binding.as_str()))?;
+                .make_implementation_module(annotation.clone(), TypeName::new(&binding.as_str()))?;
 
             println!(
                 "inject_types_and_synthetics: {} ::= {}",
@@ -217,14 +219,13 @@ impl fmt::Display for Value {
                     .collect::<Vec<_>>()
                     .join(",")
             ),
-            Self::Closure(closure) => writeln!(f, "closure {closure}"),
-            Self::RecursiveClosure(closure) => writeln!(f, "closure {closure}"),
+            Self::Closure(closure) => writeln!(f, "closure {closure:?}"),
+            Self::RecursiveClosure(closure) => writeln!(f, "closure {closure:?}"),
             Self::Bridge { target } => write!(f, "{target:?}"),
         }
     }
 }
 
-// Turn SelfReferentialLambda into this
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecursiveClosure {
     pub name: Identifier, // Name does not seem used.
@@ -239,11 +240,20 @@ impl fmt::Display for RecursiveClosure {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Closure {
     pub parameter: Identifier,
     pub capture: Environment,
     pub body: Expression<()>,
+}
+
+impl fmt::Debug for Closure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Closure")
+            .field("parameter", &self.parameter)
+            .field("body", &self.body)
+            .finish()
+    }
 }
 
 impl fmt::Display for Closure {
@@ -324,6 +334,7 @@ impl Environment {
     }
 
     pub fn insert_binding(&mut self, binder: Identifier, bound: Value) {
+        println!("insert_binding: {binder} -> {bound:?}");
         self.leaf.push((binder, bound));
     }
 
@@ -391,8 +402,8 @@ pub enum RuntimeError {
     #[error("Expected type {0}")]
     ExpectedType(Type),
 
-    #[error("Expected a function type")]
-    ExpectedFunction,
+    #[error("Expected a function type, got: {got}")]
+    ExpectedFunction { got: Value },
 
     #[error("Expected a synthetic closure {0}")]
     ExpectedSynthetic(Identifier),
@@ -412,7 +423,10 @@ where
 {
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
-            Self::Variable(_, id) => env.lookup(&id).cloned(),
+            Self::Variable(_, id) => env
+                .lookup(&id)
+                .cloned()
+                .inspect(|x| println!("reduce: {} is {}", id, x)),
             Self::InvokeBridge(_, id) => invoke_bridge(id, env),
             Self::Literal(_, constant) => Ok(reduce_immediate(constant)),
             Self::SelfReferential(
@@ -459,6 +473,9 @@ where
     A: fmt::Debug + Clone,
 {
     let scrutinee = scrutinee.reduce(env)?;
+
+    println!("reduce_deconstruction: scrutinee {scrutinee:?}");
+
     match_clauses
         .drain(..)
         .find_map(|clause| clause.match_with(&scrutinee))
@@ -466,17 +483,18 @@ where
         .and_then(|matched| reduce_consequent(matched, env))
 }
 
-fn reduce_consequent<A>(matched: Match<A>, env: &Environment) -> Interpretation
+fn reduce_consequent<A>(matched: Match<A>, env: &mut Environment) -> Interpretation
 where
     A: fmt::Debug + Clone,
 {
-    println!("reduce_consequent: Yes");
-
     let mut env = env.clone();
     for (binding, value) in matched.bindings {
-        println!("reduce_consequent: {binding}->{value}");
+        println!("reduce_consequent: binding {binding} to {value:?}");
         env.insert_binding(binding, value);
     }
+
+    println!("reduce_consequent: {:?}", matched.consequent);
+
     matched.consequent.reduce(&mut env)
 }
 
@@ -490,6 +508,10 @@ impl<A> MatchClause<A> {
     where
         A: fmt::Debug + Clone,
     {
+        println!(
+            "match_with: scrutinee {scrutinee:?} pattern {:?}",
+            self.pattern
+        );
         Some(Match {
             bindings: extract_matched_bindings(scrutinee, self.pattern)?,
             consequent: *self.consequent,
@@ -500,7 +522,10 @@ impl<A> MatchClause<A> {
 fn extract_matched_bindings<A>(
     scrutinee: &Value,
     pattern: Pattern<A>,
-) -> Option<Vec<(Identifier, Value)>> {
+) -> Option<Vec<(Identifier, Value)>>
+where
+    A: fmt::Debug,
+{
     match (scrutinee, pattern) {
         (
             Value::Coproduct {
@@ -514,15 +539,22 @@ fn extract_matched_bindings<A>(
         (Value::Tuple(elements), Pattern::Tuple(pattern, _))
             if elements.len() == pattern.elements.len() =>
         {
+            println!("extract_matched_bindings(B): {elements:?}");
+
             let mut bindings = vec![];
             for (value, pattern) in elements.iter().zip(pattern.elements) {
+                println!("extract_matched_bindings: {value:?} {pattern:?}");
+
                 bindings.extend(extract_matched_bindings(value, pattern)?);
             }
 
             Some(bindings)
         }
         (_, Pattern::Literally(this)) => (scrutinee == &reduce_immediate(this)).then(|| vec![]),
-        (_, Pattern::Otherwise(binding)) => Some(vec![(binding, scrutinee.clone())]),
+        (_, Pattern::Otherwise(binding)) => {
+            println!("extract_matched_bindings(A): {binding} {scrutinee:?}");
+            Some(vec![(binding, scrutinee.clone())])
+        }
         _otherwise => None,
     }
 }
@@ -661,6 +693,8 @@ fn apply_function<A>(
 where
     A: fmt::Debug + Clone,
 {
+    println!("apply_function: {:?} $ {:?}", function, argument);
+
     match function.reduce(env)? {
         Value::Closure(Closure {
             parameter,
@@ -668,22 +702,33 @@ where
             body,
         }) => {
             let binding = argument.reduce(env)?;
+            println!("apply_function(1): binding {} to {}", binding, parameter);
             capture.insert_binding(parameter.clone(), binding);
 
             let retval = body.reduce(&mut capture);
-            capture.remove_binding(&parameter);
+            //            capture.remove_binding(&parameter);
             retval
         }
         Value::RecursiveClosure(RecursiveClosure { inner, .. }) => {
             let binding = argument.reduce(env)?;
 
             let mut inner = { inner.borrow_mut().clone() };
+            println!(
+                "apply_function(2): binding {} to {}",
+                binding, inner.parameter
+            );
             let parameter = inner.parameter.clone();
             inner.capture.insert_binding(parameter.clone(), binding);
 
-            inner.body.clone().reduce(&mut inner.capture)
+            let retval = inner.body.clone().reduce(&mut inner.capture);
+            //            inner.capture.remove_binding(&parameter);
+
+            retval
         }
-        _otherwise => Err(RuntimeError::ExpectedFunction),
+        otherwise => {
+            println!("apply_function: {otherwise:?}");
+            Err(RuntimeError::ExpectedFunction { got: otherwise })
+        }
     }
 }
 
@@ -699,7 +744,7 @@ fn make_closure<A>(param: Identifier, body: Expression<A>, env: Environment) -> 
 mod tests {
     use crate::{
         ast::{Apply, Binding, Constant, ControlFlow, Expression, Identifier, Lambda, Parameter},
-        context::CompileState,
+        context::Linkage,
         interpreter::{Base, Environment, RuntimeError, Value},
         stdlib,
     };
@@ -708,7 +753,7 @@ mod tests {
 
     #[test]
     fn reduce_literal() {
-        let mut context = CompileState::default();
+        let mut context = Linkage::default();
         stdlib::import(&mut context).unwrap();
 
         assert_eq!(
@@ -723,7 +768,7 @@ mod tests {
 
     #[test]
     fn reduce_with_variables() {
-        let mut context = CompileState::default();
+        let mut context = Linkage::default();
         stdlib::import(&mut context).unwrap();
 
         context
@@ -1081,7 +1126,7 @@ mod tests {
             },
         );
 
-        let mut context = CompileState::default();
+        let mut context = Linkage::default();
         stdlib::import(&mut context).unwrap();
 
         context.interpreter_environment.insert_binding(

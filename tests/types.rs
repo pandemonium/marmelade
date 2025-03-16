@@ -5,7 +5,7 @@ use marmelade::{
         Apply, Expression, Forall, Product, TypeApply, TypeDeclarator, TypeExpression, TypeName,
         ValueDeclarator,
     },
-    context::CompileState,
+    context::Linkage,
     parser::ParsingInfo,
     stdlib,
     typer::{
@@ -50,7 +50,7 @@ fn list_type() {
 
 #[test]
 fn tuple() {
-    let mut ctx = CompileState::default();
+    let mut ctx = Linkage::default();
     stdlib::import(&mut ctx).unwrap();
 
     let lhs = Expression::Product(

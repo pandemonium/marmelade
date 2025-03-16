@@ -1,13 +1,13 @@
 use crate::{
     bridge::*,
-    context::CompileState,
+    context::Linkage,
     interpreter::{Base, Interpretation, Value},
     lexer::Operator,
     typer::{BaseType, Type, TypeParameter, TypeScheme},
 };
 
 // Think about the return type of this
-pub fn import(env: &mut CompileState) -> Interpretation<()> {
+pub fn import(env: &mut Linkage) -> Interpretation<()> {
     use Operator::*;
 
     let raw_lambda2 = |apply, signature| PartialRawLambda2 { apply, signature };

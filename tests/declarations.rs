@@ -304,37 +304,64 @@ fn coproduct_eval() {
     );
 }
 
+// Introduce type annotations for top-level types
+// and do checks from there?
+//
+// "Cons" must find its type constructor.
+// I could sort of cheat by looking up the function Cons
+// and look at its return value, and infer that type.
+//
+// I could also work some more on modules and do the Module trick.
+//
+// Would it be acceptible if:
+//   List ::= forall a. Cons a (List a) | Nil
+// would create:
+//   List.t as the type and
+//   List.Cons and List.Nil as the functions?
+//
+// I also have to be able to annotate parameters with types and
+// have that do something.
+//
+// Have to print the AST to see which of the Nil-positions that
+// is getting applied to something. Did I ever do that ()-trick
+// parameter for nullary constructors?
 #[test]
 fn listy_mclistface() {
-    // Introduce type annotations for top-level types
-    // and do checks from there?
-    //
-    // "Cons" must find its type constructor.
-    // I could sort of cheat by looking up the function Cons
-    // and look at its return value, and infer that type.
-    //
-    // I could also work some more on modules and do the Module trick.
-    //
-    // Would it be acceptible if:
-    //   List ::= forall a. Cons a (List a) | Nil
-    // would create:
-    //   List.t as the type and
-    //   List.Cons and List.Nil as the functions?
-    //
-    // I also have to be able to annotate parameters with types and
-    // have that do something.
     eval_fixture(
         r#"|List ::= forall a. Cons a (List a) | Nil
            |
-           |length = lambda xs.
+           |length = lambda base xs.
            |  deconstruct xs into
-           |    Cons x xs -> 1 + length xs
-           |  | Nil       -> 0
+           |    Cons x xs -> 1 + length base xs
+           |  | Nil       -> base
+           |
+           |map = lambda f xs.
+           |  deconstruct xs into
+           |    Cons x ys -> Cons (f x) (map f ys)
+           |  | Nil       -> Nil
+           |
+           |output = lambda y. 1 + y
            |
            |main =
            |  let xs = Cons 1 (Cons 2 (Cons 3 (Cons 4 Nil)))
-           |  in length xs
+           |  in map show xs
            "#,
         Value::Base(Base::Int(4)),
+    );
+}
+
+#[test]
+fn multiple_arguments() {
+    eval_fixture(
+        r#"|List ::= forall a. Cons a (List a) | Nil
+           |
+           |map = lambda f a b c.
+           |  print_endline (f a)
+           |  print_endline (f b)
+           |  print_endline (f c)
+           |  Cons a (Cons b (Cons c Nil))
+           |
+           |main = let xs = Cons 1 (map show 2 3 4) in print_endline (show xs)"#,
+        Value::Base(Base::Unit),
     );
 }

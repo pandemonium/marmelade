@@ -1,6 +1,6 @@
 use crate::{
     ast::{Expression, Identifier, Lambda, Parameter},
-    context::CompileState,
+    context::Linkage,
     interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
     typer::{BaseType, ProductType, Type, TypeParameter, TypeScheme},
 };
@@ -226,11 +226,11 @@ where
 pub fn define<B>(
     syntactical_name: Identifier,
     bridge: B,
-    CompileState {
+    Linkage {
         typing_context,
         interpreter_environment,
         ..
-    }: &mut CompileState,
+    }: &mut Linkage,
 ) -> Interpretation<()>
 where
     B: Bridge + 'static,
@@ -364,7 +364,7 @@ mod test {
         let _x = define(
             Identifier::new("open_file"),
             Lambda1(_open_file),
-            &mut CompileState::default(),
+            &mut Linkage::default(),
         )
         .unwrap();
     }

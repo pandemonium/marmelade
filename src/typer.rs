@@ -60,7 +60,6 @@ impl TypeScheme {
     }
 
     pub fn instantiate(self, _ctx: &TypingContext) -> Typing<Type> {
-        println!("instantiate: {}", self);
         let mut subs = Substitutions::default();
         for param in self.quantifiers {
             subs.add(param, Type::fresh());
@@ -143,7 +142,6 @@ impl Type {
     }
 
     pub fn expand_type(self, ctx: &TypingContext) -> Typing<Type> {
-        println!("expand_type: {}", self);
         match self {
             Type::Named(name) => ctx
                 .lookup(&name.clone().into())
@@ -372,11 +370,11 @@ impl CoproductType {
         Self(signature)
     }
 
-    fn constructor_parameter_type(&self, name: &ast::Identifier) -> Option<&Type> {
+    fn constructor_signature(&self, name: &ast::Identifier) -> Option<&Type> {
         let Self(constructors) = self;
         constructors
             .iter()
-            .find_map(|(constructor, ty)| (name.as_str() == constructor).then_some(ty))
+            .find_map(|(constructor, ty)| (&name.as_str() == constructor).then_some(ty))
     }
 
     fn arity(&self) -> usize {
@@ -398,6 +396,45 @@ impl CoproductType {
                 .collect(),
         )
     }
+}
+
+pub fn infer_declaration_type<A>(
+    declaration: &ast::Declaration<A>,
+    typing_context: &TypingContext,
+) -> Typing
+where
+    A: fmt::Debug + fmt::Display + Parsed + Clone,
+{
+    match declaration {
+        ast::Declaration::Value(_, declaration) => Ok(infer_declarator_type(
+            &declaration.binder,
+            &declaration.declarator,
+            typing_context,
+        )?),
+        _otherwise => todo!(),
+    }
+}
+
+// Change into ParsingInfo
+// A TypeInference contains substitutions. Can I use these?
+pub fn infer_declarator_type<A>(
+    binder: &ast::Identifier,
+    declarator: &ast::ValueDeclarator<A>,
+    typing_context: &TypingContext,
+) -> Typing
+where
+    A: fmt::Debug + fmt::Display + Parsed + Clone,
+{
+    let expression = match declarator.clone() {
+        ast::ValueDeclarator::Constant(constant) => constant.initializer,
+        ast::ValueDeclarator::Function(function) => {
+            // The fact that this has to always happen means that it ought
+            // not be duplicated.
+            function.into_lambda_tree(binder.clone())
+        }
+    };
+
+    typing_context.infer_type(&expression)
 }
 
 impl fmt::Display for CoproductType {
@@ -766,8 +803,6 @@ mod tests {
             ),
         );
 
-        println!("applies: Killroy!");
-
         let t = ctx
             .infer_type(&ast::Expression::Product(
                 ParsingInfo::default(),
@@ -784,7 +819,6 @@ mod tests {
                 ])),
             ))
             .unwrap();
-        println!("Killroy: {}", t.inferred_type);
 
         let expected_type = Type::Product(ProductType::Struct(Vec::from([
             (ast::Identifier::new("id"), mk_identity_type()),

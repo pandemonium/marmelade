@@ -251,7 +251,7 @@ where
                 ),
                 Type::Coproduct(coproduct),
             ) => {
-                if let Some(constructor) = coproduct.constructor_parameter_type(constructor) {
+                if let Some(constructor) = coproduct.constructor_signature(constructor) {
                     Self::Tuple(argument.clone(), PhantomData::default()).check_type(
                         annotation,
                         constructor,
@@ -272,8 +272,6 @@ where
                 Self::Tuple(TuplePattern { elements }, _),
                 Type::Product(ProductType::Tuple(tuple)),
             ) if elements.len() == tuple.len() => {
-                println!("check_type: Sometimes it type checks list before Cons?");
-
                 let mut matched = vec![];
                 for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
                     matched.extend(pattern.check_type(annotation, scrutinee, ctx)?);
@@ -298,23 +296,17 @@ where
 
             // This ought to  be all bindings in the pattern, but with
             // fresh types
-            (pattern, scrutinee) => {
-                println!("check_type: Waldo");
-                Err(TypeError::PatternMatchImpossible {
-                    pattern: pattern.clone().map(|annotation| annotation.info().clone()),
-                    scrutinee: scrutinee.clone(),
-                })
-            }
+            (pattern, scrutinee) => Err(TypeError::PatternMatchImpossible {
+                pattern: pattern.clone().map(|annotation| annotation.info().clone()),
+                scrutinee: scrutinee.clone(),
+            }),
         }
     }
 }
 
 // revisit this function
 fn infer_lambda<A>(
-    ast::Parameter {
-        name,
-        type_annotation,
-    }: &ast::Parameter<A>,
+    ast::Parameter { name, .. }: &ast::Parameter<A>,
     body: &ast::Expression<A>,
     info: &ParsingInfo,
     ctx: &TypingContext,
@@ -414,7 +406,7 @@ where
     if let Type::Coproduct(ref coproduct) = type_constructor.clone().expand_type(ctx)? {
         let argument = infer_type(argument, ctx)?;
 
-        if let Some(lhs) = coproduct.constructor_parameter_type(constructor) {
+        if let Some(lhs) = coproduct.constructor_signature(constructor) {
             let rhs = &argument.inferred_type;
             let substitutions = argument.substitutions.compose(lhs.unify(rhs, annotation)?);
             let inferred_type = type_constructor.apply(&substitutions);

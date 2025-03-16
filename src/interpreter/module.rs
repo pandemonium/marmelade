@@ -8,7 +8,7 @@ use crate::{
     ast::{
         Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration, ValueDeclarator,
     },
-    typer::{Parsed, TypeError, TypeInference, TypeScheme, Typing, TypingContext},
+    typer::{self, Parsed, TypingContext},
 };
 
 pub struct ModuleLoader<'a, A> {
@@ -45,17 +45,14 @@ where
     }
 
     pub fn type_check(self, mut typing_context: TypingContext) -> Loaded<Self> {
-        for id in self.dependency_graph.compute_resolution_order().drain(..) {
-            if self.module.find_value_declaration(id).is_some() {
+        for id in self.dependency_graph.compute_resolution_order() {
+            if let Some(declaration) = self.module.find_value_declaration(id) {
                 println!("type_check: `{id}` ...");
-                let declaration_type = self
-                    .infer_declaration_type(id, &typing_context)?
-                    .inferred_type;
 
-                let scheme = TypeScheme {
-                    quantifiers: declaration_type.free_variables().iter().cloned().collect(),
-                    body: declaration_type,
-                };
+                let declaration_type =
+                    typer::infer_declaration_type(declaration, &typing_context)?.inferred_type;
+
+                let scheme = declaration_type.generalize(&typing_context);
 
                 println!("type_check: `{id}` `{scheme}`");
 
@@ -67,7 +64,7 @@ where
     }
 
     pub fn initialize(mut self) -> Loaded<Environment> {
-        for id in self.dependency_graph.compute_resolution_order().drain(..) {
+        for id in self.dependency_graph.compute_resolution_order() {
             self.initialize_declaration(id)?
         }
 
@@ -100,74 +97,33 @@ where
 
         let env = &mut self.initialized;
         let value = expression.reduce(env)?;
+        println!("initialize_binding: {id} -> {value:?}");
         env.insert_binding(id.clone(), value);
 
         Ok(())
-    }
-
-    fn infer_declaration_type(
-        &self,
-        id: &Identifier,
-        typing_context: &TypingContext,
-    ) -> Loaded<TypeInference> {
-        let declaration = self
-            .module
-            .find_value_declaration(id)
-            .ok_or_else(|| TypeError::UndefinedSymbol(id.clone()))?;
-
-        match declaration {
-            Declaration::Value(_, declaration) => Ok(self.infer_declarator_type(
-                &declaration.binder,
-                &declaration.declarator,
-                typing_context,
-            )?),
-            _otherwise => todo!(),
-        }
-    }
-
-    // Change into ParsingInfo
-    // A TypeInference contains substitutions. Can I use these?
-    fn infer_declarator_type(
-        &self,
-        binder: &Identifier,
-        declarator: &ValueDeclarator<A>,
-        typing_context: &TypingContext,
-    ) -> Typing
-    where
-        A: fmt::Display + Parsed,
-    {
-        let expression = match declarator.clone() {
-            ValueDeclarator::Constant(constant) => constant.initializer,
-            ValueDeclarator::Function(function) => {
-                // The fact that this has to always happen means that it ought
-                // not be duplicated.
-                function.into_lambda_tree(binder.clone())
-            }
-        };
-
-        typing_context.infer_type(&expression)
     }
 }
 
 #[derive(Debug)]
 pub struct DependencyGraph<'a> {
-    dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
+    //    dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
+    dependencies: Vec<(&'a Identifier, Vec<&'a Identifier>)>,
 }
 
 impl<'a> DependencyGraph<'a> {
     pub fn from_declarations<A>(decls: &'a [Declaration<A>]) -> Self
     where
-        A: Clone,
+        A: fmt::Debug + Clone,
     {
-        let mut outbound = HashMap::with_capacity(decls.len());
+        let mut outbound = Vec::with_capacity(decls.len());
 
         for decl in decls {
             match decl {
                 Declaration::Value(_, value) => {
-                    outbound.insert(
+                    outbound.push((
                         &value.binder,
                         value.declarator.dependencies().drain().collect(),
-                    );
+                    ));
                 }
                 Declaration::ImportModule(
                     _,
@@ -176,7 +132,8 @@ impl<'a> DependencyGraph<'a> {
                     },
                 ) => {
                     for dep in exported_symbols {
-                        outbound.entry(dep).or_default();
+                        //                        outbound.entry(dep).or_default();
+                        outbound.push((dep, vec![]));
                     }
                 }
                 _otherwise => (),
@@ -190,17 +147,17 @@ impl<'a> DependencyGraph<'a> {
 
     // Think about whether or not this consumes self.
     pub fn compute_resolution_order(&self) -> Vec<&'a Identifier> {
-        let mut boofer = Vec::with_capacity(self.dependencies.len());
+        let mut boofer: Vec<&'a Identifier> = Vec::with_capacity(self.dependencies.len());
 
         let mut graph = self
             .dependencies
             .iter()
-            .map(|(&node, edges)| {
+            .map(|(node, edges)| {
                 (
-                    node,
+                    *node,
                     edges
                         .iter()
-                        .filter(|&&edge| edge != node)
+                        .filter(|&&edge| edge != *node)
                         .copied()
                         .collect::<HashSet<_>>(),
                 )
@@ -216,7 +173,7 @@ impl<'a> DependencyGraph<'a> {
 
         let mut queue = in_degrees
             .iter()
-            .filter_map(|(&node, in_degree)| (*in_degree == 0).then_some(node))
+            .filter_map(|(node, in_degree)| (*in_degree == 0).then_some(*node))
             .collect::<VecDeque<_>>();
 
         while let Some(independent) = queue.pop_front() {
@@ -243,17 +200,17 @@ impl<'a> DependencyGraph<'a> {
     where
         F: FnMut(&Identifier) -> bool,
     {
-        /*self.is_acyclic() &&*/
-        self.is_satisfiable(is_external)
+        self.is_acyclic() && self.is_satisfiable(is_external)
     }
 
     pub fn is_satisfiable<F>(&'a self, mut is_external: F) -> bool
     where
         F: FnMut(&Identifier) -> bool,
     {
-        self.dependencies.values().all(|deps| {
-            deps.iter().all(|dep| {
-                let retval = self.dependencies.contains_key(dep) || is_external(dep);
+        self.dependencies.iter().all(|(_, deps)| {
+            deps.iter().all(|&dep| {
+                let retval =
+                    self.dependencies.iter().any(|(key, _)| *key == dep) || is_external(dep);
 
                 if !retval {
                     println!("is_satisfiable: `{dep}` not found");
@@ -269,8 +226,8 @@ impl<'a> DependencyGraph<'a> {
         let mut visited = HashSet::new();
 
         self.dependencies
-            .keys()
-            .all(|child| !self.is_cyclic(child, &mut visited, &mut HashSet::new()))
+            .iter()
+            .all(|(child, _)| !self.is_cyclic(child, &mut visited, &mut HashSet::new()))
     }
 
     fn is_cyclic(
@@ -296,29 +253,42 @@ impl<'a> DependencyGraph<'a> {
 
             path.remove(node);
 
+            if has_cycle {
+                println!("is_cyclic: {node}");
+            }
+
             has_cycle
         }
     }
 
     pub fn nodes(&self) -> Vec<&'a Identifier> {
-        self.dependencies.keys().cloned().collect()
+        self.dependencies
+            .iter()
+            .map(|(key, _)| key)
+            .cloned()
+            .collect()
     }
 
     pub fn find<F>(&'a self, mut p: F) -> Option<&'a &'a Identifier>
     where
         F: FnMut(&'a Identifier) -> bool,
     {
-        self.dependencies.keys().find(|id| p(id))
+        self.dependencies
+            .iter()
+            .map(|(key, _)| key)
+            .find(|id| p(id))
     }
 
     pub fn satisfies<F>(&'a self, mut p: F) -> bool
     where
         F: FnMut(&'a Identifier) -> bool,
     {
-        self.dependencies.keys().all(|id| p(id))
+        self.dependencies.iter().map(|(key, _)| key).all(|id| p(id))
     }
 
     pub fn dependencies(&self, d: &'a Identifier) -> Option<&[&'a Identifier]> {
-        self.dependencies.get(d).map(Vec::as_slice)
+        self.dependencies
+            .iter()
+            .find_map(|(key, deps)| (*key == d).then_some(deps.as_slice()))
     }
 }

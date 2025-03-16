@@ -597,11 +597,11 @@ fn parse_pattern<'a>(remains: &'a [Token]) -> ParseResult<'a, Pattern<ParsingInf
             parse_constructor_pattern(remains, position)
         }
 
-        [T(TT::Identifier(id), position), remains @ ..] => {
+        [T(TT::Identifier(id), _position), remains @ ..] => {
             Ok((Pattern::Otherwise(Identifier::new(id)), remains))
         }
 
-        [T(TT::Literal(lit), position), remains @ ..] => {
+        [T(TT::Literal(lit), _position), remains @ ..] => {
             Ok((Pattern::Literally(lit.clone().into()), remains))
         }
 
@@ -618,9 +618,9 @@ fn is_capital_case(id: &str) -> bool {
 
 fn parse_constructor_pattern<'a>(
     remains: &'a [Token],
-    position: &SourcePosition,
+    _position: &SourcePosition,
 ) -> ParseResult<'a, Pattern<ParsingInfo>> {
-    if let [T(TT::Identifier(constructor), position), remains @ ..] = remains {
+    if let [T(TT::Identifier(constructor), _position), remains @ ..] = remains {
         let (patterns, remains) = parse_pattern_list(remains)?;
         Ok((
             Pattern::Coproduct(
@@ -651,7 +651,7 @@ fn parse_pattern_list<'a>(mut remains: &'a [Token]) -> ParseResult<'a, Vec<Patte
 
 fn parse_tuple_pattern<'a>(
     mut remains: &'a [Token],
-    position: &SourcePosition,
+    _position: &SourcePosition,
 ) -> ParseResult<'a, TuplePattern<ParsingInfo>> {
     let mut boofer = vec![];
 

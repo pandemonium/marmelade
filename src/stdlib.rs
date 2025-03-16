@@ -1,11 +1,11 @@
 use crate::{
-    context::CompileState,
+    context::Linkage,
     interpreter::{Environment, Interpretation},
 };
 
 mod operators;
 
-pub fn import(context: &mut CompileState) -> Interpretation<()> {
+pub fn import(context: &mut Linkage) -> Interpretation<()> {
     //    import_std_file(env)?;
     types::import(context)?;
     operators::import(context)?;
@@ -17,12 +17,12 @@ pub fn import(context: &mut CompileState) -> Interpretation<()> {
 
 mod types {
     use crate::{
-        context::CompileState,
+        context::Linkage,
         interpreter::Interpretation,
         typer::{self, Type, BASE_TYPES},
     };
 
-    pub fn import(context: &mut CompileState) -> Interpretation<()> {
+    pub fn import(context: &mut Linkage) -> Interpretation<()> {
         for ty in BASE_TYPES {
             context.typing_context.bind(
                 typer::Binding::TypeTerm(ty.type_name().as_str().to_owned()),
@@ -38,17 +38,17 @@ mod types {
 }
 
 mod stdio {
-    use crate::{ast::Identifier, bridge, context::CompileState, interpreter::Interpretation};
+    use crate::{ast::Identifier, bridge, context::Linkage, interpreter::Interpretation};
 
     pub fn print_endline(text: String) {
-        println!("{text}");
+        println!("#### {text}");
     }
 
     pub fn print(text: String) {
         print!("{text}");
     }
 
-    pub fn import(context: &mut CompileState) -> Interpretation<()> {
+    pub fn import(context: &mut Linkage) -> Interpretation<()> {
         bridge::define(
             Identifier::new("print_endline"),
             bridge::Lambda1(print_endline),
@@ -65,7 +65,7 @@ mod conversions {
     use crate::{
         ast::Identifier,
         bridge,
-        context::CompileState,
+        context::Linkage,
         interpreter::{Interpretation, Value},
     };
 
@@ -73,7 +73,7 @@ mod conversions {
         format!("{value}")
     }
 
-    pub fn import(context: &mut CompileState) -> Interpretation<()> {
+    pub fn import(context: &mut Linkage) -> Interpretation<()> {
         bridge::define(Identifier::new("show"), bridge::RawLambda1(show), context)?;
 
         Ok(())
@@ -88,14 +88,14 @@ fn _import_std_file(_env: &mut Environment) -> Interpretation<()> {
 mod tests {
     use crate::{
         ast::{Apply, Constant, Expression as E, Identifier},
-        context::CompileState,
+        context::Linkage,
         interpreter::{Base, RuntimeError, Value},
         stdlib,
     };
 
     #[test]
     fn plus_i64() {
-        let mut context = CompileState::default();
+        let mut context = Linkage::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn plus_f64() {
-        let mut context = CompileState::default();
+        let mut context = Linkage::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn plus_wrong_types() {
-        let mut context = CompileState::default();
+        let mut context = Linkage::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn minus() {
-        let mut context = CompileState::default();
+        let mut context = Linkage::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn times() {
-        let mut context = CompileState::default();
+        let mut context = Linkage::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn divides() {
-        let mut context = CompileState::default();
+        let mut context = Linkage::default();
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(

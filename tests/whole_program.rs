@@ -1,6 +1,6 @@
 use marmelade::{
     ast::{Apply, Expression, Identifier, Lambda, Parameter},
-    context::CompileState,
+    context::Linkage,
     interpreter::{Base, Closure, Environment, Interpreter, Value},
     lexer::LexicalAnalyzer,
     parser, stdlib,
@@ -34,7 +34,7 @@ fn main1() {
     );
     let program = parser::parse_compilation_unit(lexer.tokenize(&source_text)).unwrap();
 
-    let mut compilation = CompileState::new(&source_text);
+    let mut compilation = Linkage::new(&source_text);
     stdlib::import(&mut compilation).unwrap();
 
     let return_value = Interpreter::new(compilation.interpreter_environment)
@@ -132,7 +132,7 @@ fn factorial20() {
     );
     let program = parser::parse_compilation_unit(lexer.tokenize(&source_text)).unwrap();
 
-    let mut compilation = CompileState::new(&source_text);
+    let mut compilation = Linkage::new(&source_text);
     stdlib::import(&mut compilation).unwrap();
 
     let program_environment = compilation.interpreter_environment.into_parent();
@@ -162,10 +162,10 @@ fn fibonacci23() {
            |"#,
     );
 
-    let mut compilation = CompileState::new(&source_text);
-    stdlib::import(&mut compilation).unwrap();
+    let mut linkage = Linkage::new(&source_text);
+    stdlib::import(&mut linkage).unwrap();
 
-    let return_value = compilation.typecheck_and_interpret();
+    let return_value = linkage.typecheck_and_interpret();
 
     // Thia has lost several magnitudes of performance and I do not know why.
     assert_eq!(
