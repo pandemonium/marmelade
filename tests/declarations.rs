@@ -343,7 +343,7 @@ fn listy_mclistface() {
            |    Cons x ys -> fold_left (f z ys) f ys
            |  | Nil       -> Nil
            |
-           |length2 = foldLeft 0 (lambda acc x. 1 + acc)
+           |length2 = fold_left 0 (lambda acc x. 1 + acc)
            |
            |output = lambda y. 1 + y
            |

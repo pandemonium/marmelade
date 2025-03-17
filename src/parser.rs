@@ -5,8 +5,9 @@ use crate::{
     ast::{
         Apply, Binding, CompilationUnit, Constructor, ConstructorPattern, ControlFlow, Coproduct,
         Declaration, DeconstructInto, Expression, Forall, Identifier, Lambda, MatchClause,
-        ModuleDeclarator, Parameter, Pattern, Sequence, TuplePattern, TypeApply, TypeDeclaration,
-        TypeDeclarator, TypeExpression, TypeName, ValueDeclaration, ValueDeclarator,
+        ModuleDeclarator, Parameter, Pattern, SelfReferential, Sequence, TuplePattern, TypeApply,
+        TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, ValueDeclaration,
+        ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
     typer,
@@ -349,12 +350,14 @@ fn parse_type_expression_infix<'a>(
 }
 
 fn parse_value_binding<'a>(
-    binder: &String,
+    binder: &str,
     position: &SourcePosition,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration<ParsingInfo>> {
-    let (declarator, remains) =
-        parse_value_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+    let (declarator, remains) = parse_value_declarator(
+        binder,
+        strip_if_starts_with(TT::Layout(Layout::Indent), remains),
+    )?;
 
     Ok((
         Declaration::Value(
@@ -410,16 +413,27 @@ fn parse_value_binding<'a>(
 //    }
 //}
 
-fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclarator<ParsingInfo>> {
+fn parse_value_declarator<'a>(
+    binder: &str,
+    input: &'a [Token],
+) -> ParseResult<'a, ValueDeclarator<ParsingInfo>> {
     let (expression, remains) = parse_expression(input, 0)?;
 
-    if matches!(expression, Expression::Lambda(..)) {
-        //        What good is FunctionDeclarator? What does it buy me?
-        //        Should I extrude the parameters from the Lambda tree?
-        todo!()
+    let expression = if let Expression::Lambda(annotation, Lambda { parameter, body }) = expression
+    {
+        Expression::SelfReferential(
+            annotation,
+            SelfReferential {
+                name: Identifier::new(binder),
+                parameter,
+                body,
+            },
+        )
     } else {
-        todo!()
-    }
+        expression
+    };
+
+    Ok((ValueDeclarator { expression }, remains))
 }
 
 // Should this function eat the -> ?
@@ -509,7 +523,8 @@ fn parse_lambda<'a>(
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (parameters, remains) = parse_parameter_list(tokens)?;
     let remains = expect(TT::Period, remains)?;
-    let (body, remains) = parse_expression(remains, 0)?;
+    let (body, remains) =
+        parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0)?;
 
     Ok((
         parameters.into_iter().rfold(body, |body, parameter| {
@@ -962,7 +977,7 @@ fn apply_binary_operator(
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{Constant, FunctionDeclarator, ValueDeclarator},
+        ast::{Constant, ValueDeclarator},
         lexer::LexicalAnalyzer,
     };
 
@@ -1240,27 +1255,31 @@ mod tests {
                 (),
                 ValueDeclaration {
                     binder: Identifier::new("create_window"),
-                    declarator: ValueDeclarator::Function(FunctionDeclarator {
-                        parameters: vec![Parameter {
-                            name: Identifier::new("x"),
-                            type_annotation: None
-                        }],
-                        return_type_annotation: None,
-                        body: E::Apply(
+                    declarator: ValueDeclarator {
+                        expression: E::SelfReferential(
                             (),
-                            Apply {
-                                function: E::Apply(
+                            SelfReferential {
+                                name: Identifier::new("create_window"),
+                                parameter: Parameter::new(Identifier::new("x")),
+                                body: E::Apply(
                                     (),
                                     Apply {
-                                        function: E::Variable((), Id::new("+")).into(),
-                                        argument: E::Literal((), Constant::Int(1)).into()
+                                        function: E::Apply(
+                                            (),
+                                            Apply {
+                                                function: E::Variable((), Id::new("+")).into(),
+                                                argument: E::Literal((), Constant::Int(1)).into()
+                                            }
+                                        )
+                                        .into(),
+                                        argument: Expression::Variable((), Identifier::new("x"))
+                                            .into()
                                     }
                                 )
-                                .into(),
-                                argument: Expression::Variable((), Identifier::new("x")).into()
+                                .into()
                             }
                         ),
-                    }),
+                    },
                 }
             ),
             decl.map(|_| ())
@@ -1321,47 +1340,54 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("create_window"),
-                        declarator: ValueDeclarator::Function(FunctionDeclarator {
-                            parameters: vec![Parameter {
-                                name: Identifier::new("x"),
-                                type_annotation: None
-                            }],
-                            return_type_annotation: None,
-                            body: E::Apply(
+                        declarator: ValueDeclarator {
+                            expression: E::SelfReferential(
                                 (),
-                                Apply {
-                                    function: E::Apply(
+                                SelfReferential {
+                                    name: Identifier::new("create_window"),
+                                    parameter: Parameter::new(Identifier::new("x")),
+                                    body: E::Apply(
                                         (),
                                         Apply {
-                                            function: E::Variable((), Id::new("+")).into(),
-                                            argument: E::Literal((), Constant::Int(1)).into()
+                                            function: E::Apply(
+                                                (),
+                                                Apply {
+                                                    function: E::Variable((), Id::new("+")).into(),
+                                                    argument: E::Literal((), Constant::Int(1))
+                                                        .into()
+                                                }
+                                            )
+                                            .into(),
+                                            argument: E::Variable((), Id::new("x")).into()
                                         }
                                     )
-                                    .into(),
-                                    argument: E::Variable((), Id::new("x")).into()
+                                    .into()
                                 }
                             ),
-                        }),
+                        },
                     }
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Id::new("print_endline"),
-                        declarator: ValueDeclarator::Function(FunctionDeclarator {
-                            parameters: vec![Parameter {
-                                name: Identifier::new("s"),
-                                type_annotation: None
-                            }],
-                            return_type_annotation: None,
-                            body: E::Apply(
+                        declarator: ValueDeclarator {
+                            expression: E::SelfReferential(
                                 (),
-                                Apply {
-                                    function: E::Variable((), Id::new("__print")).into(),
-                                    argument: E::Variable((), Identifier::new("s")).into()
+                                SelfReferential {
+                                    name: Identifier::new("print_endline"),
+                                    parameter: Parameter::new(Identifier::new("s")),
+                                    body: E::Apply(
+                                        (),
+                                        Apply {
+                                            function: E::Variable((), Id::new("__print")).into(),
+                                            argument: E::Variable((), Identifier::new("s")).into()
+                                        }
+                                    )
+                                    .into()
                                 }
                             )
-                        })
+                        }
                     }
                 )
             ],

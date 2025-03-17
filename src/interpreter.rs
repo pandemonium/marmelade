@@ -334,7 +334,7 @@ impl Environment {
     }
 
     pub fn insert_binding(&mut self, binder: Identifier, bound: Value) {
-        println!("insert_binding: {binder} -> {bound:?}");
+        //        println!("insert_binding: {binder} -> {bound:?}");
         self.leaf.push((binder, bound));
     }
 

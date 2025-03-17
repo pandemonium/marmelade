@@ -90,13 +90,8 @@ where
     ) -> Loaded<()> {
         // That this has to clone the Expressions is not ideal
 
-        let expression = match declarator.clone() {
-            ValueDeclarator::Constant(constant) => constant.initializer,
-            ValueDeclarator::Function(function) => function.into_lambda_tree(id.clone()),
-        };
-
         let env = &mut self.initialized;
-        let value = expression.reduce(env)?;
+        let value = declarator.expression.clone().reduce(env)?;
         println!("initialize_binding: {id} -> {value:?}");
         env.insert_binding(id.clone(), value);
 
@@ -122,7 +117,7 @@ impl<'a> DependencyGraph<'a> {
                 Declaration::Value(_, value) => {
                     outbound.push((
                         &value.binder,
-                        value.declarator.dependencies().drain().collect(),
+                        value.declarator.dependencies().into_iter().collect(),
                     ));
                 }
                 Declaration::ImportModule(

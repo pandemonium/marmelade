@@ -160,6 +160,7 @@ impl fmt::Display for TypeName {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValueDeclaration<A> {
+    // pub type_signature: Option<TypeExpression>,
     pub binder: Identifier,
     pub declarator: ValueDeclarator<A>,
 }
@@ -506,7 +507,7 @@ where
             })
             .collect::<Vec<_>>();
 
-        let node = self.make_injector(&annotation, ty, parameters.clone());
+        let expression = self.make_injection_lambda_tree(&annotation, ty, parameters.clone());
 
         // Hold off on this for a while
         //        if parameters.is_empty() {
@@ -516,41 +517,46 @@ where
         //            ));
         //        }
 
-        // Think about how many annotations this contains. Are they all needed
-        // because they are all on different positions?
-        let function = FunctionDeclarator {
-            parameters: parameters.clone(),
-            return_type_annotation: None, //todo!(),
-            body: Expression::Inject(annotation.clone(), node),
-        };
-
         ValueDeclaration {
             binder: self.name.clone(),
-            declarator: ValueDeclarator::Function(function),
+            declarator: ValueDeclarator { expression },
         }
     }
 
-    fn make_injector(
+    fn make_injection_lambda_tree(
         &self,
         annotation: &A,
         name: TypeName,
-        mut parameters: Vec<Parameter<A>>,
-    ) -> Inject<A>
+        parameters: Vec<Parameter<A>>,
+    ) -> Expression<A>
     where
         A: Clone,
     {
         let tuple = Product::Tuple(
             parameters
-                .drain(..)
-                .map(|p| Expression::Variable(annotation.clone(), p.name))
+                .iter()
+                .map(|p| Expression::Variable(annotation.clone(), p.name.clone()))
                 .collect(),
         );
 
-        Inject {
+        let inject = Inject {
             name,
             constructor: self.name.clone(),
             argument: Expression::Product(annotation.clone(), tuple).into(),
-        }
+        };
+
+        parameters.into_iter().rfold(
+            Expression::Inject(annotation.clone(), inject),
+            |body, parameter| {
+                Expression::Lambda(
+                    annotation.clone(),
+                    Lambda {
+                        parameter,
+                        body: body.into(),
+                    },
+                )
+            },
+        )
     }
 
     pub fn map<B>(mut self, f: fn(A) -> B) -> Constructor<B> {
@@ -677,9 +683,8 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ValueDeclarator<A> {
-    Constant(ConstantDeclarator<A>),
-    Function(FunctionDeclarator<A>),
+pub struct ValueDeclarator<A> {
+    pub expression: Expression<A>,
 }
 
 impl<A> ValueDeclarator<A>
@@ -687,17 +692,15 @@ where
     A: fmt::Debug + Clone,
 {
     pub fn dependencies(&self) -> HashSet<&Identifier> {
-        let mut free = match self {
-            Self::Constant(decl) => decl.free_identifiers(),
-            Self::Function(decl) => decl.free_identifiers(),
-        };
-        free.drain().collect()
+        let free_identifiers = self.expression.free_identifiers();
+
+        println!("dependencies: {:?} has {:?}", self, free_identifiers);
+        free_identifiers
     }
 
     fn map<B>(self, f: fn(A) -> B) -> ValueDeclarator<B> {
-        match self {
-            Self::Constant(constant) => ValueDeclarator::Constant(constant.map(f)),
-            Self::Function(function) => ValueDeclarator::Function(function.map(f)),
+        ValueDeclarator {
+            expression: self.expression.map(f),
         }
     }
 }
@@ -707,131 +710,7 @@ where
     A: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Constant(constant) => write!(f, "{constant}"),
-            Self::Function(function) => write!(f, "{function}"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConstantDeclarator<A> {
-    pub initializer: Expression<A>,
-    pub type_annotation: Option<TypeName>,
-}
-
-impl<A> ConstantDeclarator<A> {
-    pub fn free_identifiers(&self) -> HashSet<&Identifier> {
-        self.initializer.free_identifiers()
-    }
-
-    fn map<B>(self, f: fn(A) -> B) -> ConstantDeclarator<B> {
-        ConstantDeclarator {
-            initializer: self.initializer.map(f),
-            type_annotation: self.type_annotation,
-        }
-    }
-}
-
-impl<A> fmt::Display for ConstantDeclarator<A>
-where
-    A: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            initializer,
-            type_annotation,
-        } = self;
-        write!(f, "{initializer}")?;
-        if let Some(ty) = type_annotation {
-            write!(f, "[{ty}]")?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDeclarator<A> {
-    pub parameters: Vec<Parameter<A>>,
-    pub return_type_annotation: Option<TypeName>, // TypeExpression instead
-    pub body: Expression<A>,
-}
-
-impl<A> FunctionDeclarator<A>
-where
-    A: Clone + fmt::Debug,
-{
-    pub fn into_lambda_tree(self, self_name: Identifier) -> Expression<A> {
-        let tree = self
-            .parameters
-            .into_iter()
-            .rfold(self.body.clone(), |body, parameter| {
-                println!("into_lambda_tree: {}", parameter.name);
-                Expression::Lambda(
-                    body.annotation().clone(),
-                    Lambda {
-                        parameter,
-                        body: body.into(),
-                    },
-                )
-            });
-
-        println!("into_lambda_tree: {tree:?}");
-
-        if let Expression::Lambda(annotation, Lambda { parameter, body }) = tree {
-            Expression::SelfReferential(
-                annotation.clone(),
-                SelfReferential {
-                    name: self_name.clone(),
-                    parameter,
-                    body: body.into(),
-                },
-            )
-        } else {
-            tree
-        }
-    }
-
-    pub fn free_identifiers(&self) -> HashSet<&Identifier> {
-        let mut free = self.body.free_identifiers();
-        for param in &self.parameters {
-            free.remove(&param.name);
-        }
-        free
-    }
-
-    fn map<B>(mut self, f: fn(A) -> B) -> FunctionDeclarator<B> {
-        FunctionDeclarator {
-            parameters: self.parameters.drain(..).map(|p| p.map(f)).collect(),
-            return_type_annotation: self.return_type_annotation,
-            body: self.body.map(f),
-        }
-    }
-}
-
-impl<A> fmt::Display for FunctionDeclarator<A>
-where
-    A: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            parameters,
-            return_type_annotation,
-            body,
-        } = self;
-
-        write!(f, "(")?;
-        for p in parameters {
-            write!(f, "{p}, ")?;
-        }
-        write!(f, ")")?;
-
-        if let Some(ty) = return_type_annotation {
-            write!(f, " -> {ty}")?;
-        }
-
-        writeln!(f, " =")?;
-        write!(f, "{body}")
+        write!(f, "{}", self.expression)
     }
 }
 
@@ -1182,6 +1061,7 @@ impl<A> Expression<A> {
     pub fn free_identifiers<'a>(&'a self) -> HashSet<&'a Identifier> {
         let mut free_identifiers = HashSet::default();
         self.find_unbound(&mut HashSet::default(), &mut free_identifiers);
+
         free_identifiers
     }
 
@@ -1202,7 +1082,21 @@ impl<A> Expression<A> {
             Self::Lambda(_, Lambda { parameter, body }) => {
                 // This is probably not correct
                 // I have to remove this after looking in "body
+                println!("find_unbound(2): insert {}", parameter.name);
                 bound.insert(&parameter.name);
+                body.find_unbound(bound, free);
+            }
+            Self::SelfReferential(
+                _,
+                SelfReferential {
+                    name,
+                    parameter,
+                    body,
+                },
+            ) => {
+                println!("find_unbound(1): insert {}", parameter.name);
+                bound.insert(&parameter.name);
+                bound.insert(name);
                 body.find_unbound(bound, free);
             }
             Self::Apply(_, Apply { function, argument }) => {
@@ -1463,10 +1357,7 @@ where
 mod tests {
     use crate::ast::ValueDeclaration;
 
-    use super::{
-        Constant, ConstantDeclarator, Declaration, Expression, Identifier, ModuleDeclarator,
-        ValueDeclarator,
-    };
+    use super::{Constant, Declaration, Expression, Identifier, ModuleDeclarator, ValueDeclarator};
 
     #[test]
     fn cyclic_dependencies() {
@@ -1478,30 +1369,27 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("bar")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("bar")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("foo")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("foo")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("quux")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("quux")),
+                        },
                     },
                 ),
             ],
@@ -1520,40 +1408,36 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("bar")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("bar")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("bar")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("bar")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("frobnicator")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("frobnicator")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("frobnicator"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Literal((), Constant::Int(1)),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Literal((), Constant::Int(1)),
+                        },
                     },
                 ),
             ],
@@ -1573,30 +1457,27 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("bar")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("bar")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("bar")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("bar")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("frobnicator")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("frobnicator")),
+                        },
                     },
                 ),
             ],
@@ -1616,40 +1497,36 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("bar")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("bar")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("bar")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("bar")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Variable((), Identifier::new("frobnicator")),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Variable((), Identifier::new("frobnicator")),
+                        },
                     },
                 ),
                 Declaration::Value(
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("frobnicator"),
-                        declarator: ValueDeclarator::Constant(ConstantDeclarator {
-                            initializer: Expression::Literal((), Constant::Int(1)),
-                            type_annotation: None,
-                        }),
+                        declarator: ValueDeclarator {
+                            expression: Expression::Literal((), Constant::Int(1)),
+                        },
                     },
                 ),
             ],

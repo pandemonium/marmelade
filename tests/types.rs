@@ -3,7 +3,6 @@ use std::{collections::HashMap, marker::PhantomData};
 use marmelade::{
     ast::{
         Apply, Expression, Forall, Product, TypeApply, TypeDeclarator, TypeExpression, TypeName,
-        ValueDeclarator,
     },
     context::Linkage,
     parser::ParsingInfo,
@@ -108,12 +107,7 @@ fn type_expansions() {
             .constructors
         {
             println!("{}: {:?}", constructor.binder, constructor.declarator);
-            let expr = match constructor.declarator {
-                ValueDeclarator::Constant(decl) => decl.initializer,
-                ValueDeclarator::Function(decl) => {
-                    decl.into_lambda_tree(constructor.binder.clone())
-                }
-            };
+            let expr = constructor.declarator.expression;
             println!("{} impl: {expr:?}", constructor.binder);
             //            let typing = ctx.infer_type(&expr).unwrap();
             //

@@ -407,7 +407,6 @@ where
 {
     match declaration {
         ast::Declaration::Value(_, declaration) => Ok(infer_declarator_type(
-            &declaration.binder,
             &declaration.declarator,
             typing_context,
         )?),
@@ -418,23 +417,13 @@ where
 // Change into ParsingInfo
 // A TypeInference contains substitutions. Can I use these?
 pub fn infer_declarator_type<A>(
-    binder: &ast::Identifier,
     declarator: &ast::ValueDeclarator<A>,
     typing_context: &TypingContext,
 ) -> Typing
 where
     A: fmt::Debug + fmt::Display + Parsed + Clone,
 {
-    let expression = match declarator.clone() {
-        ast::ValueDeclarator::Constant(constant) => constant.initializer,
-        ast::ValueDeclarator::Function(function) => {
-            // The fact that this has to always happen means that it ought
-            // not be duplicated.
-            function.into_lambda_tree(binder.clone())
-        }
-    };
-
-    typing_context.infer_type(&expression)
+    typing_context.infer_type(&declarator.expression)
 }
 
 impl fmt::Display for CoproductType {
