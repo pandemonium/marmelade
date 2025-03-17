@@ -1,4 +1,4 @@
-use std::{fmt, marker::PhantomData};
+use std::fmt;
 
 use crate::{
     ast::{
@@ -139,7 +139,8 @@ where
         // Yeah?
         // ctx = ctx.apply_substitutions(&unification);
 
-        let bindings = pattern.check_type(
+        // TODO: move the annotation into the Pattern
+        let bindings = pattern.deconstruct(
             annotation,
             &scrutinee.inferred_type.clone().apply(&unification),
             &ctx,
@@ -190,7 +191,7 @@ where
 {
     fn synthesize_type(&self, ctx: &TypingContext) -> Typing {
         match self {
-            Self::Coproduct(pattern, _) => {
+            Self::Coproduct(_, pattern) => {
                 let coproduct_type = Constructor::<A>::constructed_type(&pattern.constructor, ctx)
                     .ok_or_else(|| TypeError::UndefinedSymbol(pattern.constructor.clone()))?
                     .instantiate(ctx)?
@@ -200,7 +201,7 @@ where
 
                 Ok(TypeInference::trivially(coproduct_type))
             }
-            Self::Tuple(TuplePattern { elements }, _) => {
+            Self::Tuple(_, TuplePattern { elements }) => {
                 let elements = elements
                     .iter()
                     .map(|pattern| pattern.synthesize_type(ctx))
@@ -228,14 +229,14 @@ where
         }
     }
 
-    fn check_type(
+    fn deconstruct(
         &self,
         annotation: &A,
         scrutinee: &Type,
         ctx: &TypingContext,
     ) -> Typing<Vec<(Identifier, Type)>> {
         println!(
-            "check_type : {} {}",
+            "deconstruct : {} {}",
             matches!(self, Pattern::Tuple(..)),
             scrutinee
         );
@@ -243,16 +244,16 @@ where
         match (self, scrutinee) {
             (
                 Self::Coproduct(
+                    annotation,
                     ConstructorPattern {
                         constructor,
                         argument,
                     },
-                    _,
                 ),
                 Type::Coproduct(coproduct),
             ) => {
                 if let Some(constructor) = coproduct.constructor_signature(constructor) {
-                    Self::Tuple(argument.clone(), PhantomData::default()).check_type(
+                    Self::Tuple(annotation.clone(), argument.clone()).deconstruct(
                         annotation,
                         constructor,
                         ctx,
@@ -269,12 +270,12 @@ where
                 // This does not hit because Cons takes two arguments,
                 // these are in the first element of the argument tuple. As a tuple.
                 // Wtf, patrik.
-                Self::Tuple(TuplePattern { elements }, _),
+                Self::Tuple(_, TuplePattern { elements }),
                 Type::Product(ProductType::Tuple(tuple)),
             ) if elements.len() == tuple.len() => {
                 let mut matched = vec![];
                 for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
-                    matched.extend(pattern.check_type(annotation, scrutinee, ctx)?);
+                    matched.extend(pattern.deconstruct(annotation, scrutinee, ctx)?);
                 }
                 Ok(matched)
             }

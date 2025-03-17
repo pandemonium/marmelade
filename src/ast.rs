@@ -778,9 +778,9 @@ where
 
         println!("into_lambda_tree: {tree:?}");
 
-        if let Expression::Lambda(ann, Lambda { parameter, body }) = tree {
+        if let Expression::Lambda(annotation, Lambda { parameter, body }) = tree {
             Expression::SelfReferential(
-                ann.clone(),
+                annotation.clone(),
                 SelfReferential {
                     name: self_name.clone(),
                     parameter,
@@ -938,8 +938,8 @@ impl<A> MatchClause<A> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern<A> {
     // First argument should be A, for god's sake.
-    Coproduct(ConstructorPattern<A>, PhantomData<A>),
-    Tuple(TuplePattern<A>, PhantomData<A>),
+    Coproduct(A, ConstructorPattern<A>),
+    Tuple(A, TuplePattern<A>),
     Literally(Constant),
     Otherwise(Identifier),
 }
@@ -947,10 +947,8 @@ pub enum Pattern<A> {
 impl<A> Pattern<A> {
     pub fn map<B>(self, f: fn(A) -> B) -> Pattern<B> {
         match self {
-            Self::Coproduct(pattern, _) => {
-                Pattern::Coproduct(pattern.map(f), PhantomData::default())
-            }
-            Self::Tuple(pattern, _) => Pattern::Tuple(pattern.map(f), PhantomData::default()),
+            Self::Coproduct(a, pattern) => Pattern::Coproduct(f(a), pattern.map(f)),
+            Self::Tuple(a, pattern) => Pattern::Tuple(f(a), pattern.map(f)),
             Self::Literally(literal) => Pattern::Literally(literal),
             Self::Otherwise(id) => Pattern::Otherwise(id),
         }
@@ -958,13 +956,13 @@ impl<A> Pattern<A> {
 
     fn bindings<'a>(&'a self) -> Vec<&'a Identifier> {
         match self {
-            Self::Coproduct(pattern, _) => pattern
+            Self::Coproduct(_, pattern) => pattern
                 .argument
                 .elements
                 .iter()
                 .flat_map(|p| p.bindings())
                 .collect(),
-            Self::Tuple(pattern, _) => pattern.elements.iter().flat_map(|p| p.bindings()).collect(),
+            Self::Tuple(_, pattern) => pattern.elements.iter().flat_map(|p| p.bindings()).collect(),
             Self::Literally(_) => vec![],
             Self::Otherwise(pattern) => vec![pattern],
         }
@@ -1023,11 +1021,11 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Coproduct(
+                _,
                 ConstructorPattern {
                     constructor,
                     argument,
                 },
-                _,
             ) => write!(f, "{constructor} ({argument})"),
             Self::Tuple(pattern, _) => write!(f, "{pattern}"),
             Self::Literally(literal) => write!(f, "{literal}"),

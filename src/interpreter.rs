@@ -1,4 +1,4 @@
-use std::{any::Any, cell::RefCell, fmt, marker::PhantomData, rc::Rc};
+use std::{any::Any, cell::RefCell, fmt, rc::Rc};
 use thiserror::Error;
 
 use crate::{
@@ -531,12 +531,11 @@ where
             Value::Coproduct {
                 constructor, value, ..
             },
-            Pattern::Coproduct(pattern, _),
-        ) if constructor == &pattern.constructor => extract_matched_bindings(
-            value,
-            Pattern::Tuple(pattern.argument, PhantomData::default()),
-        ),
-        (Value::Tuple(elements), Pattern::Tuple(pattern, _))
+            Pattern::Coproduct(annotation, pattern),
+        ) if constructor == &pattern.constructor => {
+            extract_matched_bindings(value, Pattern::Tuple(annotation, pattern.argument))
+        }
+        (Value::Tuple(elements), Pattern::Tuple(_, pattern))
             if elements.len() == pattern.elements.len() =>
         {
             println!("extract_matched_bindings(B): {elements:?}");

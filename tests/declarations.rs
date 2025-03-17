@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use marmelade::{
     ast::{
         Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Forall, Identifier,
@@ -49,13 +47,13 @@ fn pattern_match_basic2() {
                 match_clauses: vec![
                     MatchClause {
                         pattern: Pattern::Tuple(
+                            ParsingInfo::default(),
                             TuplePattern {
                                 elements: vec![
                                     Pattern::Otherwise(ident("a")),
                                     Pattern::Otherwise(ident("b")),
                                 ],
                             },
-                            PhantomData::default(),
                         ),
                         consequent: var("b").into(),
                     },
@@ -65,13 +63,13 @@ fn pattern_match_basic2() {
                     },
                     MatchClause {
                         pattern: Pattern::Tuple(
+                            ParsingInfo::default(),
                             TuplePattern {
                                 elements: vec![
                                     Pattern::Otherwise(ident("x")),
                                     Pattern::Otherwise(ident("y")),
                                 ],
                             },
-                            PhantomData::default(),
                         ),
                         consequent: var("x").into(),
                     },
@@ -116,13 +114,13 @@ fn pattern_match_tuple_match() {
                 scrutinee: var("x").into(),
                 match_clauses: vec![MatchClause {
                     pattern: Pattern::Tuple(
+                        ParsingInfo::default(),
                         TuplePattern {
                             elements: vec![
                                 Pattern::Literally(Constant::Int(1)),
                                 Pattern::Literally(Constant::Int(2)),
                             ],
                         },
-                        PhantomData::default(),
                     ),
                     consequent: int(2).into(),
                 }],
@@ -141,21 +139,21 @@ fn pattern_match_constructor() {
                 scrutinee: text("x").into(),
                 match_clauses: vec![MatchClause {
                     pattern: Pattern::Coproduct(
+                        ParsingInfo::default(),
                         ConstructorPattern {
                             constructor: ident("This"),
                             argument: TuplePattern {
                                 elements: vec![Pattern::Tuple(
+                                    ParsingInfo::default(),
                                     TuplePattern {
                                         elements: vec![
                                             Pattern::Otherwise(ident("x")),
                                             Pattern::Otherwise(ident("y")),
                                         ],
                                     },
-                                    PhantomData::default(),
                                 )],
                             },
                         },
-                        PhantomData::default(),
                     ),
                     consequent: var("x").into(),
                 }],
@@ -339,6 +337,13 @@ fn listy_mclistface() {
            |  deconstruct xs into
            |    Cons x ys -> Cons (f x) (map f ys)
            |  | Nil       -> Nil
+           |
+           |fold_left = lambda z f xs.
+           |  deconstruct xs into
+           |    Cons x ys -> fold_left (f z ys) f ys
+           |  | Nil       -> Nil
+           |
+           |length2 = foldLeft 0 (lambda acc x. 1 + acc)
            |
            |output = lambda y. 1 + y
            |

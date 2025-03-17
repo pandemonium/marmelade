@@ -3,11 +3,10 @@ use std::{fmt, marker::PhantomData};
 
 use crate::{
     ast::{
-        Apply, Binding, CompilationUnit, ConstantDeclarator, Constructor, ConstructorPattern,
-        ControlFlow, Coproduct, Declaration, DeconstructInto, Expression, Forall,
-        FunctionDeclarator, Identifier, MatchClause, ModuleDeclarator, Parameter, Pattern,
-        Sequence, TuplePattern, TypeApply, TypeDeclaration, TypeDeclarator, TypeExpression,
-        TypeName, ValueDeclaration, ValueDeclarator,
+        Apply, Binding, CompilationUnit, Constructor, ConstructorPattern, ControlFlow, Coproduct,
+        Declaration, DeconstructInto, Expression, Forall, Identifier, Lambda, MatchClause,
+        ModuleDeclarator, Parameter, Pattern, Sequence, TuplePattern, TypeApply, TypeDeclaration,
+        TypeDeclarator, TypeExpression, TypeName, ValueDeclaration, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
     typer,
@@ -371,38 +370,55 @@ fn parse_value_binding<'a>(
 
 // These can have type annotations
 // let foo :: Int -> String -> String = fun i s -> s
+// this should really be:
+// Value_Declaration ::= Value_LHS = Value_RHS
+// Value_LHS ::= Identifier_With_Optional_Type_Annotation
+// Identifier_With_Optional_Type_Annotation ::= identifier [::Type_Annotation]
+// Type_Annotation ::= ...
+// Value_RHS ::= Expression
+// Is it necessary to differentiate between a ConstantDeclarator and a FunctionDeclarator
+// like this?
+//fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclarator<ParsingInfo>> {
+//    match input {
+//        [T(TT::Keyword(Lambda), ..), remains @ ..] => {
+//            let (parameters, remains) = parse_parameter_list(remains)?;
+//            let remains = expect(TT::Period, remains)?;
+//            let (body, remains) = parse_expression(
+//                strip_if_starts_with(TT::Layout(Layout::Indent), &remains[1..]),
+//                0,
+//            )?;
+//            Ok((
+//                ValueDeclarator::Function(FunctionDeclarator {
+//                    parameters,
+//                    return_type_annotation: None,
+//                    body,
+//                }),
+//                remains,
+//            ))
+//        }
+//        remains @ [..] => {
+//            let (initializer, remains) =
+//                parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0)?;
+//            Ok((
+//                ValueDeclarator::Constant(ConstantDeclarator {
+//                    initializer,
+//                    type_annotation: None,
+//                }),
+//                remains,
+//            ))
+//        }
+//    }
+//}
+
 fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclarator<ParsingInfo>> {
-    match input {
-        [T(TT::Keyword(Lambda), ..), remains @ ..] => {
-            let (parameters, remains) = parse_parameter_list(remains)?;
-            if starts_with(TT::Period, remains) {
-                let (body, remains) = parse_expression(
-                    strip_if_starts_with(TT::Layout(Layout::Indent), &remains[1..]),
-                    0,
-                )?;
-                Ok((
-                    ValueDeclarator::Function(FunctionDeclarator {
-                        parameters,
-                        return_type_annotation: None,
-                        body,
-                    }),
-                    remains,
-                ))
-            } else {
-                Err(ParseError::ExpectedTokenType(TT::Period))
-            }
-        }
-        remains @ [..] => {
-            let (initializer, remains) =
-                parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0)?;
-            Ok((
-                ValueDeclarator::Constant(ConstantDeclarator {
-                    initializer,
-                    type_annotation: None,
-                }),
-                remains,
-            ))
-        }
+    let (expression, remains) = parse_expression(input, 0)?;
+
+    if matches!(expression, Expression::Lambda(..)) {
+        //        What good is FunctionDeclarator? What does it buy me?
+        //        Should I extrude the parameters from the Lambda tree?
+        todo!()
+    } else {
+        todo!()
     }
 }
 
@@ -415,7 +431,7 @@ fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Paramet
         .ok_or_else(|| ParseError::ExpectedTokenType(TT::Period))?;
     let (params, remains) = remains.split_at(end);
 
-    let parse_parameter = |t: &Token| {
+    fn parse_parameter(t: &Token) -> Result<Parameter<ParsingInfo>, ParseError> {
         if let TT::Identifier(id) = t.token_type() {
             Ok(Parameter {
                 name: Identifier::new(id),
@@ -424,7 +440,7 @@ fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Paramet
         } else {
             Err(ParseError::UnexpectedToken(t.clone()))
         }
-    };
+    }
 
     Ok((
         params
@@ -468,6 +484,9 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression<ParsingIn
         [T(TT::Keyword(Deconstruct), position), remains @ ..] => {
             parse_deconstruct_into(*position, remains)
         }
+        [T(TT::Keyword(Keyword::Lambda), position), remains @ ..] => {
+            parse_lambda(*position, remains)
+        }
         [T(TT::Literal(literal), position), remains @ ..] => Ok((
             Expression::Literal(ParsingInfo::new(*position), literal.clone().into()),
             remains,
@@ -478,14 +497,32 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression<ParsingIn
         )),
         [T(TT::LeftParen, ..), remains @ ..] => {
             let (expr, remains) = parse_expression(remains, 0)?;
-            if starts_with(TT::RightParen, remains) {
-                Ok((expr, &remains[1..]))
-            } else {
-                Err(ParseError::ExpectedTokenType(TT::RightParen))
-            }
+            Ok((expr, expect(TT::RightParen, remains)?))
         }
         otherwise => panic!("{otherwise:?}"),
     }
+}
+
+fn parse_lambda<'a>(
+    position: SourcePosition,
+    tokens: &'a [Token],
+) -> ParseResult<'a, Expression<ParsingInfo>> {
+    let (parameters, remains) = parse_parameter_list(tokens)?;
+    let remains = expect(TT::Period, remains)?;
+    let (body, remains) = parse_expression(remains, 0)?;
+
+    Ok((
+        parameters.into_iter().rfold(body, |body, parameter| {
+            Expression::Lambda(
+                ParsingInfo::new(position),
+                Lambda {
+                    parameter,
+                    body: body.into(),
+                },
+            )
+        }),
+        remains,
+    ))
 }
 
 // This function is __TERRIBLE__.
@@ -606,7 +643,7 @@ fn parse_pattern<'a>(remains: &'a [Token]) -> ParseResult<'a, Pattern<ParsingInf
         }
 
         [T(TT::LeftParen, position), remains @ ..] => parse_tuple_pattern(remains, position)
-            .map(|(tuple, remains)| (Pattern::Tuple(tuple, PhantomData::default()), remains)),
+            .map(|(tuple, remains)| (Pattern::Tuple(ParsingInfo::new(*position), tuple), remains)),
 
         otherwise => panic!("{otherwise:?}"),
     }
@@ -620,15 +657,15 @@ fn parse_constructor_pattern<'a>(
     remains: &'a [Token],
     _position: &SourcePosition,
 ) -> ParseResult<'a, Pattern<ParsingInfo>> {
-    if let [T(TT::Identifier(constructor), _position), remains @ ..] = remains {
+    if let [T(TT::Identifier(constructor), position), remains @ ..] = remains {
         let (patterns, remains) = parse_pattern_list(remains)?;
         Ok((
             Pattern::Coproduct(
+                ParsingInfo::new(*position),
                 ConstructorPattern {
                     constructor: Identifier::new(&constructor),
                     argument: TuplePattern { elements: patterns },
                 },
-                PhantomData::default(),
             ),
             remains,
         ))
@@ -925,7 +962,7 @@ fn apply_binary_operator(
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{Constant, ValueDeclarator},
+        ast::{Constant, FunctionDeclarator, ValueDeclarator},
         lexer::LexicalAnalyzer,
     };
 
