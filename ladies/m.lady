@@ -1,0 +1,24 @@
+List ::= forall a. Cons a (List a) | Nil
+
+length = lambda base xs.
+  deconstruct xs into
+    Cons x xs -> 1 + length base xs
+  | Nil       -> base
+
+map = lambda f xs.
+  deconstruct xs into
+    Cons x ys -> Cons (f x) (map f ys)
+  | Nil       -> Nil
+
+fold_left = lambda z f xs.
+  deconstruct xs into
+    Cons x ys -> fold_left (f z ys) f ys
+  | Nil       -> Nil
+
+length2 = fold_left 0 (lambda acc x. 1 + acc)
+
+output = lambda y. 1 + y
+
+main =
+  let xs = Cons 1 (Cons 2 (Cons 3 (Cons 4 Nil)))
+  in map show xs

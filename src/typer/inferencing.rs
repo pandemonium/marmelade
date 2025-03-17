@@ -127,11 +127,6 @@ where
     {
         let pattern_type = pattern.synthesize_type(&ctx)?;
 
-        println!(
-            "infer_deconstruct_into: pattern {}, scrutinee {}",
-            pattern_type.inferred_type, scrutinee.inferred_type
-        );
-
         let unification = pattern_type
             .inferred_type
             .unify(&scrutinee.inferred_type, annotation)?;
@@ -172,12 +167,12 @@ where
 }
 
 #[derive(Debug, Default)]
-struct Match {
+struct _Match {
     bindings: Vec<(Identifier, Type)>,
 }
 
-impl Match {
-    fn add(&mut self, id: Identifier, ty: Type) {
+impl _Match {
+    fn _add(&mut self, id: Identifier, ty: Type) {
         self.bindings.push((id, ty));
     }
 }
@@ -196,8 +191,6 @@ where
                     .ok_or_else(|| TypeError::UndefinedSymbol(pattern.constructor.clone()))?
                     .instantiate(ctx)?
                     .expand_type(ctx)?;
-
-                println!("synthesize_type: {}", coproduct_type);
 
                 Ok(TypeInference::trivially(coproduct_type))
             }
@@ -235,12 +228,6 @@ where
         scrutinee: &Type,
         ctx: &TypingContext,
     ) -> Typing<Vec<(Identifier, Type)>> {
-        println!(
-            "deconstruct : {} {}",
-            matches!(self, Pattern::Tuple(..)),
-            scrutinee
-        );
-
         match (self, scrutinee) {
             (
                 Self::Coproduct(

@@ -305,12 +305,9 @@ fn parse_type_expression_prefix<'a>(
                 Err(ParseError::ExpectedTokenType(TT::RightParen))
             }
         }
-        otherwise => {
-            println!("parse_type_expression_prefix: {otherwise:?}");
-            Err(ParseError::ExpectedTokenType(TT::Identifier(
-                "<Constructor>".to_owned(),
-            )))
-        }
+        _otherwise => Err(ParseError::ExpectedTokenType(TT::Identifier(
+            "<Constructor>".to_owned(),
+        ))),
     }
 }
 
@@ -795,7 +792,6 @@ pub fn parse_expression<'a>(
 }
 
 fn is_expression_terminator(t: &Token) -> bool {
-    //        println!("is_done: {t:?}");
     matches!(
         t.token_type(),
         TT::Keyword(Keyword::In | Keyword::Else | Keyword::Then | Keyword::Into)
@@ -931,8 +927,6 @@ fn parse_sequence<'a>(
     tokens: &'a [Token],
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (rhs, remains) = parse_expression(tokens, 0)?;
-
-    //    println!("parse_sequence: {:?}", &remains[..5]);
 
     let sequence = Expression::Sequence(
         ParsingInfo::new(*rhs.position()),

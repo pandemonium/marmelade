@@ -188,10 +188,7 @@ impl LexicalAnalyzer {
             match c {
                 ' ' => next_location.move_right(1),
                 '\n' => next_location.new_line(),
-                otherwise => {
-                    println!("process_whitespace: {}", *otherwise as u32);
-                    ()
-                }
+                _otherwise => (),
             }
         }
 

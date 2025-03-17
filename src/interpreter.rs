@@ -85,7 +85,6 @@ impl Interpreter {
         self.inject_prelude(annotation.clone(), &mut module);
         self.inject_types_and_synthetics(annotation.clone(), &mut module, &mut typing_context)?;
 
-        println!("load_module: types and synthetics loaded");
         ModuleLoader::try_loading(&module, self.prelude)?
             .type_check(typing_context)?
             .initialize()
@@ -137,13 +136,8 @@ impl Interpreter {
             let coproduct = coproduct
                 .make_implementation_module(annotation.clone(), TypeName::new(&binding.as_str()))?;
 
-            println!(
-                "inject_types_and_synthetics: {} ::= {}",
-                coproduct.name, coproduct.declaring_type
-            );
             typing_context.bind(coproduct.name.into(), coproduct.declaring_type);
 
-            // Should I bind types for the constructor functions here too?
             for constructor in coproduct.constructors {
                 module
                     .declarations
@@ -158,13 +152,12 @@ impl Interpreter {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Base(Base),
-    // Does this thing need to know more than the value and the constructor?
     Coproduct {
         name: TypeName,
         constructor: Identifier,
         value: Box<Value>,
     },
-    Tuple(Vec<Value>), // Redo this into a TupleCons|TupleNil thing?
+    Tuple(Vec<Value>),
     Struct(Vec<(Identifier, Value)>),
     Closure(Closure),
     RecursiveClosure(RecursiveClosure),
@@ -334,7 +327,6 @@ impl Environment {
     }
 
     pub fn insert_binding(&mut self, binder: Identifier, bound: Value) {
-        //        println!("insert_binding: {binder} -> {bound:?}");
         self.leaf.push((binder, bound));
     }
 
@@ -423,10 +415,7 @@ where
 {
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
-            Self::Variable(_, id) => env
-                .lookup(&id)
-                .cloned()
-                .inspect(|x| println!("reduce: {} is {}", id, x)),
+            Self::Variable(_, id) => env.lookup(&id).cloned(),
             Self::InvokeBridge(_, id) => invoke_bridge(id, env),
             Self::Literal(_, constant) => Ok(reduce_immediate(constant)),
             Self::SelfReferential(
@@ -474,8 +463,6 @@ where
 {
     let scrutinee = scrutinee.reduce(env)?;
 
-    println!("reduce_deconstruction: scrutinee {scrutinee:?}");
-
     match_clauses
         .drain(..)
         .find_map(|clause| clause.match_with(&scrutinee))
@@ -489,11 +476,8 @@ where
 {
     let mut env = env.clone();
     for (binding, value) in matched.bindings {
-        println!("reduce_consequent: binding {binding} to {value:?}");
         env.insert_binding(binding, value);
     }
-
-    println!("reduce_consequent: {:?}", matched.consequent);
 
     matched.consequent.reduce(&mut env)
 }
@@ -508,10 +492,6 @@ impl<A> MatchClause<A> {
     where
         A: fmt::Debug + Clone,
     {
-        println!(
-            "match_with: scrutinee {scrutinee:?} pattern {:?}",
-            self.pattern
-        );
         Some(Match {
             bindings: extract_matched_bindings(scrutinee, self.pattern)?,
             consequent: *self.consequent,
@@ -538,22 +518,15 @@ where
         (Value::Tuple(elements), Pattern::Tuple(_, pattern))
             if elements.len() == pattern.elements.len() =>
         {
-            println!("extract_matched_bindings(B): {elements:?}");
-
             let mut bindings = vec![];
             for (value, pattern) in elements.iter().zip(pattern.elements) {
-                println!("extract_matched_bindings: {value:?} {pattern:?}");
-
                 bindings.extend(extract_matched_bindings(value, pattern)?);
             }
 
             Some(bindings)
         }
         (_, Pattern::Literally(this)) => (scrutinee == &reduce_immediate(this)).then(|| vec![]),
-        (_, Pattern::Otherwise(binding)) => {
-            println!("extract_matched_bindings(A): {binding} {scrutinee:?}");
-            Some(vec![(binding, scrutinee.clone())])
-        }
+        (_, Pattern::Otherwise(binding)) => Some(vec![(binding, scrutinee.clone())]),
         _otherwise => None,
     }
 }
@@ -692,8 +665,6 @@ fn apply_function<A>(
 where
     A: fmt::Debug + Clone,
 {
-    println!("apply_function: {:?} $ {:?}", function, argument);
-
     match function.reduce(env)? {
         Value::Closure(Closure {
             parameter,
@@ -701,7 +672,6 @@ where
             body,
         }) => {
             let binding = argument.reduce(env)?;
-            println!("apply_function(1): binding {} to {}", binding, parameter);
             capture.insert_binding(parameter.clone(), binding);
 
             let retval = body.reduce(&mut capture);
@@ -712,10 +682,7 @@ where
             let binding = argument.reduce(env)?;
 
             let mut inner = { inner.borrow_mut().clone() };
-            println!(
-                "apply_function(2): binding {} to {}",
-                binding, inner.parameter
-            );
+
             let parameter = inner.parameter.clone();
             inner.capture.insert_binding(parameter.clone(), binding);
 
@@ -724,10 +691,7 @@ where
 
             retval
         }
-        otherwise => {
-            println!("apply_function: {otherwise:?}");
-            Err(RuntimeError::ExpectedFunction { got: otherwise })
-        }
+        otherwise => Err(RuntimeError::ExpectedFunction { got: otherwise }),
     }
 }
 

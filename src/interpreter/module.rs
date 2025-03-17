@@ -92,7 +92,6 @@ where
 
         let env = &mut self.initialized;
         let value = declarator.expression.clone().reduce(env)?;
-        println!("initialize_binding: {id} -> {value:?}");
         env.insert_binding(id.clone(), value);
 
         Ok(())

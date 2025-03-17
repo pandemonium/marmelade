@@ -559,10 +559,10 @@ where
         )
     }
 
-    pub fn map<B>(mut self, f: fn(A) -> B) -> Constructor<B> {
+    pub fn map<B>(self, f: fn(A) -> B) -> Constructor<B> {
         Constructor {
             name: self.name,
-            signature: self.signature.drain(..).map(|expr| expr.map(f)).collect(),
+            signature: self.signature.into_iter().map(|expr| expr.map(f)).collect(),
         }
     }
 
@@ -692,10 +692,7 @@ where
     A: fmt::Debug + Clone,
 {
     pub fn dependencies(&self) -> HashSet<&Identifier> {
-        let free_identifiers = self.expression.free_identifiers();
-
-        println!("dependencies: {:?} has {:?}", self, free_identifiers);
-        free_identifiers
+        self.expression.free_identifiers()
     }
 
     fn map<B>(self, f: fn(A) -> B) -> ValueDeclarator<B> {
@@ -1082,7 +1079,6 @@ impl<A> Expression<A> {
             Self::Lambda(_, Lambda { parameter, body }) => {
                 // This is probably not correct
                 // I have to remove this after looking in "body
-                println!("find_unbound(2): insert {}", parameter.name);
                 bound.insert(&parameter.name);
                 body.find_unbound(bound, free);
             }
@@ -1094,7 +1090,6 @@ impl<A> Expression<A> {
                     body,
                 },
             ) => {
-                println!("find_unbound(1): insert {}", parameter.name);
                 bound.insert(&parameter.name);
                 bound.insert(name);
                 body.find_unbound(bound, free);

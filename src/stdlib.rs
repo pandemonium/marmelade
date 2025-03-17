@@ -41,7 +41,7 @@ mod stdio {
     use crate::{ast::Identifier, bridge, context::Linkage, interpreter::Interpretation};
 
     pub fn print_endline(text: String) {
-        println!("#### {text}");
+        println!("> {text}");
     }
 
     pub fn print(text: String) {
