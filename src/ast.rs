@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    hash::Hash,
     marker::PhantomData,
 };
 
@@ -809,6 +810,17 @@ impl<A> MatchClause<A> {
             consequent: self.consequent.map(f).into(),
         }
     }
+
+    fn find_unbound<'a>(
+        &'a self,
+        bound: &mut HashSet<&'a Identifier>,
+        free: &mut HashSet<&'a Identifier>,
+    ) {
+        let bindings = self.pattern.bindings();
+        bound.extend(bindings);
+        self.consequent.find_unbound(bound, free);
+        free.extend(self.pattern.free_variables());
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -838,9 +850,32 @@ impl<A> Pattern<A> {
                 .iter()
                 .flat_map(|p| p.bindings())
                 .collect(),
-            Self::Tuple(_, pattern) => pattern.elements.iter().flat_map(|p| p.bindings()).collect(),
+            Self::Tuple(_, p) => p.elements.iter().flat_map(|p| p.bindings()).collect(),
             Self::Literally(_) => vec![],
             Self::Otherwise(pattern) => vec![pattern],
+        }
+    }
+
+    fn free_variables(&self) -> HashSet<&Identifier> {
+        match self {
+            Self::Coproduct(_, pattern) => {
+                let mut free = HashSet::from([&pattern.constructor]);
+                free.extend(
+                    pattern
+                        .argument
+                        .elements
+                        .iter()
+                        .flat_map(|p| p.free_variables())
+                        .collect::<HashSet<_>>(),
+                );
+                free
+            }
+            Self::Tuple(_, pattern) => pattern
+                .elements
+                .iter()
+                .flat_map(|p| p.free_variables())
+                .collect(),
+            _otherwise => HashSet::default(),
         }
     }
 }
@@ -1143,10 +1178,8 @@ impl<A> Expression<A> {
             }
             Self::DeconstructInto(_, deconstruct) => {
                 deconstruct.scrutinee.find_unbound(bound, free);
-                for clause in deconstruct.match_clauses.iter() {
-                    let bindings = clause.pattern.bindings();
-                    bound.extend(bindings);
-                    clause.consequent.find_unbound(bound, free);
+                for clause in &deconstruct.match_clauses {
+                    clause.find_unbound(bound, free);
                 }
             }
             _otherwise => (),

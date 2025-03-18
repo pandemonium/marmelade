@@ -26,7 +26,6 @@ where
         let resolver = |id: &Identifier| prelude.is_defined(id);
 
         let dependency_graph = module.dependency_graph();
-
         if !dependency_graph.is_wellformed(resolver) {
             if !dependency_graph.is_acyclic() {
                 Err(LoadError::DependencyCycle)

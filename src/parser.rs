@@ -819,7 +819,6 @@ fn parse_infix<'a>(
         // ( <Newline> | <;> ) <expr>
         // -- an expression sequence, e.g.: <statement>* <expr>
         [T(TT::Layout(Layout::Newline) | TT::Semicolon, ..), lookahead @ ..] if input.len() > 0 => {
-            //            println!("parse_infix 2: {:?}", &input[..5]);
             if !starts_with(TT::End, &input[1..]) && !is_toplevel(lookahead) {
                 parse_sequence(lhs, &input[1..])
             } else {
@@ -852,7 +851,12 @@ fn parse_infix<'a>(
         // <expr> <expr>
         // -- Function application
         [T(tt, ..), ..]
-            if !matches!(tt, TT::Layout(Layout::Dedent) | TT::End | TT::Keyword(..)) =>
+            if !matches!(
+                tt,
+                TT::Layout(Layout::Dedent)
+                    | TT::End
+                    | TT::Keyword(And | Or | Xor | Else | Into | In)
+            ) =>
         {
             parse_juxtaposed(lhs, input, precedence)
         }
