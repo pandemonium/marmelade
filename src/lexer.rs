@@ -85,6 +85,9 @@ impl LexicalAnalyzer {
         loop {
             input = match input {
                 remains @ [c, ..] if c.is_whitespace() => self.scan_whitespace(remains),
+                [c, remains @ ..] if is_special_symbol(*c) => {
+                    self.emit(1, TokenType::decode_reserved_words(c.to_string()), remains)
+                }
                 prefix @ [c, ..] if is_identifier_prefix(*c) => self.scan_identifier(prefix),
                 prefix @ [c, ..] if is_number_prefix(*c) => self.scan_number(prefix),
                 ['"', remains @ ..] => self.scan_text_literal(remains),
@@ -234,6 +237,10 @@ impl LexicalAnalyzer {
 
         remains
     }
+}
+
+fn is_special_symbol(c: char) -> bool {
+    matches!(c, '∀' | 'λ')
 }
 
 fn is_number_prefix(c: char) -> bool {
@@ -533,11 +540,13 @@ impl Keyword {
             "module" => Some(Keyword::Module),
             "use" => Some(Keyword::Use),
             "lambda" => Some(Keyword::Lambda),
+            "λ" => Some(Keyword::Lambda),
             "and" => Some(Keyword::And),
             "or" => Some(Keyword::Or),
             "xor" => Some(Keyword::Xor),
             "not" => Some(Keyword::Not),
             "forall" => Some(Keyword::Forall),
+            "∀" => Some(Keyword::Forall),
             "deconstruct" => Some(Keyword::Deconstruct),
             "into" => Some(Keyword::Into),
             _otherwise => None,

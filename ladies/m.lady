@@ -1,24 +1,33 @@
-List ::= forall a. Cons a (List a) | Nil
+Perhaps ::= ∀a. This a | Nope
 
-length = lambda base xs.
+List ::= ∀a. Cons a (List a) | Nil
+
+map = λf xs.
+  let step = λxs x. Cons (f x) xs
+  in fold_right Nil step xs
+
+flip = λf p q. f q p
+
+fold_left = λacc f xs.
   deconstruct xs into
-    Cons x xs -> 1 + length base xs
-  | Nil       -> base
+    Cons x xs -> fold_left (f acc x) f xs
+  | Nil       -> acc
 
-map = lambda f xs.
+fold_right = λacc f xs.
   deconstruct xs into
-    Cons x ys -> Cons (f x) (map f ys)
-  | Nil       -> Nil
+    Cons x xs -> f (fold_right acc f xs) x
+  | Nil       -> acc
 
-fold_left = lambda z f xs.
-  deconstruct xs into
-    Cons x ys -> fold_left (f z ys) f ys
-  | Nil       -> Nil
+length = fold_left 0 λacc x. 1 + acc
 
-length2 = fold_left 0 (lambda acc x. 1 + acc)
+output = λy. 1 + y
 
-output = lambda y. 1 + y
+append = λxs. fold_right xs (flip Cons)
+
+text = lambda x.
+    let y = show x
+    in y
 
 main =
-  let xs = Cons 1 (Cons 2 (Cons 3 (Cons 4 Nil)))
-  in map show xs
+  let xs = Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil))))
+  in map text (append xs xs)
