@@ -567,6 +567,7 @@ where
         }
     }
 
+    // This is the problem. This causes undue instantiations.
     pub fn constructed_type(id: &Identifier, ctx: &TypingContext) -> Option<TypeScheme> {
         fn ultimate_codomain(ty: Type) -> Type {
             match ty {
@@ -575,7 +576,7 @@ where
             }
         }
 
-        ctx.lookup_scheme(&id.clone().into())
+        ctx.lookup(&id.clone().into())
             .map(|scheme| scheme.clone().map_body(ultimate_codomain))
     }
 }
@@ -937,10 +938,10 @@ where
                     constructor,
                     argument,
                 },
-            ) => write!(f, "{constructor} ({argument})"),
-            Self::Tuple(pattern, _) => write!(f, "{pattern}"),
-            Self::Literally(literal) => write!(f, "{literal}"),
-            Self::Otherwise(id) => write!(f, "{id}"),
+            ) => write!(f, "C_{constructor} [{argument}]"),
+            Self::Tuple(_, pattern) => write!(f, "T_{pattern}"),
+            Self::Literally(literal) => write!(f, "L_{literal}"),
+            Self::Otherwise(id) => write!(f, "O_`{id}`"),
         }
     }
 }
@@ -950,10 +951,11 @@ where
     A: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(")?;
         for pattern in &self.elements {
             write!(f, "{pattern}")?;
         }
-        Ok(())
+        write!(f, ")")
     }
 }
 

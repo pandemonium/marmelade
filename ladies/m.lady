@@ -6,6 +6,11 @@ map = λf xs.
   let step = λxs x. Cons (f x) xs
   in fold_right Nil step xs
 
+map2 = λf xs.
+  deconstruct xs into
+    Cons x xs -> Cons (f x) (map2 f xs)
+  | Nil -> Cons "1" Nil
+
 flip = λf p q. f q p
 
 fold_left = λacc f xs.
@@ -28,6 +33,19 @@ text = lambda x.
     let y = show x
     in y
 
-main =
-  let xs = Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil))))
-  in map text (append xs xs)
+xs = (Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil)))))
+ys =
+    deconstruct xs into
+      Cons x xs -> xs
+    | Nil       -> xs
+
+id = lambda x. x
+
+ss = (append (Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil))))) (Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil))))))
+
+x =
+    id (id deconstruct id (Cons (id 1) (id Nil)) into
+      Cons x xs -> id xs
+    | Nil -> id Nil)
+
+main = map2 id (Cons 1 Nil)

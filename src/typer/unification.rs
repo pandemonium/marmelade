@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use super::{CoproductType, Parsed, Type, TypeParameter, Typing};
 use crate::{
@@ -236,5 +239,15 @@ impl Substitutions {
         composed.extend(lhs.clone());
 
         Self(composed)
+    }
+}
+
+impl fmt::Display for Substitutions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self(map) = self;
+        for (p, q) in map {
+            write!(f, "{p} => {q}; ")?;
+        }
+        Ok(())
     }
 }

@@ -1,0 +1,11 @@
+List ::= ∀a. Cons a (List a) | Nil
+
+main =
+    foo 1
+
+bar = λx.
+    let y = Cons x Nil in y
+
+foo = λx.
+    deconstruct Cons x Nil into
+        Cons x xs -> x

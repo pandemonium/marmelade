@@ -2,7 +2,8 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use marmelade::{
     ast::{
-        Apply, Expression, Forall, Product, TypeApply, TypeDeclarator, TypeExpression, TypeName,
+        self, Apply, Expression, Forall, Lambda, Parameter, Product, TypeApply, TypeDeclarator,
+        TypeExpression, TypeName,
     },
     context::Linkage,
     parser::ParsingInfo,
@@ -135,4 +136,36 @@ fn type_expansions() {
     //            &ctx
     //        )
     //    );
+}
+
+#[test]
+fn inferencing() {
+    let ctx = TypingContext::default();
+
+    let expr4 = Expression::Lambda(
+        ParsingInfo::default(),
+        Lambda {
+            parameter: Parameter::new(ident("x")),
+            body: Expression::Binding(
+                ParsingInfo::default(),
+                ast::Binding {
+                    binder: ident("y"),
+                    bound: var("x").into(),
+                    body: var("y").into(),
+                },
+            )
+            .into(),
+        },
+    );
+
+    let expr5 = Expression::Apply(
+        ParsingInfo::default(),
+        Apply {
+            function: expr4.clone().into(),
+            argument: text("s").into(),
+        },
+    );
+
+    println!("4. {}", ctx.infer_type(&expr4).unwrap());
+    println!("5. {}", ctx.infer_type(&expr5).unwrap());
 }

@@ -257,6 +257,7 @@ impl fmt::Display for Type {
             Self::Constant(ty) => write!(f, "{ty}"),
             Self::Coproduct(ty) => write!(f, "{ty}"),
             Self::Product(ty) => write!(f, "{ty}"),
+            Self::Arrow(ty0, ty1) if ty1.is_arrow() => write!(f, "{ty0}->({ty1})"),
             Self::Arrow(ty0, ty1) => write!(f, "{ty0}->{ty1}"),
             Self::Named(cons) => write!(f, "{cons}"),
             Self::Apply(cons, arg) => write!(f, "{cons}[{arg}]"),
@@ -467,6 +468,18 @@ impl TypeInference {
     }
 }
 
+impl fmt::Display for TypeInference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            substitutions,
+            inferred_type,
+        } = self;
+        write!(f, "{inferred_type} [{substitutions}]")?;
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 pub enum TypeError {
     #[error("Undefined symbol {0}")]
@@ -572,7 +585,7 @@ impl TypingContext {
         self.bindings.insert(binding, scheme);
     }
 
-    fn lookup(&self, binding: &Binding) -> Option<TypeScheme> {
+    pub fn lookup(&self, binding: &Binding) -> Option<TypeScheme> {
         let scheme = self.bindings.get(binding).cloned()?;
         let scheme = if !binding.is_value_binding() && scheme.is_type_constructor() {
             scheme.into_type_apply_tree(TypeName::new(binding.as_str()))
@@ -595,15 +608,15 @@ impl TypingContext {
     }
 
     fn free_variables(&self) -> HashSet<TypeParameter> {
-        let mut quantified = HashSet::new();
-        let mut parameters = HashSet::default();
+        let mut bound = HashSet::new();
+        let mut free = HashSet::default();
 
         for TypeScheme { quantifiers, body } in self.bindings.values() {
-            quantified.extend(quantifiers);
-            parameters.extend(body.free_variables());
+            bound.extend(quantifiers);
+            free.extend(body.free_variables());
         }
 
-        parameters.difference(&quantified).cloned().collect()
+        free.difference(&bound).cloned().collect()
     }
 
     fn apply_substitutions(&self, subs: &Substitutions) -> Self {

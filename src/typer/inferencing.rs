@@ -58,7 +58,7 @@ where
                 name.clone().into(),
                 TypeScheme {
                     quantifiers: vec![],
-                    body: Type::fresh(),
+                    body: Type::Arrow(Type::fresh().into(), Type::fresh().into()),
                 },
             );
             infer_lambda(parameter, body, &annotation.info(), &ctx)
@@ -117,7 +117,11 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     let mut ctx = ctx.clone();
-    let scrutinee = infer_type(scrutinee, &ctx)?;
+    let TypeInference {
+        substitutions,
+        inferred_type: mut scrutinee,
+    } = infer_type(scrutinee, &ctx)?;
+
     let mut consequents = vec![];
 
     for MatchClause {
@@ -125,27 +129,38 @@ where
         consequent,
     } in match_clauses
     {
-        let pattern_type = pattern.synthesize_type(&ctx)?;
+        let mut pattern_type = pattern.synthesize_type(&ctx)?;
 
-        let unification = pattern_type
+        let mut unification = pattern_type
             .inferred_type
-            .unify(&scrutinee.inferred_type, annotation)?;
+            .unify(&scrutinee, annotation)?
+            .compose(pattern_type.substitutions);
+
+        scrutinee = scrutinee.apply(&unification);
+        pattern_type.inferred_type = pattern_type.inferred_type.apply(&unification);
 
         // Yeah?
-        // ctx = ctx.apply_substitutions(&unification);
+        ctx = ctx.apply_substitutions(&unification);
 
         // TODO: move the annotation into the Pattern
-        let bindings = pattern.deconstruct(
-            annotation,
-            &scrutinee.inferred_type.clone().apply(&unification),
-            &ctx,
-        )?;
+        let Match {
+            bindings,
+            substitutions,
+        } = pattern.deconstruct(annotation, &scrutinee, &ctx)?;
+
+        unification = unification.compose(substitutions);
+
+        ctx = ctx.apply_substitutions(&unification);
 
         for (binding, scrutinee) in bindings {
-            ctx.bind(binding.into(), scrutinee.generalize(&ctx));
+            let scheme = scrutinee.apply(&unification).generalize(&ctx);
+            println!("infer_deconstruct_into: binding {binding} to {scheme}");
+            ctx.bind(binding.into(), scheme);
         }
 
-        consequents.push(infer_type(consequent, &ctx)?);
+        let value = infer_type(consequent, &ctx)?;
+
+        consequents.push(value);
     }
 
     let TypeInference {
@@ -155,8 +170,10 @@ where
 
     for consequent in consequents {
         let consequent_ty = consequent.inferred_type.apply(&substitutions);
-        substitutions =
-            substitutions.compose(inferred_type.unify(&consequent_ty, annotation)?.clone());
+
+        let substitutions1 = inferred_type.unify(&consequent_ty, annotation)?.clone();
+
+        substitutions = substitutions.compose(substitutions1);
         inferred_type = inferred_type.apply(&substitutions);
     }
 
@@ -167,13 +184,23 @@ where
 }
 
 #[derive(Debug, Default)]
-struct _Match {
+struct Match {
     bindings: Vec<(Identifier, Type)>,
+    substitutions: Substitutions,
 }
 
-impl _Match {
-    fn _add(&mut self, id: Identifier, ty: Type) {
-        self.bindings.push((id, ty));
+impl Match {
+    fn merge_with(&mut self, rhs: Self) {
+        self.bindings.extend(rhs.bindings);
+        self.substitutions = self.substitutions.compose(rhs.substitutions);
+    }
+
+    fn add_binding(&mut self, binding: Identifier, ty: Type) {
+        self.bindings.push((binding, ty));
+    }
+
+    fn add_substitutions(&mut self, substitutions: Substitutions) {
+        self.substitutions = self.substitutions.compose(substitutions)
     }
 }
 
@@ -189,8 +216,7 @@ where
             Self::Coproduct(_, pattern) => {
                 let coproduct_type = Constructor::<A>::constructed_type(&pattern.constructor, ctx)
                     .ok_or_else(|| TypeError::UndefinedSymbol(pattern.constructor.clone()))?
-                    .instantiate(ctx)?
-                    .expand_type(ctx)?;
+                    .instantiate(ctx)?;
 
                 Ok(TypeInference::trivially(coproduct_type))
             }
@@ -225,10 +251,11 @@ where
     fn deconstruct(
         &self,
         annotation: &A,
-        scrutinee: &Type,
+        scrutinee_in: &Type,
         ctx: &TypingContext,
-    ) -> Typing<Vec<(Identifier, Type)>> {
-        match (self, scrutinee) {
+    ) -> Typing<Match> {
+        let scrutinee = scrutinee_in.clone().expand_type(ctx)?;
+        match (self, &scrutinee) {
             (
                 Self::Coproduct(
                     annotation,
@@ -260,27 +287,28 @@ where
                 Self::Tuple(_, TuplePattern { elements }),
                 Type::Product(ProductType::Tuple(tuple)),
             ) if elements.len() == tuple.len() => {
-                let mut matched = vec![];
+                let mut matched = Match::default();
                 for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
-                    matched.extend(pattern.deconstruct(annotation, scrutinee, ctx)?);
+                    matched.merge_with(pattern.deconstruct(annotation, scrutinee, ctx)?)
                 }
                 Ok(matched)
             }
 
             (Self::Literally(pattern), scrutinee) => {
-                let pattern_type = pattern.synthesize_type()?.inferred_type;
-                if scrutinee == &pattern_type {
-                    Ok(vec![])
-                } else {
-                    Err(TypeError::UnifyImpossible {
-                        lhs: pattern_type,
-                        rhs: scrutinee.clone(),
-                        position: annotation.info().location().clone(),
-                    })
-                }
+                let pattern = pattern.synthesize_type()?;
+                let substutitions = scrutinee.unify(&pattern.inferred_type, annotation)?;
+                let mut matched = Match::default();
+                matched.add_substitutions(substutitions.compose(pattern.substitutions));
+
+                Ok(matched)
             }
 
-            (Self::Otherwise(pattern), scrutinee) => Ok(vec![(pattern.clone(), scrutinee.clone())]),
+            (Self::Otherwise(pattern), scrutinee) => {
+                let mut matched = Match::default();
+                // This has the expanded type here.
+                matched.add_binding(pattern.clone(), scrutinee_in.clone());
+                Ok(matched)
+            }
 
             // This ought to  be all bindings in the pattern, but with
             // fresh types
@@ -292,7 +320,6 @@ where
     }
 }
 
-// revisit this function
 fn infer_lambda<A>(
     ast::Parameter { name, .. }: &ast::Parameter<A>,
     body: &ast::Expression<A>,
@@ -302,28 +329,18 @@ fn infer_lambda<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    let expected_param_type = Type::fresh();
+    let domain_type = Type::fresh();
     let mut ctx = ctx.clone();
-    ctx.bind(
-        name.clone().into(),
-        TypeScheme {
-            quantifiers: vec![],
-            body: expected_param_type.clone(),
-        },
-    );
+    let domain = TypeScheme::from_constant(domain_type.clone());
+    ctx.bind(name.clone().into(), domain.clone());
 
-    let body = infer_type(body, &ctx)?;
-    let inferred_param_type = expected_param_type.clone().apply(&body.substitutions);
-    let annotation_unification = expected_param_type.unify(&inferred_param_type, info)?;
+    let codomain = infer_type(body, &ctx)?;
     let function_type = Type::Arrow(
-        inferred_param_type.apply(&annotation_unification).into(),
-        body.inferred_type.into(),
+        domain.instantiate(&ctx)?.into(),
+        codomain.inferred_type.into(),
     );
 
-    Ok(TypeInference::new(
-        body.substitutions.compose(annotation_unification),
-        function_type,
-    ))
+    Ok(TypeInference::new(codomain.substitutions, function_type))
 }
 
 fn infer_struct<A>(
@@ -470,20 +487,26 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     let bound = infer_type(bound, ctx)?;
-    let bound_type = bound.inferred_type.generalize(ctx);
+    let bound_type = bound
+        .inferred_type
+        .apply(&bound.substitutions)
+        .generalize(ctx);
 
     let mut ctx = ctx.clone();
+    println!("infer_binding: binding {binding} to {bound_type}");
     ctx.bind(binding.clone().into(), bound_type);
 
     let TypeInference {
         substitutions,
         inferred_type,
-    } = infer_type(body, &ctx.apply_substitutions(&bound.substitutions))?;
+    } = infer_type(body, &ctx)?;
 
     // Think about a map_substitutions function
     Ok(TypeInference::new(
-        bound.substitutions.compose(substitutions),
-        inferred_type,
+        bound.substitutions.compose(substitutions.clone()),
+        inferred_type
+            .clone()
+            .apply(&bound.substitutions.compose(substitutions)),
     ))
 }
 
@@ -555,13 +578,28 @@ where
 {
     let function = infer_type(function, &ctx)?;
     let argument = infer_type(argument, &ctx.apply_substitutions(&function.substitutions))?;
+
+    println!("infer_application: function {}", function);
+    println!("infer_application: argument {}", argument);
+
     let return_type = Type::fresh();
     let unified_substitutions = function
         .inferred_type
-        .apply(&function.substitutions)
+        .apply(
+            &function
+                .substitutions
+                .compose(argument.substitutions.clone()),
+        )
         .unify(
             &Type::Arrow(
-                argument.inferred_type.apply(&function.substitutions).into(),
+                argument
+                    .inferred_type
+                    .apply(
+                        &function
+                            .substitutions
+                            .compose(argument.substitutions.clone()),
+                    )
+                    .into(),
                 return_type.clone().into(),
             ),
             annotation,
