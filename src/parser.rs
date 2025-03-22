@@ -435,14 +435,15 @@ fn parse_value_declarator<'a>(
 
 // Should this function eat the -> ?
 // a | pattern
-fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter<ParsingInfo>>> {
+// This loses the annotation. Put it back. Later :)
+fn parse_parameter_list<'a>(remains: &'a [Token]) -> ParseResult<'a, Vec<Parameter>> {
     let end = remains
         .iter()
         .position(|t| t.token_type() == &TT::Period)
         .ok_or_else(|| ParseError::ExpectedTokenType(TT::Period))?;
     let (params, remains) = remains.split_at(end);
 
-    fn parse_parameter(t: &Token) -> Result<Parameter<ParsingInfo>, ParseError> {
+    fn parse_parameter(t: &Token) -> Result<Parameter, ParseError> {
         if let TT::Identifier(id) = t.token_type() {
             Ok(Parameter {
                 name: Identifier::new(id),

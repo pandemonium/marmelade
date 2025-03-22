@@ -303,7 +303,7 @@ where
                 Ok(matched)
             }
 
-            (Self::Otherwise(pattern), scrutinee) => {
+            (Self::Otherwise(pattern), _scrutinee) => {
                 let mut matched = Match::default();
                 // This has the expanded type here.
                 matched.add_binding(pattern.clone(), scrutinee_in.clone());
@@ -321,17 +321,35 @@ where
 }
 
 fn infer_lambda<A>(
-    ast::Parameter { name, .. }: &ast::Parameter<A>,
+    ast::Parameter {
+        name,
+        type_annotation,
+    }: &ast::Parameter,
     body: &ast::Expression<A>,
-    info: &ParsingInfo,
+    _info: &ParsingInfo,
     ctx: &TypingContext,
 ) -> Typing
 where
     A: fmt::Display + Clone + Parsed,
 {
-    let domain_type = Type::fresh();
-    let mut ctx = ctx.clone();
+    println!("infer_lambda: type annotation {:?}", type_annotation);
+
+    // Either this, or parameter.type_annotation
+    // But if that is List a, what does that mean?
+    // How does it become a TypeScheme? The same way as now?
+    // Should it perhaps already be a TypeScheme?
+
+    let domain_type = if let Some(scheme) = type_annotation {
+        println!("infer_lambda: domain scheme {scheme}");
+        // This causes it to instantiate this polymorphic type for every parameter in
+        // functions with more than one parameter.
+        scheme.clone()
+    } else {
+        Type::fresh()
+    };
     let domain = TypeScheme::from_constant(domain_type.clone());
+
+    let mut ctx = ctx.clone();
     ctx.bind(name.clone().into(), domain.clone());
 
     let codomain = infer_type(body, &ctx)?;

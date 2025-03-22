@@ -314,23 +314,25 @@ where
         annotation: A,
         self_name: TypeName,
     ) -> Typing<CoproductModule<A>> {
+        let declaring_type = self.synthesize_type()?;
+        println!("make_implementation_module: {declaring_type}");
+
         Ok(CoproductModule {
             name: self_name.clone(),
-            declaring_type: self.synthesize_type()?,
+            declaring_type,
             constructors: self
                 .constructors
                 .iter()
-                .map(|constructor| {
-                    constructor.make_function(annotation.clone(), self_name.clone(), vec![])
-                })
+                .map(|constructor| constructor.make_function(annotation.clone(), self_name.clone()))
                 .collect(),
         })
     }
 
     fn synthesize_type(&self) -> Typing<TypeScheme> {
+        // This maps names to type parameters
         let mut universals = HashMap::default();
         let coproduct_type = self.synthesize_coproduct_type(&mut universals);
-        let mut superfluous = self
+        let superfluous = self
             .forall
             .type_variables()
             .iter()
@@ -343,7 +345,7 @@ where
         } else {
             // Only reports the first
             Err(TypeError::SuperfluousQuantification {
-                quantifier: superfluous.drain(..).next().expect("safe"),
+                quantifier: superfluous.into_iter().next().expect("safe"),
                 in_type: coproduct_type.clone(),
             })
         }
@@ -489,34 +491,26 @@ impl<A> Constructor<A>
 where
     A: Clone,
 {
-    // Think about whether or not this can consume self.
-    fn make_function(
-        &self,
-        annotation: A,
-        ty: TypeName,
-        _type_parameters: Vec<TypeName>, // this is the forall clause, really
-    ) -> ValueDeclaration<A> {
+    fn make_function(&self, annotation: A, ty: TypeName) -> ValueDeclaration<A> {
+        let mut type_param_map = HashMap::default();
         let parameters = self
             .signature
             .iter()
             .enumerate()
             .map(|(index, expr)| {
+                // I could give this one the real TypeParameter via
+                // type_parameters. Then Parameter would hold Type
+                // instead of TypeExpression
                 Parameter::new_with_type_annotation(
                     Identifier::new(&format!("p{index}")),
-                    expr.clone(),
+                    expr.synthesize_type(&mut type_param_map),
                 )
             })
             .collect::<Vec<_>>();
 
+        // It should really annotate it with types to make sure the
+        // typer gets it right. But that should not be necessary yet.
         let expression = self.make_injection_lambda_tree(&annotation, ty, parameters.clone());
-
-        // Hold off on this for a while
-        //        if parameters.is_empty() {
-        //            parameters.push(Parameter::new_with_type_annotation(
-        //                Identifier::new(&format!("p0")),
-        //                TypeExpression::Constant(TypeName::new("builtin::Unit")),
-        //            ));
-        //        }
 
         ValueDeclaration {
             binder: self.name.clone(),
@@ -528,7 +522,7 @@ where
         &self,
         annotation: &A,
         name: TypeName,
-        parameters: Vec<Parameter<A>>,
+        parameters: Vec<Parameter>,
     ) -> Expression<A>
     where
         A: Clone,
@@ -715,12 +709,12 @@ where
 
 // these can be pattern matches too
 #[derive(Debug, Clone, PartialEq)]
-pub struct Parameter<A> {
+pub struct Parameter {
     pub name: Identifier,
-    pub type_annotation: Option<TypeExpression<A>>,
+    pub type_annotation: Option<Type>,
 }
 
-impl<A> Parameter<A> {
+impl Parameter {
     pub fn new(name: Identifier) -> Self {
         Self {
             name,
@@ -728,25 +722,15 @@ impl<A> Parameter<A> {
         }
     }
 
-    pub fn new_with_type_annotation(name: Identifier, ty: TypeExpression<A>) -> Self {
+    pub fn new_with_type_annotation(name: Identifier, ty: Type) -> Self {
         Self {
             name,
             type_annotation: Some(ty),
         }
     }
-
-    pub fn map<B>(self, f: fn(A) -> B) -> Parameter<B> {
-        Parameter {
-            name: self.name,
-            type_annotation: self.type_annotation.map(|t| t.map(f)),
-        }
-    }
 }
 
-impl<A> fmt::Display for Parameter<A>
-where
-    A: fmt::Display,
-{
+impl fmt::Display for Parameter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             name,
@@ -962,14 +946,14 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfReferential<A> {
     pub name: Identifier,
-    pub parameter: Parameter<A>,
+    pub parameter: Parameter,
     pub body: Box<Expression<A>>,
 }
 impl<A> SelfReferential<A> {
     fn map<B>(self, f: fn(A) -> B) -> SelfReferential<B> {
         SelfReferential {
             name: self.name,
-            parameter: self.parameter.map(f),
+            parameter: self.parameter,
             body: self.body.map(f).into(),
         }
     }
@@ -977,13 +961,13 @@ impl<A> SelfReferential<A> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lambda<A> {
-    pub parameter: Parameter<A>,
+    pub parameter: Parameter,
     pub body: Box<Expression<A>>,
 }
 impl<A> Lambda<A> {
     fn map<B>(self, f: fn(A) -> B) -> Lambda<B> {
         Lambda {
-            parameter: self.parameter.map(f),
+            parameter: self.parameter,
             body: self.body.map(f).into(),
         }
     }
