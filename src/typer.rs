@@ -189,7 +189,7 @@ impl Type {
         }
     }
 
-    fn apply(self, subs: &Substitutions) -> Self {
+    pub fn apply(self, subs: &Substitutions) -> Self {
         match self {
             // Recurse into apply here to apply the whole chain of
             // substitutions?
@@ -841,9 +841,7 @@ mod tests {
             Lambda {
                 parameter: ast::Parameter {
                     name: ast::Identifier::new("x"),
-                    type_annotation: Some(TypeExpression::Constant(TypeName::new(
-                        "builtin::Float",
-                    ))),
+                    type_annotation: Some(Type::Constant(BaseType::Float)),
                 },
                 body: ast::Expression::Variable(ParsingInfo::default(), ast::Identifier::new("x"))
                     .into(),
@@ -972,8 +970,8 @@ mod tests {
             ParsingInfo::default(),
             Lambda {
                 parameter: ast::Parameter {
-                    name: ast::Identifier::new("f"), // Parameter `f`
-                    type_annotation: Some(TypeExpression::Constant(TypeName::new("Id"))), // Annotate with the type alias
+                    name: ast::Identifier::new("f"),           // Parameter `f`
+                    type_annotation: Some(mk_identity_type()), // Annotate with the type alias
                 },
                 body: Box::new(ast::Expression::Apply(
                     ParsingInfo::default(),

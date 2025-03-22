@@ -48,10 +48,12 @@ where
             if let Some(declaration) = self.module.find_value_declaration(id) {
                 println!("type_check: `{id}` ...");
 
-                let declaration_type =
-                    typer::infer_declaration_type(declaration, &typing_context)?.inferred_type;
+                let declaration_type = typer::infer_declaration_type(declaration, &typing_context)?;
 
-                let scheme = declaration_type.generalize(&typing_context);
+                let scheme = declaration_type
+                    .inferred_type
+                    .apply(&declaration_type.substitutions)
+                    .generalize(&typing_context);
 
                 println!("type_check: `{id}` `{scheme}`");
 

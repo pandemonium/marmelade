@@ -1,8 +1,9 @@
 List ::= ∀a. Cons a (List a) | Nil
 
 main =
-    foo 1
+    1
 
-foo = λx.
-    deconstruct Cons x Nil into
-        Cons x xs -> x
+fold_right = λacc f xs.
+  deconstruct xs into
+    Cons x xs -> f (fold_right acc f xs) x
+  | Nil       -> acc

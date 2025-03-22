@@ -116,11 +116,11 @@ fn infer_deconstruct_into<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    let mut ctx = ctx.clone();
-    let TypeInference {
-        substitutions,
-        inferred_type: mut scrutinee,
-    } = infer_type(scrutinee, &ctx)?;
+    let mut scrutinee = infer_type(scrutinee, &ctx)?;
+    let mut subs = scrutinee.substitutions.clone();
+
+    println!("infer_deconstruct_into: scrutinee {scrutinee}");
+    let mut ctx = ctx.apply_substitutions(&scrutinee.substitutions);
 
     let mut consequents = vec![];
 
@@ -129,36 +129,53 @@ where
         consequent,
     } in match_clauses
     {
-        let mut pattern_type = pattern.synthesize_type(&ctx)?;
+        let pattern_type = pattern.synthesize_type(&ctx)?;
 
-        let mut unification = pattern_type
-            .inferred_type
-            .unify(&scrutinee, annotation)?
-            .compose(pattern_type.substitutions);
+        let substitutions = scrutinee
+            .substitutions
+            .compose(pattern_type.substitutions.clone());
 
-        scrutinee = scrutinee.apply(&unification);
-        pattern_type.inferred_type = pattern_type.inferred_type.apply(&unification);
+        let mut unification = scrutinee.inferred_type.unify(
+            &pattern_type
+                .inferred_type
+                .clone()
+                .apply(&scrutinee.substitutions),
+            annotation,
+        )?;
 
-        // Yeah?
-        ctx = ctx.apply_substitutions(&unification);
+        println!(
+            "XXX {substitutions} / {unification} {}",
+            pattern_type.substitutions
+        );
+
+        subs = subs.compose(unification.clone());
+
+        //        pattern_type.inferred_type = pattern_type.inferred_type.apply(&unification);
 
         // TODO: move the annotation into the Pattern
         let Match {
             bindings,
             substitutions,
-        } = pattern.deconstruct(annotation, &scrutinee, &ctx)?;
+        } = pattern.deconstruct(
+            annotation,
+            &scrutinee.inferred_type.clone().apply(&unification),
+            &ctx,
+        )?;
 
         unification = unification.compose(substitutions);
 
-        ctx = ctx.apply_substitutions(&unification);
+        println!("infer_deconstruct_into: uni {unification}");
 
         for (binding, scrutinee) in bindings {
-            let scheme = scrutinee.apply(&unification).generalize(&ctx);
-            println!("infer_deconstruct_into: binding {binding} to {scheme}");
-            ctx.bind(binding.into(), scheme);
+            //            let scheme = scrutinee.clone().apply(&unification).generalize(&ctx);
+            let scheme = TypeScheme::from_constant(scrutinee.clone().apply(&unification));
+            println!("infer_deconstruct_into: binding {binding} to {scheme} scrutinee {scrutinee}");
+            ctx.bind(binding.into(), TypeScheme::from_constant(scrutinee));
         }
 
         let value = infer_type(consequent, &ctx)?;
+
+        println!("XXX value {value}");
 
         consequents.push(value);
     }
@@ -178,8 +195,8 @@ where
     }
 
     Ok(TypeInference {
-        substitutions,
-        inferred_type,
+        substitutions: subs.compose(substitutions.clone()),
+        inferred_type: inferred_type.apply(&subs.compose(substitutions)),
     })
 }
 
@@ -333,30 +350,30 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     println!("infer_lambda: type annotation {:?}", type_annotation);
-
-    // Either this, or parameter.type_annotation
-    // But if that is List a, what does that mean?
-    // How does it become a TypeScheme? The same way as now?
-    // Should it perhaps already be a TypeScheme?
-
-    let domain_type = if let Some(scheme) = type_annotation {
-        println!("infer_lambda: domain scheme {scheme}");
-        // This causes it to instantiate this polymorphic type for every parameter in
-        // functions with more than one parameter.
-        scheme.clone()
+    let domain_type = if let Some(ty) = type_annotation {
+        println!("infer_lambda: domain {ty}");
+        ty.clone()
     } else {
         Type::fresh()
     };
-    let domain = TypeScheme::from_constant(domain_type.clone());
+    let domain = TypeScheme::from_constant(domain_type);
 
     let mut ctx = ctx.clone();
     ctx.bind(name.clone().into(), domain.clone());
 
     let codomain = infer_type(body, &ctx)?;
+    println!("infer_lambda(1): {codomain}");
+
     let function_type = Type::Arrow(
-        domain.instantiate(&ctx)?.into(),
-        codomain.inferred_type.into(),
+        domain
+            .instantiate(&ctx)?
+            .apply(&codomain.substitutions)
+            .into(),
+        // whatever body is should have applied those substitutions
+        codomain.inferred_type.apply(&codomain.substitutions).into(),
     );
+
+    println!("infer_lambda(2): {function_type}");
 
     Ok(TypeInference::new(codomain.substitutions, function_type))
 }
@@ -623,12 +640,13 @@ where
             annotation,
         )?;
 
-    let return_type = return_type.apply(&unified_substitutions);
+    let substitutions = function
+        .substitutions
+        .compose(argument.substitutions)
+        .compose(unified_substitutions);
+    let return_type = return_type.apply(&substitutions);
     Ok(TypeInference {
-        substitutions: function
-            .substitutions
-            .compose(argument.substitutions)
-            .compose(unified_substitutions),
+        substitutions,
         inferred_type: return_type,
     })
 }

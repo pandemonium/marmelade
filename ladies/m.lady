@@ -9,7 +9,7 @@ map = λf xs.
 map2 = λf xs.
   deconstruct xs into
     Cons x xs -> Cons (f x) (map2 f xs)
-  | Nil -> Cons "1" Nil
+  | Nil -> Nil
 
 flip = λf p q. f q p
 
@@ -41,11 +41,11 @@ ys =
 
 id = lambda x. x
 
-ss = (append (Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil))))) (Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil))))))
+ss = append (Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil))))) (Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil)))))
 
 x =
     id (id deconstruct id (Cons (id 1) (id Nil)) into
       Cons x xs -> id xs
     | Nil -> id Nil)
 
-main = map2 id (Cons 1 Nil)
+main = map2 show ss
