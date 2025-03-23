@@ -84,7 +84,8 @@ impl LexicalAnalyzer {
         let mut input = input;
         loop {
             input = match input {
-                remains @ [c, ..] if c.is_whitespace() => self.scan_whitespace(remains),
+                ['(', '*', ..] => self.scan_block_comment(input),
+                [c, ..] if c.is_whitespace() => self.scan_whitespace(input),
                 [c, remains @ ..] if is_special_symbol(*c) => {
                     self.emit(1, TokenType::decode_reserved_words(c.to_string()), remains)
                 }
@@ -130,6 +131,27 @@ impl LexicalAnalyzer {
         self.output.iter().map(|t| t.token_type().clone()).collect()
     }
 
+    fn scan_block_comment<'a>(&mut self, mut remains: &'a [char]) -> &'a [char] {
+        while let Some(pos) = remains.iter().position(|&c| c == '*') {
+            if remains[pos..].len() > 1 {
+                if remains[pos + 1] == ')' {
+                    self.compute_location(remains, pos);
+                    return &remains[(pos + 2)..];
+                } else {
+                    self.compute_location(remains, pos);
+                    remains = &remains[pos + 2..]
+                }
+            }
+        }
+
+        &remains[..0]
+    }
+
+    fn compute_location(&mut self, remains: &[char], pos: usize) {
+        let new_location = self.compute_new_location(&remains[..=pos + 1]);
+        self.update_location(new_location);
+    }
+
     fn scan_identifier<'a>(&mut self, input: &'a [char]) -> &'a [char] {
         let (prefix, remains) = if let Some(end) = input[1..]
             .iter()
@@ -169,6 +191,7 @@ impl LexicalAnalyzer {
         remains
     }
 
+    // This ought to merge itself with comments
     fn scan_whitespace<'a>(&mut self, input: &'a [char]) -> &'a [char] {
         let (whitespace_prefix, remains) =
             if let Some(end) = input.iter().position(|c| !c.is_whitespace()) {
@@ -178,7 +201,6 @@ impl LexicalAnalyzer {
             };
 
         let next_location = self.compute_new_location(whitespace_prefix);
-
         self.update_location(next_location);
 
         remains
@@ -189,9 +211,8 @@ impl LexicalAnalyzer {
 
         for c in whitespace {
             match c {
-                ' ' => next_location.move_right(1),
                 '\n' => next_location.new_line(),
-                _otherwise => (),
+                _c => next_location.move_right(1),
             }
         }
 
@@ -215,8 +236,14 @@ impl LexicalAnalyzer {
 
     // Which location is the location of an Indent or Dedent?
     fn emit_layout(&mut self, location: SourcePosition, indentation: Layout) {
-        self.output
-            .push(Token(TokenType::Layout(indentation), location));
+        if let Some(last) = self.output.last_mut() {
+            if last.token_type() == &TokenType::Layout(Layout::Newline) {
+                *last = Token(TokenType::Layout(indentation), location);
+            } else {
+                self.output
+                    .push(Token(TokenType::Layout(indentation), location));
+            }
+        }
     }
 
     fn scan_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {

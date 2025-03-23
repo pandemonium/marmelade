@@ -48,4 +48,4 @@ x =
       Cons x xs -> id xs
     | Nil -> id Nil)
 
-main = map2 show ss
+main = map id ss

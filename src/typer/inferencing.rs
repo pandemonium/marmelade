@@ -416,7 +416,7 @@ where
     }
 
     let mut types = types
-        .drain(..)
+        .into_iter()
         .map(|t| t.apply(&substitutions))
         .collect::<Vec<_>>();
     types.reverse();
