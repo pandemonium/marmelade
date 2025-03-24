@@ -2,12 +2,11 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     hash::Hash,
-    marker::PhantomData,
 };
 
 use crate::{
     interpreter::DependencyGraph,
-    lexer::{self, SourcePosition},
+    lexer::{self, SourceLocation},
     parser::ParsingInfo,
     typer::{
         CoproductType, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing,
@@ -161,9 +160,24 @@ impl fmt::Display for TypeName {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValueDeclaration<A> {
-    // pub type_signature: Option<TypeExpression>,
     pub binder: Identifier,
+    pub type_signature: Option<TypeSignature<A>>,
     pub declarator: ValueDeclarator<A>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypeSignature<A> {
+    pub quantifier: Option<UniversalQuantifier>,
+    pub body: TypeExpression<A>,
+}
+
+impl<A> TypeSignature<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> TypeSignature<B> {
+        TypeSignature {
+            quantifier: self.quantifier,
+            body: self.body.map(f),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -187,7 +201,7 @@ pub enum Declaration<A> {
 }
 
 impl Declaration<ParsingInfo> {
-    pub fn position(&self) -> &SourcePosition {
+    pub fn position(&self) -> &SourceLocation {
         self.parsing_info().location()
     }
 
@@ -207,10 +221,18 @@ where
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Declaration<B> {
         match self {
-            Self::Value(a, ValueDeclaration { binder, declarator }) => Declaration::Value(
+            Self::Value(
+                a,
+                ValueDeclaration {
+                    binder,
+                    declarator,
+                    type_signature,
+                },
+            ) => Declaration::Value(
                 f(a),
                 ValueDeclaration {
                     binder,
+                    type_signature: type_signature.map(|signature| signature.map(f)),
                     declarator: declarator.map(f),
                 },
             ),
@@ -274,9 +296,9 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
-pub struct Forall(pub Vec<TypeName>);
+pub struct UniversalQuantifier(pub Vec<TypeName>);
 
-impl Forall {
+impl UniversalQuantifier {
     pub fn add(self, quantifier: TypeName) -> Self {
         let Self(mut quantifiers) = self;
         quantifiers.push(quantifier);
@@ -290,7 +312,7 @@ impl Forall {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Coproduct<A> {
-    pub forall: Forall,
+    pub forall: UniversalQuantifier,
     pub constructors: Vec<Constructor<A>>,
 }
 
@@ -514,6 +536,9 @@ where
 
         ValueDeclaration {
             binder: self.name.clone(),
+            // Compute a type signature type expression!
+            // I have self.signature which can be joined with -> to make the function, I guess?
+            type_signature: None,
             declarator: ValueDeclarator { expression },
         }
     }
@@ -597,19 +622,20 @@ where
 }
 
 // This thing needs positions
+// Is this the thing that can be a function type too? Yes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeExpression<A> {
-    Constant(TypeName),
-    Parameter(TypeName),
-    Apply(TypeApply<A>, PhantomData<A>),
+    Constant(A, TypeName),
+    Parameter(A, TypeName),
+    Apply(A, TypeApply<A>),
 }
 
 impl<A> TypeExpression<A> {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeExpression<B> {
         match self {
-            Self::Constant(id) => TypeExpression::Constant(id),
-            Self::Parameter(id) => TypeExpression::Parameter(id),
-            Self::Apply(apply, ..) => TypeExpression::Apply(apply.map(f), PhantomData::default()),
+            Self::Constant(a, id) => TypeExpression::Constant(f(a), id),
+            Self::Parameter(a, id) => TypeExpression::Parameter(f(a), id),
+            Self::Apply(a, apply) => TypeExpression::Apply(f(a), apply.map(f)),
         }
     }
 
@@ -620,13 +646,13 @@ impl<A> TypeExpression<A> {
             type_params: &mut HashMap<String, TypeParameter>,
         ) -> Type {
             match expr {
-                TypeExpression::Constant(name) => Type::Named(name.to_owned()),
-                TypeExpression::Parameter(TypeName(param)) => Type::Parameter(
+                TypeExpression::Constant(_, name) => Type::Named(name.to_owned()),
+                TypeExpression::Parameter(_, TypeName(param)) => Type::Parameter(
                     *type_params
                         .entry(param.to_owned())
                         .or_insert_with(TypeParameter::fresh),
                 ),
-                TypeExpression::Apply(node, ..) => Type::Apply(
+                TypeExpression::Apply(_, node) => Type::Apply(
                     map_expression(&node.constructor, type_params).into(),
                     map_expression(&node.argument, type_params).into(),
                 ),
@@ -643,9 +669,9 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Constant(id) => write!(f, "{id}"),
-            Self::Parameter(id) => write!(f, "{id}"),
-            Self::Apply(apply, ..) => write!(f, "{apply}"),
+            Self::Constant(_, id) => write!(f, "{id}"),
+            Self::Parameter(_, id) => write!(f, "{id}"),
+            Self::Apply(_, apply) => write!(f, "{apply}"),
         }
     }
 }
@@ -1048,7 +1074,7 @@ impl<A> Sequence<A> {
 }
 
 impl Expression<ParsingInfo> {
-    pub fn position(&self) -> &lexer::SourcePosition {
+    pub fn position(&self) -> &lexer::SourceLocation {
         &self.parsing_info().position
     }
 
@@ -1383,6 +1409,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("bar")),
                         },
@@ -1392,6 +1419,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("foo")),
                         },
@@ -1401,6 +1429,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("quux")),
                         },
@@ -1422,6 +1451,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("bar")),
                         },
@@ -1431,6 +1461,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("bar")),
                         },
@@ -1440,6 +1471,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("frobnicator")),
                         },
@@ -1449,6 +1481,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("frobnicator"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Literal((), Constant::Int(1)),
                         },
@@ -1471,6 +1504,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("bar")),
                         },
@@ -1480,6 +1514,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("bar")),
                         },
@@ -1489,6 +1524,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("frobnicator")),
                         },
@@ -1511,6 +1547,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("bar")),
                         },
@@ -1520,6 +1557,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("bar")),
                         },
@@ -1529,6 +1567,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Variable((), Identifier::new("frobnicator")),
                         },
@@ -1538,6 +1577,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("frobnicator"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: Expression::Literal((), Constant::Int(1)),
                         },

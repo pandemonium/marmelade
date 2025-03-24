@@ -1,10 +1,10 @@
 #![allow(dead_code)]
-use std::marker::PhantomData;
 
 use marmelade::{
     ast::{
         Apply, Binding, Constant, Constructor, ControlFlow, Coproduct, Declaration, Expression,
-        Forall, Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
+        Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
+        UniversalQuantifier,
     },
     context::Linkage,
     interpreter::Value,
@@ -121,11 +121,11 @@ pub fn tyname(id: &str) -> TypeName {
 }
 
 pub fn typar(id: &str) -> TypeExpression<ParsingInfo> {
-    TypeExpression::Parameter(tyname(id))
+    TypeExpression::Parameter(ParsingInfo::default(), tyname(id))
 }
 
 pub fn tyref(id: &str) -> TypeExpression<ParsingInfo> {
-    TypeExpression::Constant(tyname(id))
+    TypeExpression::Constant(ParsingInfo::default(), tyname(id))
 }
 
 pub fn constructor(id: &str, te: Vec<TypeExpression<ParsingInfo>>) -> Constructor<ParsingInfo> {
@@ -140,16 +140,16 @@ pub fn tyapp(
     a: TypeExpression<ParsingInfo>,
 ) -> TypeExpression<ParsingInfo> {
     TypeExpression::Apply(
+        ParsingInfo::default(),
         TypeApply {
             constructor: f.into(),
             argument: a.into(),
         },
-        PhantomData::default(),
     )
 }
 
 pub fn coproduct(
-    forall: Forall,
+    forall: UniversalQuantifier,
     constructors: Vec<Constructor<ParsingInfo>>,
 ) -> TypeDeclarator<ParsingInfo> {
     TypeDeclarator::Coproduct(

@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::{
     ast::{self, Pattern, TypeName},
-    lexer::SourcePosition,
+    lexer::SourceLocation,
     parser::ParsingInfo,
 };
 use unification::Substitutions;
@@ -507,7 +507,7 @@ pub enum TypeError {
     UnifyImpossible {
         lhs: Type,
         rhs: Type,
-        position: SourcePosition,
+        position: SourceLocation,
     },
 
     #[error("No such type {0}")]

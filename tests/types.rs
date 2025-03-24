@@ -1,9 +1,9 @@
-use std::{collections::HashMap, marker::PhantomData};
+use std::collections::HashMap;
 
 use marmelade::{
     ast::{
-        self, Apply, Expression, Forall, Lambda, Parameter, Product, TypeApply, TypeDeclarator,
-        TypeExpression, TypeName,
+        self, Apply, Expression, Lambda, Parameter, Product, TypeApply, TypeDeclarator,
+        TypeExpression, TypeName, UniversalQuantifier,
     },
     context::Linkage,
     parser::ParsingInfo,
@@ -20,7 +20,7 @@ mod tools;
 #[test]
 fn list_type() {
     let rhs = coproduct(
-        Forall::default().add(TypeName::new("a")),
+        UniversalQuantifier::default().add(TypeName::new("a")),
         vec![
             constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
             constructor("Nil", vec![]),
@@ -91,7 +91,7 @@ fn type_expansions() {
     let mut ctx = TypingContext::default();
 
     let list_declaration = coproduct(
-        Forall::default(),
+        UniversalQuantifier::default(),
         vec![
             constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
             constructor("Nil", vec![]),
@@ -116,12 +116,13 @@ fn type_expansions() {
         }
     }
 
-    let _abbreviation = TypeExpression::<()>::Apply(
+    let _abbreviation = TypeExpression::<ParsingInfo>::Apply(
+        ParsingInfo::default(),
         TypeApply {
-            constructor: TypeExpression::Constant(TypeName::new("List")).into(),
-            argument: TypeExpression::Parameter(TypeName::new("a")).into(),
+            constructor: TypeExpression::Constant(ParsingInfo::default(), TypeName::new("List"))
+                .into(),
+            argument: TypeExpression::Parameter(ParsingInfo::default(), TypeName::new("a")).into(),
         },
-        PhantomData::default(),
     )
     .synthesize_type(&mut HashMap::default());
 

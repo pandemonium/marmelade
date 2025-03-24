@@ -1,15 +1,15 @@
 use core::panic;
-use std::{fmt, marker::PhantomData};
+use std::fmt;
 
 use crate::{
     ast::{
         Apply, Binding, CompilationUnit, Constructor, ConstructorPattern, ControlFlow, Coproduct,
-        Declaration, DeconstructInto, Expression, Forall, Identifier, Lambda, MatchClause,
+        Declaration, DeconstructInto, Expression, Identifier, Lambda, MatchClause,
         ModuleDeclarator, Parameter, Pattern, SelfReferential, Sequence, TuplePattern, TypeApply,
-        TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, ValueDeclaration,
-        ValueDeclarator,
+        TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, TypeSignature,
+        UniversalQuantifier, ValueDeclaration, ValueDeclarator,
     },
-    lexer::{Keyword, Layout, Operator, SourcePosition, Token, TokenType},
+    lexer::{Keyword, Layout, Operator, SourceLocation, Token, TokenType},
     typer,
 };
 
@@ -27,7 +27,7 @@ pub enum ParseError {
     ExpectedTokenType(TokenType),
 
     #[error("Declaration stream {1:?} is offside of {0}")]
-    DeclarationOffside(SourcePosition, Vec<Token>),
+    DeclarationOffside(SourceLocation, Vec<Token>),
 }
 
 use thiserror::Error;
@@ -37,15 +37,15 @@ use TokenType as TT;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct ParsingInfo {
-    pub position: SourcePosition,
+    pub position: SourceLocation,
 }
 
 impl ParsingInfo {
-    pub fn new(position: SourcePosition) -> Self {
+    pub fn new(position: SourceLocation) -> Self {
         Self { position }
     }
 
-    pub fn location(&self) -> &SourcePosition {
+    pub fn location(&self) -> &SourceLocation {
         &self.position
     }
 }
@@ -64,7 +64,7 @@ impl typer::Parsed for ParsingInfo {
 }
 
 static DEFAULT_PARSING_INFO: ParsingInfo = ParsingInfo {
-    position: SourcePosition { row: 0, column: 0 },
+    position: SourceLocation { row: 0, column: 0 },
 };
 
 impl typer::Parsed for () {
@@ -98,6 +98,7 @@ pub fn parse_declarations<'a>(
         let current_block = *declaration.position();
         declarations.push(declaration);
 
+        // This logic is highly dubious
         input = find_next_in_block(current_block, remains, |token_type| {
             matches!(token_type, TT::Identifier(..) | TT::End)
         })?;
@@ -109,7 +110,7 @@ pub fn parse_declarations<'a>(
 }
 
 pub fn find_next_in_block<'a>(
-    current_block: SourcePosition,
+    current_block: SourceLocation,
     input: &'a [Token],
     is_next_start_token_type: fn(&TT) -> bool,
 ) -> Result<&'a [Token], ParseError> {
@@ -142,7 +143,10 @@ pub fn find_next_in_block<'a>(
 pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration<ParsingInfo>> {
     match input {
         [T(TT::Identifier(id), pos), T(TT::Equals, ..), remains @ ..] => {
-            parse_value_binding(id, pos, remains)
+            parse_value_binding(id, None, pos, remains)
+        }
+        [T(TT::Identifier(id), pos), T(TT::TypeAscribe, ..), remains @ ..] => {
+            parse_typed_value_binding(id, pos, remains)
         }
         [T(TT::Identifier(id), pos), T(TT::TypeAssign, ..), remains @ ..] => {
             parse_type_binding(id, pos, remains)
@@ -152,9 +156,27 @@ pub fn parse_declaration<'a>(input: &'a [Token]) -> ParseResult<'a, Declaration<
     }
 }
 
+fn parse_typed_value_binding<'a>(
+    id: &String,
+    pos: &SourceLocation,
+    remains: &'a [Token],
+) -> ParseResult<'a, Declaration<ParsingInfo>> {
+    let (quantifier, remains) = if starts_with(TT::Keyword(Forall), remains) {
+        parse_universal_quantifier(&remains[1..])
+            .map(|(quantifier, remains)| (Some(quantifier), remains))?
+    } else {
+        (None, remains)
+    };
+
+    let (body, remains) = parse_type_expression(remains)?;
+    let remains = expect(TT::Equals, remains)?;
+
+    parse_value_binding(id, Some(TypeSignature { quantifier, body }), pos, remains)
+}
+
 fn parse_type_binding<'a>(
     binder: &String,
-    position: &SourcePosition,
+    position: &SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration<ParsingInfo>> {
     let (declarator, remains) =
@@ -184,12 +206,13 @@ fn parse_type_declarator<'a>(remains: &'a [Token]) -> ParseResult<'a, TypeDeclar
     ))
 }
 
-fn parse_forall_clause<'a>(remains: &'a [Token]) -> ParseResult<'a, Forall> {
+fn parse_universal_quantifier<'a>(remains: &'a [Token]) -> ParseResult<'a, UniversalQuantifier> {
     let end = remains
         .iter()
         .position(|t| t.token_type() == &TT::Period)
         .ok_or_else(|| ParseError::ExpectedTokenType(TT::Period))?;
     let (params, remains) = remains.split_at(end);
+    let remains = expect(TT::Period, remains)?;
 
     let parse_parameter = |t: &Token| {
         if let TT::Identifier(id) = t.token_type() {
@@ -200,21 +223,21 @@ fn parse_forall_clause<'a>(remains: &'a [Token]) -> ParseResult<'a, Forall> {
     };
 
     Ok((
-        Forall(
+        UniversalQuantifier(
             params
                 .iter()
                 .map(parse_parameter)
                 .collect::<Result<_, _>>()?,
         ),
-        &remains[1..],
+        remains,
     ))
 }
 
 fn parse_coproduct<'a>(remains: &'a [Token]) -> ParseResult<'a, Coproduct<ParsingInfo>> {
     let (forall, mut remains) = if starts_with(TT::Keyword(Keyword::Forall), remains) {
-        parse_forall_clause(&remains[1..])?
+        parse_universal_quantifier(&remains[1..])?
     } else {
-        (Forall::default(), remains)
+        (UniversalQuantifier::default(), remains)
     };
 
     // parse the first constructor to see:
@@ -296,7 +319,9 @@ fn parse_type_expression_prefix<'a>(
     remains: &'a [Token],
 ) -> ParseResult<'a, TypeExpression<ParsingInfo>> {
     match remains {
-        [T(TT::Identifier(id), ..), remains @ ..] => Ok((simple_type_expr_term(id), remains)),
+        [T(TT::Identifier(id), pos), remains @ ..] => {
+            Ok((simple_type_expr_term(ParsingInfo::new(*pos), id), remains))
+        }
         [T(TT::LeftParen, ..), ..] => {
             let (term, remains) = parse_type_expression(&remains[1..])?;
             if starts_with(TT::RightParen, remains) {
@@ -311,11 +336,11 @@ fn parse_type_expression_prefix<'a>(
     }
 }
 
-fn simple_type_expr_term(id: &str) -> TypeExpression<ParsingInfo> {
+fn simple_type_expr_term(pi: ParsingInfo, id: &str) -> TypeExpression<ParsingInfo> {
     if is_lowercasse(id) {
-        TypeExpression::<ParsingInfo>::Parameter(TypeName::new(id))
+        TypeExpression::Parameter(pi, TypeName::new(id))
     } else {
-        TypeExpression::Constant(TypeName::new(id))
+        TypeExpression::Constant(pi, TypeName::new(id))
     }
 }
 
@@ -328,16 +353,18 @@ fn parse_type_expression_infix<'a>(
     remains: &'a [Token],
 ) -> ParseResult<'a, TypeExpression<ParsingInfo>> {
     match remains {
-        [T(TT::Identifier(rhs), ..), remains @ ..] => {
-            let rhs = simple_type_expr_term(rhs);
+        [T(TT::Identifier(rhs), pos), remains @ ..] => {
+            let pi = ParsingInfo::new(*pos);
+            let (rhs, remains) =
+                parse_type_expression_infix(simple_type_expr_term(pi, rhs), remains)?;
 
             Ok((
                 TypeExpression::Apply(
+                    pi,
                     TypeApply {
                         constructor: lhs.into(),
                         argument: rhs.into(),
                     },
-                    PhantomData::default(),
                 ),
                 remains,
             ))
@@ -348,7 +375,8 @@ fn parse_type_expression_infix<'a>(
 
 fn parse_value_binding<'a>(
     binder: &str,
-    position: &SourcePosition,
+    type_signature: Option<TypeSignature<ParsingInfo>>,
+    position: &SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration<ParsingInfo>> {
     let (declarator, remains) = parse_value_declarator(
@@ -361,54 +389,13 @@ fn parse_value_binding<'a>(
             ParsingInfo::new(*position),
             ValueDeclaration {
                 binder: Identifier::new(&binder),
+                type_signature,
                 declarator,
             },
         ),
         remains,
     ))
 }
-
-// These can have type annotations
-// let foo :: Int -> String -> String = fun i s -> s
-// this should really be:
-// Value_Declaration ::= Value_LHS = Value_RHS
-// Value_LHS ::= Identifier_With_Optional_Type_Annotation
-// Identifier_With_Optional_Type_Annotation ::= identifier [::Type_Annotation]
-// Type_Annotation ::= ...
-// Value_RHS ::= Expression
-// Is it necessary to differentiate between a ConstantDeclarator and a FunctionDeclarator
-// like this?
-//fn parse_value_declarator<'a>(input: &'a [Token]) -> ParseResult<'a, ValueDeclarator<ParsingInfo>> {
-//    match input {
-//        [T(TT::Keyword(Lambda), ..), remains @ ..] => {
-//            let (parameters, remains) = parse_parameter_list(remains)?;
-//            let remains = expect(TT::Period, remains)?;
-//            let (body, remains) = parse_expression(
-//                strip_if_starts_with(TT::Layout(Layout::Indent), &remains[1..]),
-//                0,
-//            )?;
-//            Ok((
-//                ValueDeclarator::Function(FunctionDeclarator {
-//                    parameters,
-//                    return_type_annotation: None,
-//                    body,
-//                }),
-//                remains,
-//            ))
-//        }
-//        remains @ [..] => {
-//            let (initializer, remains) =
-//                parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0)?;
-//            Ok((
-//                ValueDeclarator::Constant(ConstantDeclarator {
-//                    initializer,
-//                    type_annotation: None,
-//                }),
-//                remains,
-//            ))
-//        }
-//    }
-//}
 
 fn parse_value_declarator<'a>(
     binder: &str,
@@ -516,7 +503,7 @@ fn parse_prefix<'a>(tokens: &'a [Token]) -> ParseResult<'a, Expression<ParsingIn
 }
 
 fn parse_lambda<'a>(
-    position: SourcePosition,
+    position: SourceLocation,
     tokens: &'a [Token],
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (parameters, remains) = parse_parameter_list(tokens)?;
@@ -540,7 +527,7 @@ fn parse_lambda<'a>(
 
 // This function is __TERRIBLE__.
 fn parse_if_expression<'a>(
-    position: SourcePosition,
+    position: SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (predicate, remains) = parse_expression(remains, 0)?;
@@ -585,7 +572,7 @@ fn parse_if_expression<'a>(
 }
 
 fn parse_deconstruct_into<'a>(
-    position: SourcePosition,
+    position: SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (scrutinee, remains) = parse_expression(remains, 0)?;
@@ -668,7 +655,7 @@ fn is_capital_case(id: &str) -> bool {
 
 fn parse_constructor_pattern<'a>(
     remains: &'a [Token],
-    _position: &SourcePosition,
+    _position: &SourceLocation,
 ) -> ParseResult<'a, Pattern<ParsingInfo>> {
     if let [T(TT::Identifier(constructor), position), remains @ ..] = remains {
         let (patterns, remains) = parse_pattern_list(remains)?;
@@ -701,7 +688,7 @@ fn parse_pattern_list<'a>(mut remains: &'a [Token]) -> ParseResult<'a, Vec<Patte
 
 fn parse_tuple_pattern<'a>(
     mut remains: &'a [Token],
-    _position: &SourcePosition,
+    _position: &SourceLocation,
 ) -> ParseResult<'a, TuplePattern<ParsingInfo>> {
     let mut boofer = vec![];
 
@@ -749,7 +736,7 @@ fn strip_first_if<'a>(condition: bool, input: &'a [Token]) -> &'a [Token] {
 }
 
 fn parse_binding<'a>(
-    position: SourcePosition,
+    position: SourceLocation,
     binder: &str,
     input: &'a [Token],
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
@@ -866,12 +853,13 @@ fn parse_infix<'a>(
     }
 }
 
+// This is an annoying function
 fn is_toplevel<'a>(prefix: &'a [Token]) -> bool {
     matches!(
         prefix,
         [
             T(TT::Identifier(..), ..),
-            T(TT::Equals | TT::TypeAssign, ..),
+            T(TT::Equals | TT::TypeAssign | TT::TypeAscribe, ..),
             ..
         ]
     )
@@ -883,7 +871,7 @@ fn parse_operator<'a>(
     context_precedence: usize,
     operator: &Operator,
     remains: &'a [Token],
-    position: SourcePosition,
+    position: SourceLocation,
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let operator_precedence = operator.precedence();
     if operator_precedence > context_precedence {
@@ -955,7 +943,7 @@ fn apply_binary_operator(
     op: Operator,
     lhs: Expression<ParsingInfo>,
     rhs: Expression<ParsingInfo>,
-    position: SourcePosition,
+    position: SourceLocation,
 ) -> Expression<ParsingInfo> {
     let apply_lhs = Expression::Apply(
         ParsingInfo::new(position),
@@ -1254,6 +1242,7 @@ mod tests {
                 (),
                 ValueDeclaration {
                     binder: Identifier::new("create_window"),
+                    type_signature: None,
                     declarator: ValueDeclarator {
                         expression: E::SelfReferential(
                             (),
@@ -1339,6 +1328,7 @@ mod tests {
                     (),
                     ValueDeclaration {
                         binder: Identifier::new("create_window"),
+                        type_signature: None,
                         declarator: ValueDeclarator {
                             expression: E::SelfReferential(
                                 (),
@@ -1386,7 +1376,8 @@ mod tests {
                                     .into()
                                 }
                             )
-                        }
+                        },
+                        type_signature: None,
                     }
                 )
             ],

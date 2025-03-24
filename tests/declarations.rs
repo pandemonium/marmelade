@@ -1,7 +1,8 @@
 use marmelade::{
     ast::{
-        Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Forall, Identifier,
+        Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Identifier,
         MatchClause, Pattern, Product, TuplePattern, TypeDeclaration, TypeName,
+        UniversalQuantifier,
     },
     interpreter::{Base, Value},
     parser::ParsingInfo,
@@ -172,7 +173,7 @@ fn coproduct_perhaps() {
             TypeDeclaration {
                 binding: ident("Perhaps"),
                 declarator: coproduct(
-                    Forall::default().add(TypeName::new("a")),
+                    UniversalQuantifier::default().add(TypeName::new("a")),
                     vec![
                         constructor("This", vec![typar("a")]),
                         constructor("Nope", vec![]),
@@ -193,7 +194,7 @@ fn coproduct_list() {
             TypeDeclaration {
                 binding: ident("List"),
                 declarator: coproduct(
-                    Forall::default().add(TypeName::new("a")),
+                    UniversalQuantifier::default().add(TypeName::new("a")),
                     vec![
                         constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
                         constructor("Nil", vec![]),
@@ -251,7 +252,7 @@ fn coproduct_binary_tree() {
             TypeDeclaration {
                 binding: ident("BinaryTree"),
                 declarator: coproduct(
-                    Forall::default().add(TypeName::new("a")),
+                    UniversalQuantifier::default().add(TypeName::new("a")),
                     vec![
                         constructor(
                             "Branch",
@@ -276,7 +277,7 @@ fn coproduct_eval() {
         TypeDeclaration {
             binding: ident("Eval"),
             declarator: coproduct(
-                Forall::default()
+                UniversalQuantifier::default()
                     .add(TypeName::new("a"))
                     .add(TypeName::new("e")),
                 vec![

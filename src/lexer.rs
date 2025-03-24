@@ -41,7 +41,7 @@ use crate::ast::Identifier;
 
 #[derive(Debug)]
 pub struct LexicalAnalyzer {
-    location: SourcePosition,
+    location: SourceLocation,
     indentation_level: u32,
     output: Vec<Token>,
 }
@@ -84,8 +84,8 @@ impl LexicalAnalyzer {
         let mut input = input;
         loop {
             input = match input {
-                ['(', '*', ..] => self.scan_block_comment(input),
                 [c, ..] if c.is_whitespace() => self.scan_whitespace(input),
+                ['(', '*', ..] => self.scan_block_comment(input),
                 [c, remains @ ..] if is_special_symbol(*c) => {
                     self.emit(1, TokenType::decode_reserved_words(c.to_string()), remains)
                 }
@@ -157,7 +157,7 @@ impl LexicalAnalyzer {
             .iter()
             .position(|c| !is_identifier_continuation(*c))
         {
-            (&input[..(end + 1)], &input[(end + 1)..])
+            input.split_at(end + 1)
         } else {
             (input, &input[..0])
         };
@@ -195,7 +195,7 @@ impl LexicalAnalyzer {
     fn scan_whitespace<'a>(&mut self, input: &'a [char]) -> &'a [char] {
         let (whitespace_prefix, remains) =
             if let Some(end) = input.iter().position(|c| !c.is_whitespace()) {
-                (&input[..end], &input[end..])
+                input.split_at(end)
             } else {
                 (input, &input[..0])
             };
@@ -206,7 +206,7 @@ impl LexicalAnalyzer {
         remains
     }
 
-    fn compute_new_location(&mut self, whitespace: &[char]) -> SourcePosition {
+    fn compute_new_location(&mut self, whitespace: &[char]) -> SourceLocation {
         let mut next_location = self.location.clone();
 
         for c in whitespace {
@@ -219,7 +219,7 @@ impl LexicalAnalyzer {
         next_location
     }
 
-    fn update_location(&mut self, next: SourcePosition) {
+    fn update_location(&mut self, next: SourceLocation) {
         if next.is_below(&self.location) {
             if next.is_left_of(self.indentation_level) {
                 self.emit_layout(next, Layout::Dedent);
@@ -235,7 +235,7 @@ impl LexicalAnalyzer {
     }
 
     // Which location is the location of an Indent or Dedent?
-    fn emit_layout(&mut self, location: SourcePosition, indentation: Layout) {
+    fn emit_layout(&mut self, location: SourceLocation, indentation: Layout) {
         if let Some(last) = self.output.last_mut() {
             if last.token_type() == &TokenType::Layout(Layout::Newline) {
                 *last = Token(TokenType::Layout(indentation), location);
@@ -248,7 +248,7 @@ impl LexicalAnalyzer {
 
     fn scan_number<'a>(&mut self, prefix: &'a [char]) -> &'a [char] {
         let (prefix, remains) = if let Some(end) = prefix.iter().position(|c| !c.is_ascii_digit()) {
-            (&prefix[..end], &prefix[end..])
+            prefix.split_at(end)
         } else {
             (prefix, &prefix[..0])
         };
@@ -284,7 +284,7 @@ fn is_identifier_continuation(c: char) -> bool {
 
 impl Default for LexicalAnalyzer {
     fn default() -> Self {
-        let location = SourcePosition::default();
+        let location = SourceLocation::default();
         Self {
             location,
             indentation_level: location.column,
@@ -294,12 +294,12 @@ impl Default for LexicalAnalyzer {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct SourcePosition {
+pub struct SourceLocation {
     pub row: u32,
     pub column: u32,
 }
 
-impl SourcePosition {
+impl SourceLocation {
     pub fn new(row: u32, column: u32) -> Self {
         Self { row, column }
     }
@@ -330,13 +330,13 @@ impl SourcePosition {
     }
 }
 
-impl Default for SourcePosition {
+impl Default for SourceLocation {
     fn default() -> Self {
         Self { row: 1, column: 1 }
     }
 }
 
-impl fmt::Display for SourcePosition {
+impl fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { row, column } = self;
         write!(f, "({},{})", row, column)
@@ -624,14 +624,14 @@ impl fmt::Display for Literal {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Token(pub TokenType, pub SourcePosition);
+pub struct Token(pub TokenType, pub SourceLocation);
 
 impl Token {
     pub fn token_type(&self) -> &TokenType {
         &self.0
     }
 
-    pub fn location(&self) -> &SourcePosition {
+    pub fn location(&self) -> &SourceLocation {
         &self.1
     }
 

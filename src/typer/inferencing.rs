@@ -116,7 +116,7 @@ fn infer_deconstruct_into<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    let mut scrutinee = infer_type(scrutinee, &ctx)?;
+    let scrutinee = infer_type(scrutinee, &ctx)?;
     let mut subs = scrutinee.substitutions.clone();
 
     println!("infer_deconstruct_into: scrutinee {scrutinee}");

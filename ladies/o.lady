@@ -1,5 +1,5 @@
-(* hej *)
-top (* hej *)=(* hej *) 2(* hej *)
+List ::= ∀a. Cons a (List a) | Nil
 
-(* hej *)
-main =  1
+length :: ∀a. List a = λxs. 1
+
+main :: ∀a. List a = 1
