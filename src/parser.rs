@@ -15,6 +15,23 @@ use crate::{
 
 pub type ParseResult<'a, A> = Result<(A, &'a [Token]), ParseError>;
 
+pub trait ParseResultOps<'a, A> {
+    fn map_value<B, F>(self, f: F) -> ParseResult<'a, B>
+    where
+        Self: Sized,
+        F: FnOnce(A) -> B;
+}
+
+impl<'a, A> ParseResultOps<'a, A> for ParseResult<'a, A> {
+    fn map_value<B, F>(self, f: F) -> ParseResult<'a, B>
+    where
+        Self: Sized,
+        F: FnOnce(A) -> B,
+    {
+        self.map(|(a, remains)| (f(a), remains))
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ParseError {
     #[error("Unexpected token {0}")]
@@ -76,15 +93,17 @@ impl typer::Parsed for () {
 pub fn parse_compilation_unit<'a>(
     input: &'a [Token],
 ) -> Result<CompilationUnit<ParsingInfo>, ParseError> {
-    let (declarations, ..) = parse_declarations(input)?;
-
-    Ok(CompilationUnit::Implicit(
-        ParsingInfo::new(*input[0].location()),
-        ModuleDeclarator {
-            name: Identifier::new("main"),
-            declarations,
-        },
-    ))
+    parse_declarations(input)
+        .map_value(|declarations| {
+            CompilationUnit::Implicit(
+                ParsingInfo::new(*input[0].location()),
+                ModuleDeclarator {
+                    name: Identifier::new("main"),
+                    declarations,
+                },
+            )
+        })
+        .map(|(fst, _)| fst)
 }
 
 pub fn parse_declarations<'a>(
@@ -179,31 +198,25 @@ fn parse_type_binding<'a>(
     position: &SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration<ParsingInfo>> {
-    let (declarator, remains) =
-        parse_type_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
-
-    Ok((
-        Declaration::Type(
-            ParsingInfo::new(*position),
-            TypeDeclaration {
-                binding: Identifier::new(&binder),
-                declarator,
-            },
-        ),
-        remains,
-    ))
+    parse_type_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains)).map_value(
+        |declarator| {
+            Declaration::Type(
+                ParsingInfo::new(*position),
+                TypeDeclaration {
+                    binding: Identifier::new(&binder),
+                    declarator,
+                },
+            )
+        },
+    )
 }
 
 fn parse_type_declarator<'a>(remains: &'a [Token]) -> ParseResult<'a, TypeDeclarator<ParsingInfo>> {
     // forall a.
     let postition = remains[0].location();
-    // Try different avenues down the line.
-    let (coproduct, remains) = parse_coproduct(remains)?;
 
-    Ok((
-        TypeDeclarator::Coproduct(ParsingInfo::new(*postition), coproduct),
-        remains,
-    ))
+    parse_coproduct(remains)
+        .map_value(|coproduct| TypeDeclarator::Coproduct(ParsingInfo::new(*postition), coproduct))
 }
 
 fn parse_universal_quantifier<'a>(remains: &'a [Token]) -> ParseResult<'a, UniversalQuantifier> {
@@ -270,15 +283,11 @@ fn parse_coproduct<'a>(remains: &'a [Token]) -> ParseResult<'a, Coproduct<Parsin
 }
 
 fn parse_constructor<'a>(remains: &'a [Token]) -> ParseResult<'a, Constructor<ParsingInfo>> {
-    if let [T(TT::Identifier(name), _position), remains @ ..] = remains {
-        let (signature, remains) = parse_constructor_signature(remains)?;
-        Ok((
-            Constructor {
-                name: Identifier::new(name),
-                signature,
-            },
-            remains,
-        ))
+    if let [T(TT::Identifier(name), _), remains @ ..] = remains {
+        parse_constructor_signature(remains).map_value(|signature| Constructor {
+            name: Identifier::new(name),
+            signature,
+        })
     } else {
         Err(ParseError::ExpectedTokenType(TT::Identifier(
             "<constructor2>".to_owned(),
@@ -355,19 +364,15 @@ fn parse_type_expression_infix<'a>(
     match remains {
         [T(TT::Identifier(rhs), pos), remains @ ..] => {
             let pi = ParsingInfo::new(*pos);
-            let (rhs, remains) =
-                parse_type_expression_infix(simple_type_expr_term(pi, rhs), remains)?;
-
-            Ok((
+            parse_type_expression_infix(simple_type_expr_term(pi, rhs), remains).map_value(|rhs| {
                 TypeExpression::Apply(
                     pi,
                     TypeApply {
                         constructor: lhs.into(),
                         argument: rhs.into(),
                     },
-                ),
-                remains,
-            ))
+                )
+            })
         }
         _otherwise => Ok((lhs, remains)),
     }
@@ -379,12 +384,11 @@ fn parse_value_binding<'a>(
     position: &SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration<ParsingInfo>> {
-    let (declarator, remains) = parse_value_declarator(
+    parse_value_declarator(
         binder,
         strip_if_starts_with(TT::Layout(Layout::Indent), remains),
-    )?;
-
-    Ok((
+    )
+    .map_value(|declarator| {
         Declaration::Value(
             ParsingInfo::new(*position),
             ValueDeclaration {
@@ -392,32 +396,31 @@ fn parse_value_binding<'a>(
                 type_signature,
                 declarator,
             },
-        ),
-        remains,
-    ))
+        )
+    })
 }
 
 fn parse_value_declarator<'a>(
     binder: &str,
     input: &'a [Token],
 ) -> ParseResult<'a, ValueDeclarator<ParsingInfo>> {
-    let (expression, remains) = parse_expression(input, 0)?;
+    parse_expression(input, 0).map_value(|expression| {
+        let expression =
+            if let Expression::Lambda(annotation, Lambda { parameter, body }) = expression {
+                Expression::SelfReferential(
+                    annotation,
+                    SelfReferential {
+                        name: Identifier::new(binder),
+                        parameter,
+                        body,
+                    },
+                )
+            } else {
+                expression
+            };
 
-    let expression = if let Expression::Lambda(annotation, Lambda { parameter, body }) = expression
-    {
-        Expression::SelfReferential(
-            annotation,
-            SelfReferential {
-                name: Identifier::new(binder),
-                parameter,
-                body,
-            },
-        )
-    } else {
-        expression
-    };
-
-    Ok((ValueDeclarator { expression }, remains))
+        ValueDeclarator { expression }
+    })
 }
 
 // Should this function eat the -> ?
@@ -508,21 +511,20 @@ fn parse_lambda<'a>(
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let (parameters, remains) = parse_parameter_list(tokens)?;
     let remains = expect(TT::Period, remains)?;
-    let (body, remains) =
-        parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0)?;
 
-    Ok((
-        parameters.into_iter().rfold(body, |body, parameter| {
-            Expression::Lambda(
-                ParsingInfo::new(position),
-                Lambda {
-                    parameter,
-                    body: body.into(),
-                },
-            )
-        }),
-        remains,
-    ))
+    parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0).map_value(
+        |body| {
+            parameters.into_iter().rfold(body, |body, parameter| {
+                Expression::Lambda(
+                    ParsingInfo::new(position),
+                    Lambda {
+                        parameter,
+                        body: body.into(),
+                    },
+                )
+            })
+        },
+    )
 }
 
 // This function is __TERRIBLE__.
@@ -550,9 +552,7 @@ fn parse_if_expression<'a>(
             let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
             let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
 
-            let (alternate, remains) = parse_expression(&remains[0..], 0)?;
-
-            Ok((
+            parse_expression(&remains[0..], 0).map_value(|alternate| {
                 Expression::ControlFlow(
                     ParsingInfo::new(position),
                     ControlFlow::If {
@@ -560,9 +560,8 @@ fn parse_if_expression<'a>(
                         consequent: consequent.into(),
                         alternate: alternate.into(),
                     },
-                ),
-                remains,
-            ))
+                )
+            })
         } else {
             Err(ParseError::ExpectedTokenType(TokenType::Keyword(Else)))
         }
@@ -614,15 +613,11 @@ fn parse_deconstruct_into<'a>(
 fn parse_match_clause<'a>(remains: &'a [Token]) -> ParseResult<'a, MatchClause<ParsingInfo>> {
     let (pattern, remains) = parse_pattern(remains)?;
     let remains = expect(TT::Arrow, remains)?;
-    let (consequent, remains) = parse_expression(remains, 0)?;
 
-    Ok((
-        MatchClause {
-            pattern,
-            consequent: consequent.into(),
-        },
-        remains,
-    ))
+    parse_expression(remains, 0).map_value(|consequent| MatchClause {
+        pattern,
+        consequent: consequent.into(),
+    })
 }
 
 fn parse_pattern<'a>(remains: &'a [Token]) -> ParseResult<'a, Pattern<ParsingInfo>> {
@@ -658,17 +653,15 @@ fn parse_constructor_pattern<'a>(
     _position: &SourceLocation,
 ) -> ParseResult<'a, Pattern<ParsingInfo>> {
     if let [T(TT::Identifier(constructor), position), remains @ ..] = remains {
-        let (patterns, remains) = parse_pattern_list(remains)?;
-        Ok((
+        parse_pattern_list(remains).map_value(|patterns| {
             Pattern::Coproduct(
                 ParsingInfo::new(*position),
                 ConstructorPattern {
                     constructor: Identifier::new(&constructor),
                     argument: TuplePattern { elements: patterns },
                 },
-            ),
-            remains,
-        ))
+            )
+        })
     } else {
         panic!("{remains:?}")
     }
@@ -750,9 +743,7 @@ fn parse_binding<'a>(
             let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
             let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
 
-            let (body, remains) = parse_expression(remains, 0)?;
-
-            Ok((
+            parse_expression(remains, 0).map_value(|body| {
                 Expression::Binding(
                     ParsingInfo::new(position),
                     Binding {
@@ -760,9 +751,8 @@ fn parse_binding<'a>(
                         bound: bound.into(),
                         body: body.into(),
                     },
-                ),
-                remains,
-            ))
+                )
+            })
         }
         // In could be offside here, then what? What can I return or do?
         // Well, that is an error then I guess.
