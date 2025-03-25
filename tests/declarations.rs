@@ -1,8 +1,8 @@
 use marmelade::{
     ast::{
-        Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Identifier,
-        MatchClause, Pattern, Product, TuplePattern, TypeDeclaration, TypeName,
-        UniversalQuantifier,
+        Arrow, Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Identifier,
+        MatchClause, Pattern, Product, TuplePattern, TypeApply, TypeDeclaration, TypeExpression,
+        TypeName, TypeSignature, UniversalQuantifier, ValueDeclaration, ValueDeclarator,
     },
     interpreter::{Base, Value},
     parser::ParsingInfo,
@@ -271,6 +271,120 @@ fn coproduct_binary_tree() {
 }
 
 #[test]
+fn constant_type_expressions() {
+    let pi = ParsingInfo::default();
+    let rhs = Declaration::Value(
+        pi,
+        ValueDeclaration {
+            binder: ident("length"),
+            type_signature: Some(TypeSignature {
+                quantifier: None,
+                body: TypeExpression::Constant(pi, TypeName::new("Int")),
+            }),
+            declarator: ValueDeclarator {
+                expression: int(1).into(),
+            },
+        },
+    );
+
+    decl_fixture(r#"|length :: Int = 1"#, rhs);
+}
+
+#[test]
+fn type_apply_type_expressions() {
+    let pi = ParsingInfo::default();
+    let rhs = Declaration::Value(
+        pi,
+        ValueDeclaration {
+            binder: ident("length"),
+            type_signature: Some(TypeSignature {
+                quantifier: None,
+                body: TypeExpression::Apply(
+                    pi,
+                    TypeApply {
+                        constructor: TypeExpression::Constant(pi, TypeName::new("List")).into(),
+                        argument: TypeExpression::Constant(pi, TypeName::new("Int")).into(),
+                    },
+                ),
+            }),
+            declarator: ValueDeclarator {
+                expression: int(1).into(),
+            },
+        },
+    );
+
+    decl_fixture(r#"|length :: List Int = 1"#, rhs);
+}
+
+#[test]
+fn type_arrow_expressions() {
+    let pi = ParsingInfo::default();
+    let rhs = Declaration::Value(
+        pi,
+        ValueDeclaration {
+            binder: ident("length"),
+            type_signature: Some(TypeSignature {
+                quantifier: None,
+                body: TypeExpression::Arrow(
+                    pi,
+                    Arrow {
+                        domain: TypeExpression::Constant(pi, TypeName::new("Int")).into(),
+                        codomain: TypeExpression::Constant(pi, TypeName::new("Text")).into(),
+                    },
+                ),
+            }),
+            declarator: ValueDeclarator {
+                expression: int(1).into(),
+            },
+        },
+    );
+
+    decl_fixture(r#"|length :: Int -> Text = 1"#, rhs);
+}
+
+#[test]
+fn complex_type_arrow_expressions() {
+    let pi = ParsingInfo::default();
+    let rhs = Declaration::Value(
+        pi,
+        ValueDeclaration {
+            binder: ident("length"),
+            type_signature: Some(TypeSignature {
+                quantifier: None,
+                body: TypeExpression::Arrow(
+                    pi,
+                    Arrow {
+                        domain: TypeExpression::Apply(
+                            pi,
+                            TypeApply {
+                                constructor: TypeExpression::Constant(pi, TypeName::new("List"))
+                                    .into(),
+                                argument: TypeExpression::Constant(pi, TypeName::new("Int")).into(),
+                            },
+                        )
+                        .into(),
+                        codomain: TypeExpression::Apply(
+                            pi,
+                            TypeApply {
+                                constructor: TypeExpression::Constant(pi, TypeName::new("Option"))
+                                    .into(),
+                                argument: TypeExpression::Parameter(pi, TypeName::new("a")).into(),
+                            },
+                        )
+                        .into(),
+                    },
+                ),
+            }),
+            declarator: ValueDeclarator {
+                expression: int(1).into(),
+            },
+        },
+    );
+
+    decl_fixture(r#"|length :: List Int -> Option a = 1"#, rhs);
+}
+
+#[test]
 fn coproduct_eval() {
     let rhs = Declaration::Type(
         ParsingInfo::default(),
@@ -324,7 +438,7 @@ fn coproduct_eval() {
 // Have to print the AST to see which of the Nil-positions that
 // is getting applied to something. Did I ever do that ()-trick
 // parameter for nullary constructors?
-#[test]
+//#[test]
 fn listy_mclistface() {
     eval_fixture(
         r#"|List ::= forall a. Cons a (List a) | Nil

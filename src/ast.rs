@@ -628,6 +628,7 @@ pub enum TypeExpression<A> {
     Constant(A, TypeName),
     Parameter(A, TypeName),
     Apply(A, TypeApply<A>),
+    Arrow(A, Arrow<A>),
 }
 
 impl<A> TypeExpression<A> {
@@ -636,6 +637,7 @@ impl<A> TypeExpression<A> {
             Self::Constant(a, id) => TypeExpression::Constant(f(a), id),
             Self::Parameter(a, id) => TypeExpression::Parameter(f(a), id),
             Self::Apply(a, apply) => TypeExpression::Apply(f(a), apply.map(f)),
+            Self::Arrow(a, arrow) => TypeExpression::Arrow(f(a), arrow.map(f)),
         }
     }
 
@@ -656,6 +658,10 @@ impl<A> TypeExpression<A> {
                     map_expression(&node.constructor, type_params).into(),
                     map_expression(&node.argument, type_params).into(),
                 ),
+                TypeExpression::Arrow(_, arrow) => Type::Arrow(
+                    map_expression(&arrow.domain, type_params).into(),
+                    map_expression(&arrow.codomain, type_params).into(),
+                ),
             }
         }
 
@@ -672,6 +678,7 @@ where
             Self::Constant(_, id) => write!(f, "{id}"),
             Self::Parameter(_, id) => write!(f, "{id}"),
             Self::Apply(_, apply) => write!(f, "{apply}"),
+            Self::Arrow(_, arrow) => write!(f, "{arrow}"),
         }
     }
 }
@@ -701,6 +708,31 @@ where
             argument,
         } = self;
         write!(f, "{constructor} {argument}")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Arrow<A> {
+    pub domain: Box<TypeExpression<A>>,
+    pub codomain: Box<TypeExpression<A>>,
+}
+
+impl<A> Arrow<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> Arrow<B> {
+        Arrow {
+            domain: self.domain.map(f).into(),
+            codomain: self.codomain.map(f).into(),
+        }
+    }
+}
+
+impl<A> fmt::Display for Arrow<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { domain, codomain } = self;
+        write!(f, "{domain} -> {codomain}")
     }
 }
 

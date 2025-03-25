@@ -3,8 +3,8 @@ use std::fmt;
 
 use crate::{
     ast::{
-        Apply, Binding, CompilationUnit, Constructor, ConstructorPattern, ControlFlow, Coproduct,
-        Declaration, DeconstructInto, Expression, Identifier, Lambda, MatchClause,
+        Apply, Arrow, Binding, CompilationUnit, Constructor, ConstructorPattern, ControlFlow,
+        Coproduct, Declaration, DeconstructInto, Expression, Identifier, Lambda, MatchClause,
         ModuleDeclarator, Parameter, Pattern, SelfReferential, Sequence, TuplePattern, TypeApply,
         TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, TypeSignature,
         UniversalQuantifier, ValueDeclaration, ValueDeclarator,
@@ -364,12 +364,26 @@ fn parse_type_expression_infix<'a>(
     match remains {
         [T(TT::Identifier(rhs), pos), remains @ ..] => {
             let pi = ParsingInfo::new(*pos);
-            parse_type_expression_infix(simple_type_expr_term(pi, rhs), remains).map_value(|rhs| {
+            parse_type_expression_infix(
                 TypeExpression::Apply(
                     pi,
                     TypeApply {
                         constructor: lhs.into(),
-                        argument: rhs.into(),
+                        argument: simple_type_expr_term(pi, rhs).into(),
+                    },
+                ),
+                remains,
+            )
+        }
+
+        [T(TT::Arrow, pos), remains @ ..] => {
+            let pi = ParsingInfo::new(*pos);
+            parse_type_expression(remains).map_value(|rhs| {
+                TypeExpression::Arrow(
+                    pi,
+                    Arrow {
+                        domain: lhs.into(),
+                        codomain: rhs.into(),
                     },
                 )
             })

@@ -1,5 +1,5 @@
 List ::= ∀a. Cons a (List a) | Nil
 
-length :: ∀a. List a = λxs. 1
+length :: ∀a. List a -> Int -> a = λxs. 1
 
 main :: ∀a. List a = 1

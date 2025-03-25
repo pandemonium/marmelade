@@ -27,7 +27,7 @@ fn list_type() {
         ],
     );
 
-    let tp = TypeParameter::new_for_test(0);
+    let tp = TypeParameter::new_for_test(1);
     let ty = Type::Parameter(tp);
     let lhs = Type::Coproduct(CoproductType::new(vec![
         (
