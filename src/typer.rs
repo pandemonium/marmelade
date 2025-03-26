@@ -12,6 +12,7 @@ use crate::{
 };
 use unification::Substitutions;
 
+mod checking;
 mod inferencing;
 mod unification;
 

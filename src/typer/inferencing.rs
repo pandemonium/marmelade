@@ -13,7 +13,7 @@ use crate::{
 };
 
 impl ast::Constant {
-    fn synthesize_type(&self) -> Typing {
+    pub fn synthesize_type(&self) -> Typing {
         match self {
             ast::Constant::Int(..) => synthesize_constant(BaseType::Int),
             ast::Constant::Float(..) => synthesize_constant(BaseType::Float),
@@ -119,7 +119,6 @@ where
     let scrutinee = infer_type(scrutinee, &ctx)?;
     let mut subs = scrutinee.substitutions.clone();
 
-    println!("infer_deconstruct_into: scrutinee {scrutinee}");
     let mut ctx = ctx.apply_substitutions(&scrutinee.substitutions);
 
     let mut consequents = vec![];
@@ -131,10 +130,6 @@ where
     {
         let pattern_type = pattern.synthesize_type(&ctx)?;
 
-        let substitutions = scrutinee
-            .substitutions
-            .compose(pattern_type.substitutions.clone());
-
         let mut unification = scrutinee.inferred_type.unify(
             &pattern_type
                 .inferred_type
@@ -143,14 +138,7 @@ where
             annotation,
         )?;
 
-        println!(
-            "XXX {substitutions} / {unification} {}",
-            pattern_type.substitutions
-        );
-
         subs = subs.compose(unification.clone());
-
-        //        pattern_type.inferred_type = pattern_type.inferred_type.apply(&unification);
 
         // TODO: move the annotation into the Pattern
         let Match {
@@ -164,20 +152,12 @@ where
 
         unification = unification.compose(substitutions);
 
-        println!("infer_deconstruct_into: uni {unification}");
-
         for (binding, scrutinee) in bindings {
-            //            let scheme = scrutinee.clone().apply(&unification).generalize(&ctx);
             let scheme = TypeScheme::from_constant(scrutinee.clone().apply(&unification));
-            println!("infer_deconstruct_into: binding {binding} to {scheme} scrutinee {scrutinee}");
-            ctx.bind(binding.into(), TypeScheme::from_constant(scrutinee));
+            ctx.bind(binding.into(), scheme);
         }
 
-        let value = infer_type(consequent, &ctx)?;
-
-        println!("XXX value {value}");
-
-        consequents.push(value);
+        consequents.push(infer_type(consequent, &ctx)?);
     }
 
     let TypeInference {
