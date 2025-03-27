@@ -1,36 +1,36 @@
-use std::fmt;
-
-use super::{unification::Substitutions, BaseType, Parsed, Type, Typing, TypingContext};
+use super::{
+    unification::Substitutions, BaseType, Parsed, ProductType, Type, Typing, TypingContext,
+};
 use crate::{
-    ast::{Apply, Binding, ControlFlow, Expression, Identifier, Lambda, Parameter},
+    ast::{Apply, Binding, ControlFlow, Expression, Identifier, Lambda, Parameter, Product},
+    parser::ParsingInfo,
     typer::{TypeError, TypeScheme},
 };
 
-pub fn check<A>(
-    annotation: &A,
-    expr: Expression<A>,
-    expected_type: &Type,
+type UntypedExpression = Expression<ParsingInfo>;
+
+pub fn check(
+    expression: UntypedExpression,
+    expected_type: Type,
     ctx: &TypingContext,
-) -> Typing<Substitutions>
-where
-    A: Parsed + fmt::Display + Clone,
-{
-    match (expected_type, expr) {
+) -> Typing<Substitutions> {
+    let annotation = *expression.annotation();
+    match (expected_type, expression) {
         (expected, Expression::Variable(_, id) | Expression::InvokeBridge(_, id)) => {
             let actual_type = ctx
                 .lookup(&id.clone().into())
-                .ok_or_else(|| TypeError::UndefinedSymbol(id))?
+                .ok_or_else(|| TypeError::UndefinedSymbol(id.clone()))?
                 .instantiate(ctx)?;
-            expected.unify(&actual_type, annotation)
+            expected.unify(&actual_type, &annotation)
         }
-        (expected, Expression::Literal(_, constant)) => {
-            expected.unify(&constant.synthesize_type()?.inferred_type, annotation)
+        (expected, Expression::Literal(pi, constant)) => {
+            expected.unify(&constant.synthesize_type()?.inferred_type, &pi)
         }
         (expected, Expression::SelfReferential(_, self_referential)) => todo!(),
         (
             expected,
             Expression::Lambda(
-                _,
+                pi,
                 Lambda {
                     parameter:
                         Parameter {
@@ -40,34 +40,76 @@ where
                     body,
                 },
             ),
-        ) => check_lambda(annotation, expected, name, parameter_type, body, ctx),
-        (expected, Expression::Apply(_, Apply { function, argument })) => {
-            check_apply(annotation, expected, function, argument, ctx)
+        ) => check_lambda(&pi, expected, name, parameter_type, body, ctx),
+        (expected, Expression::Apply(pi, Apply { function, argument })) => {
+            check_apply(&pi, expected, *function, *argument, ctx)
         }
         (expected, Expression::Inject(_, inject)) => todo!(),
-        (expected, Expression::Product(_, product)) => todo!(),
+        (Type::Product(expected_type), Expression::Product(annotation, product)) => {
+            check_product(&annotation, expected_type, product, ctx)
+        }
         (expected, Expression::Project(_, project)) => todo!(),
         (expected, Expression::Binding(annotation, binding)) => {
             check_binding(&annotation, expected, binding, ctx)
         }
         (expected, Expression::Sequence(_, sequence)) => todo!(),
-        (expected, Expression::ControlFlow(_, control_flow)) => {
-            check_control_flow(annotation, expected, control_flow, ctx)
+        (expected, Expression::ControlFlow(pi, control_flow)) => {
+            check_control_flow(&pi, expected, control_flow, ctx)
         }
         (expected, Expression::DeconstructInto(_, deconstruct_into)) => todo!(),
         _otherwise => todo!(),
     }
 }
 
-fn check_binding<A>(
-    annotation: &A,
-    expected_type: &Type,
-    binding: Binding<A>,
+fn check_product(
+    pi: &ParsingInfo,
+    expected_type: ProductType,
+    product: Product<ParsingInfo>,
     ctx: &TypingContext,
-) -> Typing<Substitutions>
-where
-    A: Parsed + fmt::Display + Clone,
-{
+) -> Typing<Substitutions> {
+    match (expected_type, product) {
+        (ProductType::Tuple(types), Product::Tuple(expressions))
+            if types.len() == expressions.len() =>
+        {
+            let mut s = Substitutions::default();
+            for (ty, expr) in types.into_iter().zip(expressions.into_iter()) {
+                s = s.compose(check(expr, ty, &ctx.apply_substitutions(&s))?);
+            }
+            Ok(s)
+        }
+
+        (ProductType::Struct(mut lhs), Product::Struct(mut rhs)) if lhs.len() == rhs.len() => {
+            lhs.sort_by(|(p, _), (q, _)| p.cmp(&q));
+            rhs.sort_by(|(p, _), (q, _)| p.cmp(&q));
+
+            let mut s = Substitutions::default();
+            for ((lhs_label, expected), (rhs_label, expr)) in lhs.into_iter().zip(rhs.into_iter()) {
+                if lhs_label == rhs_label {
+                    s = s.compose(check(expr, expected, &ctx.apply_substitutions(&s))?);
+                } else {
+                    Err(TypeError::UndefinedField {
+                        position: *pi.info().location(),
+                        label: rhs_label,
+                    })?
+                }
+            }
+
+            Ok(s)
+        }
+
+        (expected_type, product) => Err(TypeError::ExpectedType {
+            expected_type: Type::Product(expected_type),
+            literal: Expression::Product(pi.clone(), product),
+        }),
+    }
+}
+
+fn check_binding(
+    _pi: &ParsingInfo,
+    expected_type: Type,
+    binding: Binding<ParsingInfo>,
+    ctx: &TypingContext,
+) -> Typing<Substitutions> {
     let Binding {
         binder,
         bound,
@@ -78,76 +120,66 @@ where
     let mut ctx = ctx.clone();
     ctx.bind(binder.into(), bound.inferred_type.generalize(&ctx));
 
-    let unification = check(annotation, *body, expected_type, &ctx)?;
+    let unification = check(*body, expected_type, &ctx)?;
 
     Ok(unification.compose(bound.substitutions))
 }
 
-fn check_lambda<A>(
-    annotation: &A,
-    expected_type: &Type,
+fn check_lambda(
+    pi: &ParsingInfo,
+    expected_type: Type,
     parameter_name: Identifier,
     parameter_type: Type,
-    body: Box<Expression<A>>,
+    body: Box<UntypedExpression>,
     ctx: &TypingContext,
-) -> Typing<Substitutions>
-where
-    A: Parsed + fmt::Display + Clone,
-{
+) -> Typing<Substitutions> {
     let mut ctx = ctx.clone();
     ctx.bind(
-        parameter_name.into(),
+        parameter_name.clone().into(),
         TypeScheme::from_constant(parameter_type.clone()),
     );
     let body = ctx.infer_type(&body)?;
 
     let unification = expected_type.unify(
-        &Type::Arrow(parameter_type.into(), body.inferred_type.into()),
-        annotation,
+        &Type::Arrow(parameter_type.clone().into(), body.inferred_type.into()),
+        pi,
     )?;
 
     Ok(body.substitutions.compose(unification))
 }
 
-fn check_apply<A>(
-    annotation: &A,
-    expected: &Type,
-    function: Box<Expression<A>>,
-    argument: Box<Expression<A>>,
+fn check_apply(
+    _pi: &ParsingInfo,
+    expected: Type,
+    function: UntypedExpression,
+    argument: UntypedExpression,
     ctx: &TypingContext,
-) -> Typing<Substitutions>
-where
-    A: Parsed + fmt::Display + Clone,
-{
+) -> Typing<Substitutions> {
     let argument = ctx.infer_type(&argument)?;
     let unification = check(
-        annotation,
-        *function,
-        &Type::Arrow(argument.inferred_type.into(), expected.clone().into()),
+        function,
+        Type::Arrow(argument.inferred_type.into(), expected.clone().into()),
         ctx,
     )?;
     Ok(unification.compose(argument.substitutions))
 }
 
-fn check_control_flow<A>(
-    annotation: &A,
-    expected: &Type,
-    control_flow: ControlFlow<A>,
+fn check_control_flow(
+    _pi: &ParsingInfo,
+    expected: Type,
+    control_flow: ControlFlow<ParsingInfo>,
     ctx: &TypingContext,
-) -> Typing<Substitutions>
-where
-    A: Parsed + fmt::Display + Clone,
-{
+) -> Typing<Substitutions> {
     match control_flow {
         ControlFlow::If {
             predicate,
             consequent,
             alternate,
         } => {
-            let s1 = check(annotation, *predicate, &Type::Constant(BaseType::Bool), ctx)?;
-            let s2 = check(annotation, *consequent, expected, ctx)?;
+            let s1 = check(*predicate, Type::Constant(BaseType::Bool), ctx)?;
+            let s2 = check(*consequent, expected.clone(), ctx)?;
             // Should I apply substitutions?
-            let s3 = check(annotation, *alternate, expected, ctx)?;
+            let s3 = check(*alternate, expected, ctx)?;
             Ok(s1.compose(s2.compose(s3)))
         }
     }

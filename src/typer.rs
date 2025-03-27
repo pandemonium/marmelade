@@ -6,7 +6,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    ast::{self, Pattern, TypeName},
+    ast::{self, Expression, Identifier, Pattern, TypeName},
     lexer::SourceLocation,
     parser::ParsingInfo,
 };
@@ -532,6 +532,18 @@ pub enum TypeError {
     PatternMatchImpossible {
         pattern: Pattern<ParsingInfo>,
         scrutinee: Type,
+    },
+
+    #[error("Undefined struct label {label} at {position}")]
+    UndefinedField {
+        position: SourceLocation,
+        label: Identifier,
+    },
+
+    #[error("Expected {expected_type}, received: {literal}")]
+    ExpectedType {
+        expected_type: Type,
+        literal: Expression<ParsingInfo>,
     },
 }
 
