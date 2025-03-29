@@ -6,7 +6,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    ast::{self, Expression, Identifier, Pattern, TypeName},
+    ast::{self, Expression, Identifier, Pattern, TypeExpression, TypeName, ValueDeclaration},
     lexer::SourceLocation,
     parser::ParsingInfo,
 };
@@ -25,6 +25,48 @@ mod unification;
 */
 pub trait Parsed {
     fn info(&self) -> &ParsingInfo;
+}
+
+type UntypedExpression = Expression<ParsingInfo>;
+type UntypedValueDeclaration = ValueDeclaration<ParsingInfo>;
+
+#[derive(Debug, Default)]
+pub struct TypeChecker(TypingContext);
+
+impl TypeChecker {
+    pub fn check_declaration(&mut self, declaration: &UntypedValueDeclaration) -> Typing<()> {
+        if let Some(signature) = &declaration.type_signature {
+            let type_scheme = signature.synthesize_type()?;
+            let expected_type = type_scheme.clone().instantiate(self.typing_context())?;
+            self.check(expected_type, &declaration.declarator.expression)?;
+            self.bind_type(declaration.clone().binder, type_scheme);
+        } else {
+            let inference = self
+                .typing_context()
+                .infer_type(&declaration.declarator.expression)?;
+            let type_scheme = inference
+                .inferred_type
+                .apply(&inference.substitutions)
+                .generalize(self.typing_context());
+            self.bind_type(declaration.clone().binder, type_scheme);
+        }
+
+        Ok(())
+    }
+
+    fn bind_type(&mut self, id: Identifier, type_scheme: TypeScheme) {
+        let Self(typing_context) = self;
+        typing_context.bind(id.into(), type_scheme);
+    }
+
+    fn check(&self, expected_type: Type, expression: &UntypedExpression) -> Typing<()> {
+        checking::check(expression, expected_type, self.typing_context()).map(|_| ())
+    }
+
+    fn typing_context(&self) -> &TypingContext {
+        let Self(ctx) = self;
+        ctx
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -400,34 +442,6 @@ impl CoproductType {
     }
 }
 
-pub fn infer_declaration_type<A>(
-    declaration: &ast::Declaration<A>,
-    typing_context: &TypingContext,
-) -> Typing
-where
-    A: fmt::Debug + fmt::Display + Parsed + Clone,
-{
-    match declaration {
-        ast::Declaration::Value(_, declaration) => Ok(infer_declarator_type(
-            &declaration.declarator,
-            typing_context,
-        )?),
-        _otherwise => todo!(),
-    }
-}
-
-// Change into ParsingInfo
-// A TypeInference contains substitutions. Can I use these?
-pub fn infer_declarator_type<A>(
-    declarator: &ast::ValueDeclarator<A>,
-    typing_context: &TypingContext,
-) -> Typing
-where
-    A: fmt::Debug + fmt::Display + Parsed + Clone,
-{
-    typing_context.infer_type(&declarator.expression)
-}
-
 impl fmt::Display for CoproductType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self(constructors) = self;
@@ -524,6 +538,12 @@ pub enum TypeError {
 
     #[error("Undefined quantifier {quantifier} in {in_type}")]
     UndefinedQuantifier { quantifier: TypeName, in_type: Type },
+
+    #[error("Undefined quantifier {quantifier} in {in_expression}")]
+    UndefinedQuantifierInTypeExpression {
+        quantifier: TypeName,
+        in_expression: TypeExpression<ParsingInfo>,
+    },
 
     #[error("Superfluous quantifier {quantifier} in {in_type}")]
     SuperfluousQuantification { quantifier: TypeName, in_type: Type },
@@ -687,13 +707,29 @@ pub mod internal {
     }
 }
 
+pub fn infer_declaration_type<A>(
+    declaration: &ast::Declaration<A>,
+    typing_context: &TypingContext,
+) -> Typing
+where
+    A: fmt::Debug + fmt::Display + Parsed + Clone,
+{
+    match declaration {
+        ast::Declaration::Value(_, declaration) => Ok(inferencing::infer_declarator_type(
+            &declaration.declarator,
+            typing_context,
+        )?),
+        _otherwise => todo!(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fmt;
 
     use super::{Binding, CoproductType, TypingContext};
     use crate::{
-        ast::{self, Apply, Inject, Lambda, Project, TypeExpression, TypeName},
+        ast::{self, Apply, Inject, Lambda, Project},
         parser::ParsingInfo,
         typer::{BaseType, ProductType, Type, TypeParameter, TypeScheme},
     };

@@ -2,7 +2,7 @@ use marmelade::{
     ast::{
         Arrow, Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Identifier,
         MatchClause, Pattern, Product, TuplePattern, TypeApply, TypeDeclaration, TypeExpression,
-        TypeName, TypeSignature, UniversalQuantifier, ValueDeclaration, ValueDeclarator,
+        TypeName, TypeSignature, UniversalQuantification, ValueDeclaration, ValueDeclarator,
     },
     interpreter::{Base, Value},
     parser::ParsingInfo,
@@ -173,7 +173,7 @@ fn coproduct_perhaps() {
             TypeDeclaration {
                 binding: ident("Perhaps"),
                 declarator: coproduct(
-                    UniversalQuantifier::default().add(TypeName::new("a")),
+                    UniversalQuantification::default().add(TypeName::new("a")),
                     vec![
                         constructor("This", vec![typar("a")]),
                         constructor("Nope", vec![]),
@@ -194,7 +194,7 @@ fn coproduct_list() {
             TypeDeclaration {
                 binding: ident("List"),
                 declarator: coproduct(
-                    UniversalQuantifier::default().add(TypeName::new("a")),
+                    UniversalQuantification::default().add(TypeName::new("a")),
                     vec![
                         constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
                         constructor("Nil", vec![]),
@@ -252,7 +252,7 @@ fn coproduct_binary_tree() {
             TypeDeclaration {
                 binding: ident("BinaryTree"),
                 declarator: coproduct(
-                    UniversalQuantifier::default().add(TypeName::new("a")),
+                    UniversalQuantification::default().add(TypeName::new("a")),
                     vec![
                         constructor(
                             "Branch",
@@ -391,7 +391,7 @@ fn coproduct_eval() {
         TypeDeclaration {
             binding: ident("Eval"),
             declarator: coproduct(
-                UniversalQuantifier::default()
+                UniversalQuantification::default()
                     .add(TypeName::new("a"))
                     .add(TypeName::new("e")),
                 vec![

@@ -5,12 +5,12 @@ use crate::{
 
 mod operators;
 
-pub fn import(context: &mut Linkage) -> Interpretation<()> {
+pub fn import(linkage: &mut Linkage) -> Interpretation<()> {
     //    import_std_file(env)?;
-    types::import(context)?;
-    operators::import(context)?;
-    stdio::import(context)?;
-    conversions::import(context)?;
+    types::import(linkage)?;
+    operators::import(linkage)?;
+    stdio::import(linkage)?;
+    conversions::import(linkage)?;
 
     Ok(())
 }
@@ -22,13 +22,13 @@ mod types {
         typer::{self, Type, BASE_TYPES},
     };
 
-    pub fn import(context: &mut Linkage) -> Interpretation<()> {
-        for ty in BASE_TYPES {
-            context.typing_context.bind(
-                typer::Binding::TypeTerm(ty.type_name().as_str().to_owned()),
+    pub fn import(linkage: &mut Linkage) -> Interpretation<()> {
+        for base_type in BASE_TYPES {
+            linkage.bind_type(
+                base_type.type_name().into(),
                 typer::TypeScheme {
                     quantifiers: vec![],
-                    body: Type::Constant(ty.clone()),
+                    body: Type::Constant(base_type.clone()),
                 },
             );
         }

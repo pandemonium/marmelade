@@ -226,25 +226,21 @@ where
 pub fn define<B>(
     syntactical_name: Identifier,
     bridge: B,
-    Linkage {
-        typing_context,
-        interpreter_environment,
-        ..
-    }: &mut Linkage,
+    linkage: &mut Linkage,
 ) -> Interpretation<()>
 where
     B: Bridge + 'static,
 {
     let bridge_name = syntactical_name.scoped_with("bridge");
 
-    typing_context.bind(bridge_name.clone().into(), bridge.synthesize_type());
-    typing_context.bind(syntactical_name.clone().into(), bridge.synthesize_type());
+    linkage.bind_type(bridge_name.clone().into(), bridge.synthesize_type());
+    linkage.bind_type(syntactical_name.clone().into(), bridge.synthesize_type());
 
-    let tree = bridge.generate_lambda_tree(bridge_name.clone());
-    interpreter_environment.insert_binding(bridge_name, Value::bridge(bridge));
+    let lambda_expression = bridge.generate_lambda_tree(bridge_name.clone());
+    linkage.bind_value(bridge_name, Value::bridge(bridge));
 
-    let tree = tree.reduce(interpreter_environment)?;
-    interpreter_environment.insert_binding(syntactical_name, tree);
+    let tree = lambda_expression.reduce(&mut linkage.interpreter_environment)?;
+    linkage.bind_value(syntactical_name, tree);
 
     Ok(())
 }

@@ -9,7 +9,7 @@ use crate::{
     lexer::{self, SourceLocation},
     parser::ParsingInfo,
     typer::{
-        CoproductType, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing,
+        CoproductType, Parsed, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing,
         TypingContext,
     },
 };
@@ -27,7 +27,7 @@ pub enum CompilationUnit<A> {
 }
 impl<A> CompilationUnit<A>
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Debug + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> CompilationUnit<B> {
         match self {
@@ -70,7 +70,7 @@ pub struct ModuleDeclarator<A> {
 
 impl<A> ModuleDeclarator<A>
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Debug + Clone + Parsed,
 {
     pub fn find_value_declaration<'a>(&'a self, id: &'a Identifier) -> Option<&'a Declaration<A>> {
         self.declarations
@@ -167,16 +167,32 @@ pub struct ValueDeclaration<A> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypeSignature<A> {
-    pub quantifier: Option<UniversalQuantifier>,
+    pub quantifier: Option<UniversalQuantification>,
     pub body: TypeExpression<A>,
 }
 
-impl<A> TypeSignature<A> {
+impl<A> TypeSignature<A>
+where
+    A: Clone + Parsed,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> TypeSignature<B> {
         TypeSignature {
             quantifier: self.quantifier,
             body: self.body.map(f),
         }
+    }
+
+    pub fn synthesize_type(&self) -> Typing<TypeScheme> {
+        let type_parameters = self
+            .quantifier
+            .as_ref()
+            .map(|forall| forall.fresh_type_parameters())
+            .unwrap_or_else(|| HashMap::default());
+
+        Ok(TypeScheme {
+            quantifiers: type_parameters.values().cloned().collect(),
+            body: self.body.synthesize_type(&type_parameters)?,
+        })
     }
 }
 
@@ -217,7 +233,7 @@ impl Declaration<ParsingInfo> {
 
 impl<A> Declaration<A>
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Debug + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Declaration<B> {
         match self {
@@ -296,38 +312,45 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
-pub struct UniversalQuantifier(pub Vec<TypeName>);
+pub struct UniversalQuantification(pub Vec<TypeName>);
 
-impl UniversalQuantifier {
+impl UniversalQuantification {
     pub fn add(self, quantifier: TypeName) -> Self {
         let Self(mut quantifiers) = self;
         quantifiers.push(quantifier);
         Self(quantifiers)
     }
 
-    pub fn type_variables(&self) -> &[TypeName] {
+    pub fn parameters(&self) -> &[TypeName] {
         &self.0
+    }
+
+    pub fn fresh_type_parameters(&self) -> HashMap<TypeName, TypeParameter> {
+        self.parameters()
+            .iter()
+            .map(|ty_var| (ty_var.clone(), TypeParameter::fresh()))
+            .collect::<HashMap<TypeName, TypeParameter>>()
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Coproduct<A> {
-    pub forall: UniversalQuantifier,
+    pub forall: UniversalQuantification,
     pub constructors: Vec<Constructor<A>>,
 }
 
 impl<A> Coproduct<A>
 where
-    A: Clone,
+    A: Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Coproduct<B> {
         let Self {
             forall,
-            mut constructors,
+            constructors,
         } = self;
         Coproduct {
             forall,
-            constructors: constructors.drain(..).map(|c| c.map(f)).collect(),
+            constructors: constructors.into_iter().map(|c| c.map(f)).collect(),
         }
     }
 
@@ -346,19 +369,19 @@ where
                 .constructors
                 .iter()
                 .map(|constructor| constructor.make_function(annotation.clone(), self_name.clone()))
-                .collect(),
+                .collect::<Typing<_>>()?,
         })
     }
 
     fn synthesize_type(&self) -> Typing<TypeScheme> {
         // This maps names to type parameters
         let mut universals = HashMap::default();
-        let coproduct_type = self.synthesize_coproduct_type(&mut universals);
+        let coproduct_type = self.synthesize_coproduct_type(&mut universals)?;
         let superfluous = self
             .forall
-            .type_variables()
+            .parameters()
             .iter()
-            .filter(|&var| !universals.contains_key(var.as_str()))
+            .filter(|&var| !universals.contains_key(var))
             .cloned()
             .collect::<Vec<_>>();
 
@@ -375,18 +398,17 @@ where
 
     fn make_type_scheme(
         &self,
-        universals: HashMap<String, TypeParameter>,
+        universals: HashMap<TypeName, TypeParameter>,
         body: Type,
     ) -> Typing<TypeScheme> {
         let mut boofer = vec![];
-        for var in self.forall.type_variables() {
-            let param =
-                universals
-                    .get(var.as_str())
-                    .ok_or_else(|| TypeError::UndefinedQuantifier {
-                        quantifier: var.clone(),
-                        in_type: body.clone(),
-                    })?;
+        for var in self.forall.parameters() {
+            let param = universals
+                .get(var)
+                .ok_or_else(|| TypeError::UndefinedQuantifier {
+                    quantifier: var.clone(),
+                    in_type: body.clone(),
+                })?;
 
             boofer.push(param.clone());
         }
@@ -394,22 +416,27 @@ where
         Ok(TypeScheme::new(boofer.as_slice(), body))
     }
 
-    fn synthesize_coproduct_type(&self, universals: &mut HashMap<String, TypeParameter>) -> Type {
-        Type::Coproduct(CoproductType::new(
+    fn synthesize_coproduct_type(
+        &self,
+        universals: &mut HashMap<TypeName, TypeParameter>,
+    ) -> Typing<Type> {
+        Ok(Type::Coproduct(CoproductType::new(
             self.constructors
                 .iter()
                 .map(|Constructor { name, signature }| {
                     let tuple_signature = signature
                         .iter()
                         .map(|expr| expr.synthesize_type(universals))
-                        .collect();
-                    (
-                        name.as_str().to_owned(),
-                        Type::Product(ProductType::Tuple(tuple_signature)),
-                    )
+                        .collect::<Typing<_>>();
+                    tuple_signature.map(|signature| {
+                        (
+                            name.as_str().to_owned(),
+                            Type::Product(ProductType::Tuple(signature)),
+                        )
+                    })
                 })
-                .collect(),
-        ))
+                .collect::<Typing<_>>()?,
+        )))
     }
 }
 
@@ -422,10 +449,13 @@ pub struct CoproductModule<A> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Struct<A>(pub Vec<StructField<A>>);
 
-impl<A> Struct<A> {
+impl<A> Struct<A>
+where
+    A: Clone + Parsed,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> Struct<B> {
-        let Self(mut xs) = self;
-        Struct(xs.drain(..).map(|x| x.map(f)).collect())
+        let Self(xs) = self;
+        Struct(xs.into_iter().map(|x| x.map(f)).collect())
     }
 }
 
@@ -439,7 +469,7 @@ pub enum TypeDeclarator<A> {
 
 impl<A> TypeDeclarator<A>
 where
-    A: Clone,
+    A: Clone + Parsed,
 {
     fn map<B>(self, f: fn(A) -> B) -> TypeDeclarator<B> {
         match self {
@@ -494,7 +524,10 @@ pub struct StructField<A> {
     pub type_annotation: TypeExpression<A>,
 }
 
-impl<A> StructField<A> {
+impl<A> StructField<A>
+where
+    A: Clone + Parsed,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> StructField<B> {
         StructField {
             name: self.name,
@@ -511,10 +544,10 @@ pub struct Constructor<A> {
 
 impl<A> Constructor<A>
 where
-    A: Clone,
+    A: Clone + Parsed,
 {
-    fn make_function(&self, annotation: A, ty: TypeName) -> ValueDeclaration<A> {
-        let mut type_param_map = HashMap::default();
+    fn make_function(&self, annotation: A, ty: TypeName) -> Typing<ValueDeclaration<A>> {
+        let type_param_map = HashMap::default();
         let parameters = self
             .signature
             .iter()
@@ -523,24 +556,23 @@ where
                 // I could give this one the real TypeParameter via
                 // type_parameters. Then Parameter would hold Type
                 // instead of TypeExpression
-                Parameter::new_with_type_annotation(
-                    Identifier::new(&format!("p{index}")),
-                    expr.synthesize_type(&mut type_param_map),
-                )
+                expr.synthesize_type(&type_param_map).map(|ty| {
+                    Parameter::new_with_type_annotation(Identifier::new(&format!("p{index}")), ty)
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Typing<Vec<_>>>()?;
 
         // It should really annotate it with types to make sure the
         // typer gets it right. But that should not be necessary yet.
         let expression = self.make_injection_lambda_tree(&annotation, ty, parameters.clone());
 
-        ValueDeclaration {
+        Ok(ValueDeclaration {
             binder: self.name.clone(),
             // Compute a type signature type expression!
             // I have self.signature which can be joined with -> to make the function, I guess?
             type_signature: None,
             declarator: ValueDeclarator { expression },
-        }
+        })
     }
 
     fn make_injection_lambda_tree(
@@ -550,7 +582,7 @@ where
         parameters: Vec<Parameter>,
     ) -> Expression<A>
     where
-        A: Clone,
+        A: Clone + Parsed,
     {
         let tuple = Product::Tuple(
             parameters
@@ -631,7 +663,10 @@ pub enum TypeExpression<A> {
     Arrow(A, Arrow<A>),
 }
 
-impl<A> TypeExpression<A> {
+impl<A> TypeExpression<A>
+where
+    A: Clone + Parsed,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> TypeExpression<B> {
         match self {
             Self::Constant(a, id) => TypeExpression::Constant(f(a), id),
@@ -642,26 +677,36 @@ impl<A> TypeExpression<A> {
     }
 
     // Make a thing to capture this type_param_map later.
-    pub fn synthesize_type(&self, type_param_map: &mut HashMap<String, TypeParameter>) -> Type {
+    // Why isn't this a TypeScheme?
+    pub fn synthesize_type(
+        &self,
+        type_param_map: &HashMap<TypeName, TypeParameter>,
+    ) -> Typing<Type> {
         fn map_expression<A>(
             expr: &TypeExpression<A>,
-            type_params: &mut HashMap<String, TypeParameter>,
-        ) -> Type {
+            type_params: &HashMap<TypeName, TypeParameter>,
+        ) -> Typing<Type>
+        where
+            A: Clone + Parsed,
+        {
             match expr {
-                TypeExpression::Constant(_, name) => Type::Named(name.to_owned()),
-                TypeExpression::Parameter(_, TypeName(param)) => Type::Parameter(
-                    *type_params
-                        .entry(param.to_owned())
-                        .or_insert_with(TypeParameter::fresh),
-                ),
-                TypeExpression::Apply(_, node) => Type::Apply(
-                    map_expression(&node.constructor, type_params).into(),
-                    map_expression(&node.argument, type_params).into(),
-                ),
-                TypeExpression::Arrow(_, arrow) => Type::Arrow(
-                    map_expression(&arrow.domain, type_params).into(),
-                    map_expression(&arrow.codomain, type_params).into(),
-                ),
+                TypeExpression::Constant(_, name) => Ok(Type::Named(name.to_owned())),
+                TypeExpression::Parameter(_, param) => type_params
+                    .get(param)
+                    .cloned()
+                    .map(Type::Parameter)
+                    .ok_or_else(|| TypeError::UndefinedQuantifierInTypeExpression {
+                        quantifier: param.clone(),
+                        in_expression: expr.clone().map(|a| a.info().clone()),
+                    }),
+                TypeExpression::Apply(_, node) => Ok(Type::Apply(
+                    map_expression(&node.constructor, type_params)?.into(),
+                    map_expression(&node.argument, type_params)?.into(),
+                )),
+                TypeExpression::Arrow(_, arrow) => Ok(Type::Arrow(
+                    map_expression(&arrow.domain, type_params)?.into(),
+                    map_expression(&arrow.codomain, type_params)?.into(),
+                )),
             }
         }
 
@@ -689,7 +734,10 @@ pub struct TypeApply<A> {
     pub argument: Box<TypeExpression<A>>,
 }
 
-impl<A> TypeApply<A> {
+impl<A> TypeApply<A>
+where
+    A: Clone + Parsed,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> TypeApply<B> {
         TypeApply {
             constructor: self.constructor.map(f).into(),
@@ -717,7 +765,10 @@ pub struct Arrow<A> {
     pub codomain: Box<TypeExpression<A>>,
 }
 
-impl<A> Arrow<A> {
+impl<A> Arrow<A>
+where
+    A: Clone + Parsed,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> Arrow<B> {
         Arrow {
             domain: self.domain.map(f).into(),
@@ -1524,7 +1575,7 @@ mod tests {
 
         let dep_mat = m.dependency_graph();
         assert!(dep_mat.is_acyclic());
-        assert!(dep_mat.is_satisfiable(|_| false));
+        assert!(dep_mat.is_satisfiable());
     }
 
     #[test]
@@ -1567,7 +1618,7 @@ mod tests {
 
         let dep_mat = m.dependency_graph();
         assert!(dep_mat.is_acyclic());
-        assert!(!dep_mat.is_satisfiable(|_| false));
+        assert!(!dep_mat.is_satisfiable());
     }
 
     //    #[test]

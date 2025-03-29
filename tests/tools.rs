@@ -4,7 +4,7 @@ use marmelade::{
     ast::{
         Apply, Binding, Constant, Constructor, ControlFlow, Coproduct, Declaration, Expression,
         Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
-        UniversalQuantifier,
+        UniversalQuantification,
     },
     context::Linkage,
     interpreter::Value,
@@ -149,7 +149,7 @@ pub fn tyapp(
 }
 
 pub fn coproduct(
-    forall: UniversalQuantifier,
+    forall: UniversalQuantification,
     constructors: Vec<Constructor<ParsingInfo>>,
 ) -> TypeDeclarator<ParsingInfo> {
     TypeDeclarator::Coproduct(

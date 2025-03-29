@@ -7,7 +7,7 @@ use crate::{
 };
 
 // Think about the return type of this
-pub fn import(env: &mut Linkage) -> Interpretation<()> {
+pub fn import(linkage: &mut Linkage) -> Interpretation<()> {
     use Operator::*;
 
     let raw_lambda2 = |apply, signature| PartialRawLambda2 { apply, signature };
@@ -21,25 +21,25 @@ pub fn import(env: &mut Linkage) -> Interpretation<()> {
         signature,
     };
 
-    define(Equals.id(), raw_lambda2(equals, binary_to_bool()), env)?;
-    define(Gte.id(), base_lambda2(gte, binary_to_bool()), env)?;
-    define(Lte.id(), base_lambda2(lte, binary_to_bool()), env)?;
-    define(Gt.id(), base_lambda2(gt, binary_to_bool()), env)?;
-    define(Lt.id(), base_lambda2(lt, binary_to_bool()), env)?;
+    define(Equals.id(), raw_lambda2(equals, binary_to_bool()), linkage)?;
+    define(Gte.id(), base_lambda2(gte, binary_to_bool()), linkage)?;
+    define(Lte.id(), base_lambda2(lte, binary_to_bool()), linkage)?;
+    define(Gt.id(), base_lambda2(gt, binary_to_bool()), linkage)?;
+    define(Lt.id(), base_lambda2(lt, binary_to_bool()), linkage)?;
 
     // These are bool -> bool -> bool
     // So they can be added like print_endline instead
-    define(And.id(), Lambda2(and), env)?;
-    define(Or.id(), Lambda2(or), env)?;
-    define(Xor.id(), Lambda2(xor), env)?;
+    define(And.id(), Lambda2(and), linkage)?;
+    define(Or.id(), Lambda2(or), linkage)?;
+    define(Xor.id(), Lambda2(xor), linkage)?;
 
-    define(TupleCons.id(), TupleConsSyntax, env)?;
+    define(TupleCons.id(), TupleConsSyntax, linkage)?;
 
-    define(Plus.id(), base_lambda2(plus, binary()), env)?;
-    define(Minus.id(), base_lambda2(minus, binary()), env)?;
-    define(Times.id(), base_lambda2(times, binary()), env)?;
-    define(Divides.id(), base_lambda2(divides, binary()), env)?;
-    define(Modulo.id(), base_lambda2(modulo, binary()), env)
+    define(Plus.id(), base_lambda2(plus, binary()), linkage)?;
+    define(Minus.id(), base_lambda2(minus, binary()), linkage)?;
+    define(Times.id(), base_lambda2(times, binary()), linkage)?;
+    define(Divides.id(), base_lambda2(divides, binary()), linkage)?;
+    define(Modulo.id(), base_lambda2(modulo, binary()), linkage)
 }
 
 fn binary_to_bool() -> TypeScheme {

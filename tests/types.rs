@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use marmelade::{
     ast::{
         self, Apply, Expression, Lambda, Parameter, Product, TypeApply, TypeDeclarator,
-        TypeExpression, TypeName, UniversalQuantifier,
+        TypeExpression, TypeName, UniversalQuantification,
     },
     context::Linkage,
     parser::ParsingInfo,
@@ -20,7 +20,7 @@ mod tools;
 #[test]
 fn list_type() {
     let rhs = coproduct(
-        UniversalQuantifier::default().add(TypeName::new("a")),
+        UniversalQuantification::default().add(TypeName::new("a")),
         vec![
             constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
             constructor("Nil", vec![]),
@@ -91,7 +91,7 @@ fn type_expansions() {
     let mut ctx = TypingContext::default();
 
     let list_declaration = coproduct(
-        UniversalQuantifier::default(),
+        UniversalQuantification::default(),
         vec![
             constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
             constructor("Nil", vec![]),
@@ -124,7 +124,8 @@ fn type_expansions() {
             argument: TypeExpression::Parameter(ParsingInfo::default(), TypeName::new("a")).into(),
         },
     )
-    .synthesize_type(&mut HashMap::default());
+    .synthesize_type(&mut HashMap::default())
+    .unwrap();
 
     //    println!(
     //        "-------> {:?}",

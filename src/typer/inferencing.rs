@@ -107,6 +107,18 @@ where
     }
 }
 
+// Change into ParsingInfo
+// A TypeInference contains substitutions. Can I use these?
+pub fn infer_declarator_type<A>(
+    declarator: &ast::ValueDeclarator<A>,
+    typing_context: &TypingContext,
+) -> Typing
+where
+    A: fmt::Debug + fmt::Display + Parsed + Clone,
+{
+    typing_context.infer_type(&declarator.expression)
+}
+
 fn infer_deconstruct_into<A>(
     annotation: &A,
     scrutinee: &Expression<A>,

@@ -11,25 +11,23 @@ use crate::{
     typer::{self, Parsed, TypingContext},
 };
 
-pub struct ModuleLoader<'a, A> {
+// Untyped instead.
+pub struct ModuleResolver<'a, A> {
     module: &'a ModuleDeclarator<A>,
     dependency_graph: DependencyGraph<'a>,
-    //    type_dependencies: DependencyGraph<'a>,
-    initialized: Environment,
+    resolved: Environment,
 }
 
-impl<'a, A> ModuleLoader<'a, A>
+impl<'a, A> ModuleResolver<'a, A>
 where
     A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
-    pub fn try_loading(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Loaded<Self> {
-        let resolver = |id: &Identifier| prelude.is_defined(id);
-
+    pub fn initialize(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Loaded<Self> {
         let dependency_graph = module.dependency_graph();
-        if !dependency_graph.is_wellformed(resolver) {
+        if !dependency_graph.is_wellformed() {
             if !dependency_graph.is_acyclic() {
                 Err(LoadError::DependencyCycle)
-            } else if !dependency_graph.is_satisfiable(resolver) {
+            } else if !dependency_graph.is_satisfiable() {
                 Err(LoadError::UnsatisfiedDependencies)
             } else {
                 unreachable!()
@@ -38,7 +36,7 @@ where
             Ok(Self {
                 module,
                 dependency_graph,
-                initialized: prelude,
+                resolved: prelude,
             })
         }
     }
@@ -64,34 +62,30 @@ where
         Ok(self)
     }
 
-    pub fn initialize(mut self) -> Loaded<Environment> {
+    pub fn resolve(mut self) -> Loaded<Environment> {
         for id in self.dependency_graph.compute_resolution_order() {
-            self.initialize_declaration(id)?
+            self.resolve_declaration(id)?
         }
 
-        Ok(self.initialized)
+        Ok(self.resolved)
     }
 
-    fn initialize_declaration(&mut self, id: &Identifier) -> Loaded<()> {
+    fn resolve_declaration(&mut self, id: &Identifier) -> Loaded<()> {
         if let Some(Declaration::Value(_, ValueDeclaration { declarator, .. })) =
             self.module.find_value_declaration(id)
         {
-            self.initialize_binding(id, declarator)
-        } else if self.initialized.is_defined(id) {
+            self.resolve_binding(id, declarator)
+        } else if self.resolved.is_defined(id) {
             Ok(())
         } else {
             panic!("Unable to resolve declaration: `{id}` - not implemented")
         }
     }
 
-    fn initialize_binding(
-        &mut self,
-        id: &Identifier,
-        declarator: &ValueDeclarator<A>,
-    ) -> Loaded<()> {
+    fn resolve_binding(&mut self, id: &Identifier, declarator: &ValueDeclarator<A>) -> Loaded<()> {
         // That this has to clone the Expressions is not ideal
 
-        let env = &mut self.initialized;
+        let env = &mut self.resolved;
         let value = declarator.expression.clone().reduce(env)?;
         env.insert_binding(id.clone(), value);
 
@@ -191,21 +185,14 @@ impl<'a> DependencyGraph<'a> {
         boofer
     }
 
-    pub fn is_wellformed<F>(&'a self, is_external: F) -> bool
-    where
-        F: FnMut(&Identifier) -> bool,
-    {
-        self.is_acyclic() && self.is_satisfiable(is_external)
+    pub fn is_wellformed(&'a self) -> bool {
+        self.is_acyclic() && self.is_satisfiable()
     }
 
-    pub fn is_satisfiable<F>(&'a self, mut is_external: F) -> bool
-    where
-        F: FnMut(&Identifier) -> bool,
-    {
+    pub fn is_satisfiable(&'a self) -> bool {
         self.dependencies.iter().all(|(_, deps)| {
             deps.iter().all(|&dep| {
-                let retval =
-                    self.dependencies.iter().any(|(key, _)| *key == dep) || is_external(dep);
+                let retval = self.dependencies.iter().any(|(key, _)| *key == dep);
 
                 if !retval {
                     println!("is_satisfiable: `{dep}` not found");

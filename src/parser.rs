@@ -7,7 +7,7 @@ use crate::{
         Coproduct, Declaration, DeconstructInto, Expression, Identifier, Lambda, MatchClause,
         ModuleDeclarator, Parameter, Pattern, SelfReferential, Sequence, TuplePattern, TypeApply,
         TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, TypeSignature,
-        UniversalQuantifier, ValueDeclaration, ValueDeclarator,
+        UniversalQuantification, ValueDeclaration, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourceLocation, Token, TokenType},
     typer,
@@ -219,7 +219,9 @@ fn parse_type_declarator<'a>(remains: &'a [Token]) -> ParseResult<'a, TypeDeclar
         .map_value(|coproduct| TypeDeclarator::Coproduct(ParsingInfo::new(*postition), coproduct))
 }
 
-fn parse_universal_quantifier<'a>(remains: &'a [Token]) -> ParseResult<'a, UniversalQuantifier> {
+fn parse_universal_quantifier<'a>(
+    remains: &'a [Token],
+) -> ParseResult<'a, UniversalQuantification> {
     let end = remains
         .iter()
         .position(|t| t.token_type() == &TT::Period)
@@ -236,7 +238,7 @@ fn parse_universal_quantifier<'a>(remains: &'a [Token]) -> ParseResult<'a, Unive
     };
 
     Ok((
-        UniversalQuantifier(
+        UniversalQuantification(
             params
                 .iter()
                 .map(parse_parameter)
@@ -250,7 +252,7 @@ fn parse_coproduct<'a>(remains: &'a [Token]) -> ParseResult<'a, Coproduct<Parsin
     let (forall, mut remains) = if starts_with(TT::Keyword(Keyword::Forall), remains) {
         parse_universal_quantifier(&remains[1..])?
     } else {
-        (UniversalQuantifier::default(), remains)
+        (UniversalQuantification::default(), remains)
     };
 
     // parse the first constructor to see:

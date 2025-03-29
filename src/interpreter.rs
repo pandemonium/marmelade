@@ -9,7 +9,7 @@ use crate::{
         TypeName,
     },
     bridge::Bridge,
-    interpreter::module::ModuleLoader,
+    interpreter::module::ModuleResolver,
     parser::ParseError,
     typer::{BaseType, Parsed, Type, TypeError, Typing, TypingContext},
 };
@@ -85,9 +85,9 @@ impl Interpreter {
         self.inject_prelude(annotation.clone(), &mut module);
         self.inject_types_and_synthetics(annotation.clone(), &mut module, &mut typing_context)?;
 
-        ModuleLoader::try_loading(&module, self.prelude)?
+        ModuleResolver::initialize(&module, self.prelude)?
             .type_check(typing_context)?
-            .initialize()
+            .resolve()
     }
 
     fn inject_prelude<A>(&self, annotation: A, module: &mut ModuleDeclarator<A>) {
@@ -413,6 +413,9 @@ impl<A> Expression<A>
 where
     A: fmt::Debug + Clone,
 {
+    // I would like to remove mut here. This means that reduce_binding has to stop
+    // in place-mutating this environment, to instead clone. But I want a smart clone
+    // here. Environment::with_binding(<<closure>>)?
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
             Self::Variable(_, id) => env.lookup(&id).cloned(),
@@ -650,6 +653,7 @@ fn reduce_binding<A>(
 where
     A: fmt::Debug + Clone,
 {
+    // This ought to clone it, though?
     let bound = bound.reduce(env)?;
     env.insert_binding(binder.clone(), bound);
     let retval = body.reduce(env);
