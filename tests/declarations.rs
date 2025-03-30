@@ -2,7 +2,7 @@ use marmelade::{
     ast::{
         Arrow, Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Identifier,
         MatchClause, Pattern, Product, TuplePattern, TypeApply, TypeDeclaration, TypeExpression,
-        TypeName, TypeSignature, UniversalQuantification, ValueDeclaration, ValueDeclarator,
+        TypeName, TypeSignature, UniversallyQuantified, ValueDeclaration, ValueDeclarator,
     },
     interpreter::{Base, Value},
     parser::ParsingInfo,
@@ -173,7 +173,7 @@ fn coproduct_perhaps() {
             TypeDeclaration {
                 binding: ident("Perhaps"),
                 declarator: coproduct(
-                    UniversalQuantification::default().add(TypeName::new("a")),
+                    UniversallyQuantified::default().add(TypeName::new("a")),
                     vec![
                         constructor("This", vec![typar("a")]),
                         constructor("Nope", vec![]),
@@ -194,7 +194,7 @@ fn coproduct_list() {
             TypeDeclaration {
                 binding: ident("List"),
                 declarator: coproduct(
-                    UniversalQuantification::default().add(TypeName::new("a")),
+                    UniversallyQuantified::default().add(TypeName::new("a")),
                     vec![
                         constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
                         constructor("Nil", vec![]),
@@ -252,7 +252,7 @@ fn coproduct_binary_tree() {
             TypeDeclaration {
                 binding: ident("BinaryTree"),
                 declarator: coproduct(
-                    UniversalQuantification::default().add(TypeName::new("a")),
+                    UniversallyQuantified::default().add(TypeName::new("a")),
                     vec![
                         constructor(
                             "Branch",
@@ -279,7 +279,7 @@ fn constant_type_expressions() {
             binder: ident("length"),
             type_signature: Some(TypeSignature {
                 quantifier: None,
-                body: TypeExpression::Constant(pi, TypeName::new("Int")),
+                body: TypeExpression::Constructor(pi, Identifier::new("Int")),
             }),
             declarator: ValueDeclarator {
                 expression: int(1).into(),
@@ -302,8 +302,9 @@ fn type_apply_type_expressions() {
                 body: TypeExpression::Apply(
                     pi,
                     TypeApply {
-                        constructor: TypeExpression::Constant(pi, TypeName::new("List")).into(),
-                        argument: TypeExpression::Constant(pi, TypeName::new("Int")).into(),
+                        constructor: TypeExpression::Constructor(pi, Identifier::new("List"))
+                            .into(),
+                        argument: TypeExpression::Constructor(pi, Identifier::new("Int")).into(),
                     },
                 ),
             }),
@@ -328,8 +329,8 @@ fn type_arrow_expressions() {
                 body: TypeExpression::Arrow(
                     pi,
                     Arrow {
-                        domain: TypeExpression::Constant(pi, TypeName::new("Int")).into(),
-                        codomain: TypeExpression::Constant(pi, TypeName::new("Text")).into(),
+                        domain: TypeExpression::Constructor(pi, Identifier::new("Int")).into(),
+                        codomain: TypeExpression::Constructor(pi, Identifier::new("Text")).into(),
                     },
                 ),
             }),
@@ -357,18 +358,26 @@ fn complex_type_arrow_expressions() {
                         domain: TypeExpression::Apply(
                             pi,
                             TypeApply {
-                                constructor: TypeExpression::Constant(pi, TypeName::new("List"))
+                                constructor: TypeExpression::Constructor(
+                                    pi,
+                                    Identifier::new("List"),
+                                )
+                                .into(),
+                                argument: TypeExpression::Constructor(pi, Identifier::new("Int"))
                                     .into(),
-                                argument: TypeExpression::Constant(pi, TypeName::new("Int")).into(),
                             },
                         )
                         .into(),
                         codomain: TypeExpression::Apply(
                             pi,
                             TypeApply {
-                                constructor: TypeExpression::Constant(pi, TypeName::new("Option"))
+                                constructor: TypeExpression::Constructor(
+                                    pi,
+                                    Identifier::new("Option"),
+                                )
+                                .into(),
+                                argument: TypeExpression::Parameter(pi, Identifier::new("a"))
                                     .into(),
-                                argument: TypeExpression::Parameter(pi, TypeName::new("a")).into(),
                             },
                         )
                         .into(),
@@ -391,7 +400,7 @@ fn coproduct_eval() {
         TypeDeclaration {
             binding: ident("Eval"),
             declarator: coproduct(
-                UniversalQuantification::default()
+                UniversallyQuantified::default()
                     .add(TypeName::new("a"))
                     .add(TypeName::new("e")),
                 vec![

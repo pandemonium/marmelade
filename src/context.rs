@@ -1,6 +1,6 @@
 use crate::{
     ast::Identifier,
-    interpreter::{Environment, Interpreter, Loaded, Value},
+    interpreter::{Environment, Interpreter, Resolved, Value},
     lexer::LexicalAnalyzer,
     parser,
     typer::{Binding, TypeScheme, TypingContext},
@@ -29,7 +29,7 @@ impl<'a> Linkage<'a> {
         self.typing_context.bind(binder, scheme);
     }
 
-    pub fn typecheck_and_interpret(self) -> Loaded<Value> {
+    pub fn typecheck_and_interpret(self) -> Resolved<Value> {
         let mut lexer = LexicalAnalyzer::default();
         let program = parser::parse_compilation_unit(lexer.tokenize(&self.main_source_text))?;
 

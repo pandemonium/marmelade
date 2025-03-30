@@ -34,12 +34,21 @@ type UntypedValueDeclaration = ValueDeclaration<ParsingInfo>;
 pub struct TypeChecker(TypingContext);
 
 impl TypeChecker {
+    pub fn new(ctx: TypingContext) -> Self {
+        Self(ctx)
+    }
+
+    // I would like to assign a type to every AST node
     pub fn check_declaration(&mut self, declaration: &UntypedValueDeclaration) -> Typing<()> {
+        let typing_context = self.typing_context();
         if let Some(signature) = &declaration.type_signature {
-            let type_scheme = signature.synthesize_type()?;
-            let expected_type = type_scheme.clone().instantiate(self.typing_context())?;
+            let type_scheme = signature.synthesize_type(typing_context)?;
+            let expected_type = type_scheme.clone().instantiate(typing_context)?;
+            println!("check_declaration: {expected_type:?}");
             self.check(expected_type, &declaration.declarator.expression)?;
-            self.bind_type(declaration.clone().binder, type_scheme);
+            let id = declaration.clone().binder;
+            println!("type_check: `{id}` is `{type_scheme}`");
+            self.bind_type(id, type_scheme);
         } else {
             let inference = self
                 .typing_context()
@@ -47,8 +56,10 @@ impl TypeChecker {
             let type_scheme = inference
                 .inferred_type
                 .apply(&inference.substitutions)
-                .generalize(self.typing_context());
-            self.bind_type(declaration.clone().binder, type_scheme);
+                .generalize(typing_context);
+            let id = declaration.clone().binder;
+            println!("type_check: `{id}` is `{type_scheme}`");
+            self.bind_type(id, type_scheme);
         }
 
         Ok(())
@@ -328,11 +339,11 @@ pub enum BaseType {
 impl BaseType {
     pub fn type_name(&self) -> ast::TypeName {
         ast::TypeName::new(match self {
-            Self::Unit => "builtin::Unit",
-            Self::Int => "builtin::Int",
-            Self::Bool => "builtin::Bool",
-            Self::Float => "builtin::Float",
-            Self::Text => "builtin::Text",
+            Self::Unit => "Unit",
+            Self::Int => "Int",
+            Self::Bool => "Bool",
+            Self::Float => "Float",
+            Self::Text => "Text",
         })
     }
 }

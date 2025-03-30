@@ -1,4 +1,4 @@
-use std::{any::Any, cell::RefCell, fmt, rc::Rc};
+use std::{any::Any, cell::RefCell, collections::HashMap, fmt, rc::Rc};
 use thiserror::Error;
 
 use crate::{
@@ -11,18 +11,18 @@ use crate::{
     bridge::Bridge,
     interpreter::module::ModuleResolver,
     parser::ParseError,
-    typer::{BaseType, Parsed, Type, TypeError, Typing, TypingContext},
+    typer::{BaseType, Parsed, Type, TypeChecker, TypeError, Typing, TypingContext},
 };
 
 mod module;
 
 pub use module::DependencyGraph;
 
-pub type Loaded<A> = Result<A, LoadError>;
+pub type Resolved<A> = Result<A, ResolutionError>;
 
 // Todo: which ones are involved in the cycle or are unresolved?
 #[derive(Debug, Error)]
-pub enum LoadError {
+pub enum ResolutionError {
     #[error("Cyclic dependencies")]
     DependencyCycle,
 
@@ -55,13 +55,13 @@ impl Interpreter {
         self,
         typing_context: TypingContext,
         program: CompilationUnit<A>,
-    ) -> Loaded<Value>
+    ) -> Resolved<Value>
     where
         A: Clone + Parsed + fmt::Debug + fmt::Display,
     {
         match program {
             CompilationUnit::Implicit(annotation, module) => {
-                let env = self.load_module(annotation, typing_context, module)?;
+                let env = self.load_module(&annotation, typing_context, module)?;
 
                 match env.lookup(&Identifier::new("main"))? {
                     Value::Closure { .. } => todo!(),
@@ -75,24 +75,30 @@ impl Interpreter {
 
     fn load_module<A>(
         self,
-        annotation: A,
+        annotation: &A,
         mut typing_context: TypingContext,
         mut module: ModuleDeclarator<A>,
-    ) -> Loaded<Environment>
+    ) -> Resolved<Environment>
     where
         A: Clone + Parsed + fmt::Debug + fmt::Display,
     {
-        self.inject_prelude(annotation.clone(), &mut module);
-        self.inject_types_and_synthetics(annotation.clone(), &mut module, &mut typing_context)?;
+        self.inject_prelude(annotation, &mut module);
+        self.inject_types_and_synthetics(annotation, &mut module, &mut typing_context)?;
+
+        let type_checker = TypeChecker::new(typing_context);
 
         ModuleResolver::initialize(&module, self.prelude)?
-            .type_check(typing_context)?
+            .type_check(type_checker)?
             .resolve()
     }
 
-    fn inject_prelude<A>(&self, annotation: A, module: &mut ModuleDeclarator<A>) {
+    fn inject_prelude<A>(&self, annotation: &A, module: &mut ModuleDeclarator<A>)
+    where
+        A: Clone,
+    {
+        println!("Loading prelude...");
         module.declarations.push(Declaration::ImportModule(
-            annotation,
+            annotation.clone(),
             ImportModule {
                 exported_symbols: self
                     .prelude
@@ -106,13 +112,15 @@ impl Interpreter {
 
     fn inject_types_and_synthetics<A>(
         &self,
-        annotation: A,
+        annotation: &A,
         module: &mut ModuleDeclarator<A>,
         typing_context: &mut TypingContext,
     ) -> Typing<()>
     where
-        A: fmt::Display + Clone + Parsed,
+        A: fmt::Display + fmt::Debug + Clone + Parsed,
     {
+        println!("Loading types and synthesizing constructors ...");
+
         let type_bindings = module
             .declarations
             .iter()
@@ -133,8 +141,11 @@ impl Interpreter {
             .collect::<Vec<_>>();
 
         for (binding, coproduct) in type_bindings {
-            let coproduct = coproduct
-                .make_implementation_module(annotation.clone(), TypeName::new(&binding.as_str()))?;
+            let coproduct = coproduct.make_implementation_module(
+                &annotation,
+                TypeName::new(&binding.as_str()),
+                typing_context,
+            )?;
 
             typing_context.bind(coproduct.name.into(), coproduct.declaring_type);
 

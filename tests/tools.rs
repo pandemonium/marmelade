@@ -4,7 +4,7 @@ use marmelade::{
     ast::{
         Apply, Binding, Constant, Constructor, ControlFlow, Coproduct, Declaration, Expression,
         Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
-        UniversalQuantification,
+        UniversallyQuantified,
     },
     context::Linkage,
     interpreter::Value,
@@ -121,11 +121,11 @@ pub fn tyname(id: &str) -> TypeName {
 }
 
 pub fn typar(id: &str) -> TypeExpression<ParsingInfo> {
-    TypeExpression::Parameter(ParsingInfo::default(), tyname(id))
+    TypeExpression::Parameter(ParsingInfo::default(), ident(id))
 }
 
 pub fn tyref(id: &str) -> TypeExpression<ParsingInfo> {
-    TypeExpression::Constant(ParsingInfo::default(), tyname(id))
+    TypeExpression::Constructor(ParsingInfo::default(), ident(id))
 }
 
 pub fn constructor(id: &str, te: Vec<TypeExpression<ParsingInfo>>) -> Constructor<ParsingInfo> {
@@ -149,7 +149,7 @@ pub fn tyapp(
 }
 
 pub fn coproduct(
-    forall: UniversalQuantification,
+    forall: UniversallyQuantified,
     constructors: Vec<Constructor<ParsingInfo>>,
 ) -> TypeDeclarator<ParsingInfo> {
     TypeDeclarator::Coproduct(

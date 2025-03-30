@@ -72,10 +72,17 @@ impl<A> ModuleDeclarator<A>
 where
     A: fmt::Debug + Clone + Parsed,
 {
-    pub fn find_value_declaration<'a>(&'a self, id: &'a Identifier) -> Option<&'a Declaration<A>> {
-        self.declarations
-            .iter()
-            .find(|decl| matches!(decl, Declaration::Value(_, value) if &value.binder == id))
+    pub fn find_value_declaration<'a>(
+        &'a self,
+        id: &'a Identifier,
+    ) -> Option<&'a ValueDeclaration<A>> {
+        self.declarations.iter().find_map(|decl| {
+            if let Declaration::Value(_, value) = decl {
+                (&value.binder == id).then_some(value)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn dependency_graph(&self) -> DependencyGraph {
@@ -165,15 +172,37 @@ pub struct ValueDeclaration<A> {
     pub declarator: ValueDeclarator<A>,
 }
 
+impl<A> ValueDeclaration<A>
+where
+    A: Clone + Parsed + fmt::Debug,
+{
+    pub fn map<B>(self, f: fn(A) -> B) -> ValueDeclaration<B> {
+        ValueDeclaration {
+            binder: self.binder,
+            type_signature: self.type_signature.map(|signature| signature.map(f)),
+            declarator: self.declarator.map(f),
+        }
+    }
+
+    pub fn dependencies(&self) -> HashSet<&Identifier> {
+        let mut deps = HashSet::default();
+        if let Some(signature) = &self.type_signature {
+            deps.extend(signature.dependencies());
+        }
+        deps.extend(self.declarator.dependencies());
+        deps
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypeSignature<A> {
-    pub quantifier: Option<UniversalQuantification>,
+    pub quantifier: Option<UniversallyQuantified>,
     pub body: TypeExpression<A>,
 }
 
 impl<A> TypeSignature<A>
 where
-    A: Clone + Parsed,
+    A: Clone + Parsed + fmt::Debug,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeSignature<B> {
         TypeSignature {
@@ -182,7 +211,8 @@ where
         }
     }
 
-    pub fn synthesize_type(&self) -> Typing<TypeScheme> {
+    // Surely this resolves named types?
+    pub fn synthesize_type(&self, ctx: &TypingContext) -> Typing<TypeScheme> {
         let type_parameters = self
             .quantifier
             .as_ref()
@@ -191,8 +221,13 @@ where
 
         Ok(TypeScheme {
             quantifiers: type_parameters.values().cloned().collect(),
-            body: self.body.synthesize_type(&type_parameters)?,
+            body: self.body.synthesize_type(&type_parameters, ctx)?,
         })
+    }
+
+    fn dependencies(&self) -> HashSet<&Identifier> {
+        //        self.body.dependencies()
+        HashSet::default()
     }
 }
 
@@ -312,9 +347,9 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
-pub struct UniversalQuantification(pub Vec<TypeName>);
+pub struct UniversallyQuantified(pub Vec<TypeName>);
 
-impl UniversalQuantification {
+impl UniversallyQuantified {
     pub fn add(self, quantifier: TypeName) -> Self {
         let Self(mut quantifiers) = self;
         quantifiers.push(quantifier);
@@ -335,13 +370,13 @@ impl UniversalQuantification {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Coproduct<A> {
-    pub forall: UniversalQuantification,
+    pub forall: UniversallyQuantified,
     pub constructors: Vec<Constructor<A>>,
 }
 
 impl<A> Coproduct<A>
 where
-    A: Clone + Parsed,
+    A: Clone + Parsed + fmt::Debug,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Coproduct<B> {
         let Self {
@@ -356,11 +391,14 @@ where
 
     pub fn make_implementation_module(
         &self,
-        annotation: A,
+        annotation: &A,
         self_name: TypeName,
+        ctx: &TypingContext,
     ) -> Typing<CoproductModule<A>> {
-        let declaring_type = self.synthesize_type()?;
+        let declaring_type = self.synthesize_type(ctx)?;
         println!("make_implementation_module: {declaring_type}");
+
+        let forall = self.forall.fresh_type_parameters();
 
         Ok(CoproductModule {
             name: self_name.clone(),
@@ -368,32 +406,18 @@ where
             constructors: self
                 .constructors
                 .iter()
-                .map(|constructor| constructor.make_function(annotation.clone(), self_name.clone()))
+                .map(|constructor| {
+                    constructor.make_function(&annotation, self_name.clone(), &forall, ctx)
+                })
                 .collect::<Typing<_>>()?,
         })
     }
 
-    fn synthesize_type(&self) -> Typing<TypeScheme> {
+    fn synthesize_type(&self, ctx: &TypingContext) -> Typing<TypeScheme> {
         // This maps names to type parameters
-        let mut universals = HashMap::default();
-        let coproduct_type = self.synthesize_coproduct_type(&mut universals)?;
-        let superfluous = self
-            .forall
-            .parameters()
-            .iter()
-            .filter(|&var| !universals.contains_key(var))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        if superfluous.is_empty() {
-            self.make_type_scheme(universals, coproduct_type)
-        } else {
-            // Only reports the first
-            Err(TypeError::SuperfluousQuantification {
-                quantifier: superfluous.into_iter().next().expect("safe"),
-                in_type: coproduct_type.clone(),
-            })
-        }
+        let universals = self.forall.fresh_type_parameters();
+        let coproduct_type = self.synthesize_coproduct_type(&universals, ctx)?;
+        self.make_type_scheme(universals, coproduct_type)
     }
 
     fn make_type_scheme(
@@ -418,7 +442,8 @@ where
 
     fn synthesize_coproduct_type(
         &self,
-        universals: &mut HashMap<TypeName, TypeParameter>,
+        universals: &HashMap<TypeName, TypeParameter>,
+        ctx: &TypingContext,
     ) -> Typing<Type> {
         Ok(Type::Coproduct(CoproductType::new(
             self.constructors
@@ -426,8 +451,9 @@ where
                 .map(|Constructor { name, signature }| {
                     let tuple_signature = signature
                         .iter()
-                        .map(|expr| expr.synthesize_type(universals))
+                        .map(|expr| expr.synthesize_type(universals, ctx))
                         .collect::<Typing<_>>();
+
                     tuple_signature.map(|signature| {
                         (
                             name.as_str().to_owned(),
@@ -469,7 +495,7 @@ pub enum TypeDeclarator<A> {
 
 impl<A> TypeDeclarator<A>
 where
-    A: Clone + Parsed,
+    A: Clone + Parsed + fmt::Debug,
 {
     fn map<B>(self, f: fn(A) -> B) -> TypeDeclarator<B> {
         match self {
@@ -479,10 +505,10 @@ where
         }
     }
 
-    pub fn synthesize_type(&self) -> Typing<TypeScheme> {
+    pub fn synthesize_type(&self, ctx: &TypingContext) -> Typing<TypeScheme> {
         match self {
             Self::Alias(..) => todo!(),
-            Self::Coproduct(_, coproduct) => coproduct.synthesize_type(),
+            Self::Coproduct(_, coproduct) => coproduct.synthesize_type(ctx),
             Self::Struct(..) => todo!(),
         }
     }
@@ -546,8 +572,13 @@ impl<A> Constructor<A>
 where
     A: Clone + Parsed,
 {
-    fn make_function(&self, annotation: A, ty: TypeName) -> Typing<ValueDeclaration<A>> {
-        let type_param_map = HashMap::default();
+    fn make_function(
+        &self,
+        annotation: &A,
+        ty: TypeName,
+        type_param_map: &HashMap<TypeName, TypeParameter>,
+        ctx: &TypingContext,
+    ) -> Typing<ValueDeclaration<A>> {
         let parameters = self
             .signature
             .iter()
@@ -556,7 +587,7 @@ where
                 // I could give this one the real TypeParameter via
                 // type_parameters. Then Parameter would hold Type
                 // instead of TypeExpression
-                expr.synthesize_type(&type_param_map).map(|ty| {
+                expr.synthesize_type(&type_param_map, ctx).map(|ty| {
                     Parameter::new_with_type_annotation(Identifier::new(&format!("p{index}")), ty)
                 })
             })
@@ -657,8 +688,8 @@ where
 // Is this the thing that can be a function type too? Yes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeExpression<A> {
-    Constant(A, TypeName),
-    Parameter(A, TypeName),
+    Constructor(A, Identifier),
+    Parameter(A, Identifier),
     Apply(A, TypeApply<A>),
     Arrow(A, Arrow<A>),
 }
@@ -669,7 +700,7 @@ where
 {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeExpression<B> {
         match self {
-            Self::Constant(a, id) => TypeExpression::Constant(f(a), id),
+            Self::Constructor(a, id) => TypeExpression::Constructor(f(a), id),
             Self::Parameter(a, id) => TypeExpression::Parameter(f(a), id),
             Self::Apply(a, apply) => TypeExpression::Apply(f(a), apply.map(f)),
             Self::Arrow(a, arrow) => TypeExpression::Arrow(f(a), arrow.map(f)),
@@ -680,37 +711,58 @@ where
     // Why isn't this a TypeScheme?
     pub fn synthesize_type(
         &self,
-        type_param_map: &HashMap<TypeName, TypeParameter>,
+        type_params: &HashMap<TypeName, TypeParameter>,
+        ctx: &TypingContext,
     ) -> Typing<Type> {
-        fn map_expression<A>(
-            expr: &TypeExpression<A>,
-            type_params: &HashMap<TypeName, TypeParameter>,
-        ) -> Typing<Type>
-        where
-            A: Clone + Parsed,
-        {
-            match expr {
-                TypeExpression::Constant(_, name) => Ok(Type::Named(name.to_owned())),
-                TypeExpression::Parameter(_, param) => type_params
-                    .get(param)
+        match self {
+            // The name does not exist in Type Expression for the type
+            // that defines it.
+            Self::Constructor(_, name) => Ok(Type::Named(TypeName::new(&name.as_str()))),
+            Self::Parameter(_, param) => {
+                let type_name = TypeName::new(&param.as_str());
+
+                type_params
+                    .get(&type_name)
                     .cloned()
                     .map(Type::Parameter)
                     .ok_or_else(|| TypeError::UndefinedQuantifierInTypeExpression {
-                        quantifier: param.clone(),
-                        in_expression: expr.clone().map(|a| a.info().clone()),
-                    }),
-                TypeExpression::Apply(_, node) => Ok(Type::Apply(
-                    map_expression(&node.constructor, type_params)?.into(),
-                    map_expression(&node.argument, type_params)?.into(),
-                )),
-                TypeExpression::Arrow(_, arrow) => Ok(Type::Arrow(
-                    map_expression(&arrow.domain, type_params)?.into(),
-                    map_expression(&arrow.codomain, type_params)?.into(),
-                )),
+                        quantifier: type_name,
+                        in_expression: self.clone().map(|a| a.info().clone()),
+                    })
+            }
+            Self::Apply(_, node) => Ok(Type::Apply(
+                node.constructor.synthesize_type(type_params, ctx)?.into(),
+                node.argument.synthesize_type(type_params, ctx)?.into(),
+            )),
+            Self::Arrow(_, arrow) => Ok(Type::Arrow(
+                arrow.domain.synthesize_type(type_params, ctx)?.into(),
+                arrow.codomain.synthesize_type(type_params, ctx)?.into(),
+            )),
+        }
+    }
+
+    fn dependencies(&self) -> HashSet<&Identifier> {
+        fn collect<'a, A>(node: &'a TypeExpression<A>, deps: &mut HashSet<&'a Identifier>) {
+            match node {
+                TypeExpression::Constructor(_, name) => {
+                    let _ = deps.insert(name);
+                    ()
+                }
+                TypeExpression::Apply(_, apply) => {
+                    collect(&*apply.argument, deps);
+                    collect(&*&apply.constructor, deps);
+                }
+                TypeExpression::Arrow(_, arrow) => {
+                    collect(&*arrow.domain, deps);
+                    collect(&*&arrow.codomain, deps);
+                }
+                _otherwise => (),
             }
         }
 
-        map_expression(self, type_param_map)
+        let mut boofer = HashSet::default();
+        collect(self, &mut boofer);
+        boofer
     }
 }
 
@@ -720,7 +772,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Constant(_, id) => write!(f, "{id}"),
+            Self::Constructor(_, id) => write!(f, "{id}"),
             Self::Parameter(_, id) => write!(f, "{id}"),
             Self::Apply(_, apply) => write!(f, "{apply}"),
             Self::Arrow(_, arrow) => write!(f, "{arrow}"),
@@ -794,7 +846,7 @@ pub struct ValueDeclarator<A> {
 
 impl<A> ValueDeclarator<A>
 where
-    A: fmt::Debug + Clone,
+    A: Clone,
 {
     pub fn dependencies(&self) -> HashSet<&Identifier> {
         self.expression.free_identifiers()

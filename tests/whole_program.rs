@@ -156,8 +156,8 @@ fn fibonacci23() {
            |    if 1 = x
            |      then 1
            |      else fibonacci (x - 1) + fibonacci (x - 2)
-           |Perhaps ::= This a | Nope
-           |List ::= Cons a (List a) | Nil
+           |Perhaps ::= forall a. This a | Nope
+           |List ::= forall a. Cons a (List a) | Nil
            |main = fibonacci 18
            |"#,
     );

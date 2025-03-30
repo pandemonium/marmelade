@@ -3,7 +3,7 @@ List ::= ∀a. Cons a (List a) | Nil
 main =
     map id (Cons 1 Nil)
 
-id = λx. x
+id :: forall a. a -> a = λx. x
 (* hej *)
 
 map = λf xs.

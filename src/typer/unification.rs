@@ -40,6 +40,7 @@ where
         self.seen.insert(pair);
     }
 
+    // Merge these two functions.
     fn unify(&mut self, lhs: &Type, rhs: &Type) -> Typing<Substitutions> {
         match (lhs, rhs) {
             (Type::Constant(t), Type::Constant(u)) if t == u => Ok(Substitutions::default()),

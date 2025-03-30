@@ -341,9 +341,7 @@ fn infer_lambda<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    println!("infer_lambda: type annotation {:?}", type_annotation);
     let domain_type = if let Some(ty) = type_annotation {
-        println!("infer_lambda: domain {ty}");
         ty.clone()
     } else {
         Type::fresh()
@@ -354,7 +352,6 @@ where
     ctx.bind(name.clone().into(), domain.clone());
 
     let codomain = infer_type(body, &ctx)?;
-    println!("infer_lambda(1): {codomain}");
 
     let function_type = Type::Arrow(
         domain
@@ -364,8 +361,6 @@ where
         // whatever body is should have applied those substitutions
         codomain.inferred_type.apply(&codomain.substitutions).into(),
     );
-
-    println!("infer_lambda(2): {function_type}");
 
     Ok(TypeInference::new(codomain.substitutions, function_type))
 }
@@ -605,9 +600,6 @@ where
 {
     let function = infer_type(function, &ctx)?;
     let argument = infer_type(argument, &ctx.apply_substitutions(&function.substitutions))?;
-
-    println!("infer_application: function {}", function);
-    println!("infer_application: argument {}", argument);
 
     let return_type = Type::fresh();
     let unified_substitutions = function

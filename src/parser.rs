@@ -7,7 +7,7 @@ use crate::{
         Coproduct, Declaration, DeconstructInto, Expression, Identifier, Lambda, MatchClause,
         ModuleDeclarator, Parameter, Pattern, SelfReferential, Sequence, TuplePattern, TypeApply,
         TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, TypeSignature,
-        UniversalQuantification, ValueDeclaration, ValueDeclarator,
+        UniversallyQuantified, ValueDeclaration, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Operator, SourceLocation, Token, TokenType},
     typer,
@@ -219,9 +219,7 @@ fn parse_type_declarator<'a>(remains: &'a [Token]) -> ParseResult<'a, TypeDeclar
         .map_value(|coproduct| TypeDeclarator::Coproduct(ParsingInfo::new(*postition), coproduct))
 }
 
-fn parse_universal_quantifier<'a>(
-    remains: &'a [Token],
-) -> ParseResult<'a, UniversalQuantification> {
+fn parse_universal_quantifier<'a>(remains: &'a [Token]) -> ParseResult<'a, UniversallyQuantified> {
     let end = remains
         .iter()
         .position(|t| t.token_type() == &TT::Period)
@@ -238,7 +236,7 @@ fn parse_universal_quantifier<'a>(
     };
 
     Ok((
-        UniversalQuantification(
+        UniversallyQuantified(
             params
                 .iter()
                 .map(parse_parameter)
@@ -252,7 +250,7 @@ fn parse_coproduct<'a>(remains: &'a [Token]) -> ParseResult<'a, Coproduct<Parsin
     let (forall, mut remains) = if starts_with(TT::Keyword(Keyword::Forall), remains) {
         parse_universal_quantifier(&remains[1..])?
     } else {
-        (UniversalQuantification::default(), remains)
+        (UniversallyQuantified::default(), remains)
     };
 
     // parse the first constructor to see:
@@ -333,6 +331,7 @@ fn parse_type_expression_prefix<'a>(
         [T(TT::Identifier(id), pos), remains @ ..] => {
             Ok((simple_type_expr_term(ParsingInfo::new(*pos), id), remains))
         }
+
         [T(TT::LeftParen, ..), ..] => {
             let (term, remains) = parse_type_expression(&remains[1..])?;
             if starts_with(TT::RightParen, remains) {
@@ -341,6 +340,7 @@ fn parse_type_expression_prefix<'a>(
                 Err(ParseError::ExpectedTokenType(TT::RightParen))
             }
         }
+
         _otherwise => Err(ParseError::ExpectedTokenType(TT::Identifier(
             "<Constructor>".to_owned(),
         ))),
@@ -349,9 +349,9 @@ fn parse_type_expression_prefix<'a>(
 
 fn simple_type_expr_term(pi: ParsingInfo, id: &str) -> TypeExpression<ParsingInfo> {
     if is_lowercasse(id) {
-        TypeExpression::Parameter(pi, TypeName::new(id))
+        TypeExpression::Parameter(pi, Identifier::new(id))
     } else {
-        TypeExpression::Constant(pi, TypeName::new(id))
+        TypeExpression::Constructor(pi, Identifier::new(id))
     }
 }
 

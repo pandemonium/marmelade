@@ -3,12 +3,12 @@ use std::{
     fmt,
 };
 
-use super::{Environment, LoadError, Loaded};
+use super::{Environment, ResolutionError, Resolved};
 use crate::{
     ast::{
         Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration, ValueDeclarator,
     },
-    typer::{self, Parsed, TypingContext},
+    typer::{Parsed, TypeChecker},
 };
 
 // Untyped instead.
@@ -22,13 +22,13 @@ impl<'a, A> ModuleResolver<'a, A>
 where
     A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
-    pub fn initialize(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Loaded<Self> {
+    pub fn initialize(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Resolved<Self> {
         let dependency_graph = module.dependency_graph();
         if !dependency_graph.is_wellformed() {
             if !dependency_graph.is_acyclic() {
-                Err(LoadError::DependencyCycle)
+                Err(ResolutionError::DependencyCycle)
             } else if !dependency_graph.is_satisfiable() {
-                Err(LoadError::UnsatisfiedDependencies)
+                Err(ResolutionError::UnsatisfiedDependencies)
             } else {
                 unreachable!()
             }
@@ -41,39 +41,27 @@ where
         }
     }
 
-    pub fn type_check(self, mut typing_context: TypingContext) -> Loaded<Self> {
+    pub fn type_check(self, mut type_checker: TypeChecker) -> Resolved<Self> {
         for id in self.dependency_graph.compute_resolution_order() {
-            if let Some(declaration) = self.module.find_value_declaration(id) {
+            if let Some(declaration) = self.module.find_value_declaration(id).cloned() {
                 println!("type_check: `{id}` ...");
-
-                let declaration_type = typer::infer_declaration_type(declaration, &typing_context)?;
-
-                let scheme = declaration_type
-                    .inferred_type
-                    .apply(&declaration_type.substitutions)
-                    .generalize(&typing_context);
-
-                println!("type_check: `{id}` `{scheme}`");
-
-                typing_context.bind(id.clone().into(), scheme);
+                // Lose the map call here. The resolver must only work with ParsingInfo
+                // from the start.
+                type_checker.check_declaration(&declaration.map(|a| a.info().clone()))?;
             }
         }
-
         Ok(self)
     }
 
-    pub fn resolve(mut self) -> Loaded<Environment> {
+    pub fn resolve(mut self) -> Resolved<Environment> {
         for id in self.dependency_graph.compute_resolution_order() {
             self.resolve_declaration(id)?
         }
-
         Ok(self.resolved)
     }
 
-    fn resolve_declaration(&mut self, id: &Identifier) -> Loaded<()> {
-        if let Some(Declaration::Value(_, ValueDeclaration { declarator, .. })) =
-            self.module.find_value_declaration(id)
-        {
+    fn resolve_declaration(&mut self, id: &Identifier) -> Resolved<()> {
+        if let Some(ValueDeclaration { declarator, .. }) = self.module.find_value_declaration(id) {
             self.resolve_binding(id, declarator)
         } else if self.resolved.is_defined(id) {
             Ok(())
@@ -82,7 +70,11 @@ where
         }
     }
 
-    fn resolve_binding(&mut self, id: &Identifier, declarator: &ValueDeclarator<A>) -> Loaded<()> {
+    fn resolve_binding(
+        &mut self,
+        id: &Identifier,
+        declarator: &ValueDeclarator<A>,
+    ) -> Resolved<()> {
         // That this has to clone the Expressions is not ideal
 
         let env = &mut self.resolved;
@@ -95,24 +87,20 @@ where
 
 #[derive(Debug)]
 pub struct DependencyGraph<'a> {
-    //    dependencies: HashMap<&'a Identifier, Vec<&'a Identifier>>,
     dependencies: Vec<(&'a Identifier, Vec<&'a Identifier>)>,
 }
 
 impl<'a> DependencyGraph<'a> {
     pub fn from_declarations<A>(decls: &'a [Declaration<A>]) -> Self
     where
-        A: fmt::Debug + Clone,
+        A: fmt::Debug + Clone + Parsed,
     {
         let mut outbound = Vec::with_capacity(decls.len());
 
         for decl in decls {
             match decl {
                 Declaration::Value(_, value) => {
-                    outbound.push((
-                        &value.binder,
-                        value.declarator.dependencies().into_iter().collect(),
-                    ));
+                    outbound.push((&value.binder, value.dependencies().into_iter().collect()));
                 }
                 Declaration::ImportModule(
                     _,

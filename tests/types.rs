@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use marmelade::{
     ast::{
-        self, Apply, Expression, Lambda, Parameter, Product, TypeApply, TypeDeclarator,
-        TypeExpression, TypeName, UniversalQuantification,
+        self, Apply, Expression, Identifier, Lambda, Parameter, Product, TypeApply, TypeDeclarator,
+        TypeExpression, TypeName, UniversallyQuantified,
     },
     context::Linkage,
     parser::ParsingInfo,
@@ -20,7 +20,7 @@ mod tools;
 #[test]
 fn list_type() {
     let rhs = coproduct(
-        UniversalQuantification::default().add(TypeName::new("a")),
+        UniversallyQuantified::default().add(TypeName::new("a")),
         vec![
             constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
             constructor("Nil", vec![]),
@@ -45,7 +45,7 @@ fn list_type() {
         body: lhs,
     };
 
-    assert_eq!(lhs, rhs.synthesize_type().unwrap());
+    assert_eq!(lhs, rhs.synthesize_type(&TypingContext::default()).unwrap());
 }
 
 #[test]
@@ -91,19 +91,19 @@ fn type_expansions() {
     let mut ctx = TypingContext::default();
 
     let list_declaration = coproduct(
-        UniversalQuantification::default(),
+        UniversallyQuantified::default().add(TypeName::new("a")),
         vec![
             constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
             constructor("Nil", vec![]),
         ],
     );
 
-    let list_type = list_declaration.synthesize_type().unwrap();
+    let list_type = list_declaration.synthesize_type(&ctx).unwrap();
     ctx.bind(Binding::TypeTerm("List".to_owned()), list_type);
 
     if let TypeDeclarator::Coproduct(_, coproduct) = &list_declaration {
         for constructor in coproduct
-            .make_implementation_module(ParsingInfo::default(), TypeName::new("List"))
+            .make_implementation_module(&ParsingInfo::default(), TypeName::new("List"), &ctx)
             .unwrap()
             .constructors
         {
@@ -119,12 +119,19 @@ fn type_expansions() {
     let _abbreviation = TypeExpression::<ParsingInfo>::Apply(
         ParsingInfo::default(),
         TypeApply {
-            constructor: TypeExpression::Constant(ParsingInfo::default(), TypeName::new("List"))
+            constructor: TypeExpression::Constructor(
+                ParsingInfo::default(),
+                Identifier::new("List"),
+            )
+            .into(),
+            argument: TypeExpression::Parameter(ParsingInfo::default(), Identifier::new("a"))
                 .into(),
-            argument: TypeExpression::Parameter(ParsingInfo::default(), TypeName::new("a")).into(),
         },
     )
-    .synthesize_type(&mut HashMap::default())
+    .synthesize_type(
+        &mut HashMap::from([(TypeName::new("a"), TypeParameter::fresh())]),
+        &ctx,
+    )
     .unwrap();
 
     //    println!(
