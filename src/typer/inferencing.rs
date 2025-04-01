@@ -509,27 +509,22 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     let bound = infer_type(bound, ctx)?;
-    let bound_type = bound
-        .inferred_type
-        .apply(&bound.substitutions)
-        .generalize(ctx);
+    let bound_type = bound.inferred_type.apply(&bound.substitutions);
+    let bound_type = TypeScheme::from_constant(bound_type);
 
     let mut ctx = ctx.clone();
-    println!("infer_binding: binding {binding} to {bound_type}");
-    ctx.bind(binding.clone().into(), bound_type);
+    ctx.bind(binding.clone().into(), bound_type.clone());
 
     let TypeInference {
         substitutions,
         inferred_type,
     } = infer_type(body, &ctx)?;
 
-    // Think about a map_substitutions function
-    Ok(TypeInference::new(
-        bound.substitutions.compose(substitutions.clone()),
-        inferred_type
-            .clone()
-            .apply(&bound.substitutions.compose(substitutions)),
-    ))
+    println!("infer_binding: bound {binding} to {bound_type} and inferred {inferred_type}");
+
+    let substitutions = bound.substitutions.compose(substitutions);
+    let inferred_type = inferred_type.apply(&substitutions);
+    Ok(TypeInference::new(substitutions, inferred_type))
 }
 
 fn infer_if_expression<A>(

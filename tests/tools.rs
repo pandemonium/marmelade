@@ -3,7 +3,7 @@
 use marmelade::{
     ast::{
         Apply, Binding, Constant, Constructor, ControlFlow, Coproduct, Declaration, Expression,
-        Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
+        Identifier, Sequence, TypeApply, TypeDeclaration, TypeDeclarator, TypeExpression, TypeName,
         UniversallyQuantified,
     },
     context::Linkage,
@@ -18,6 +18,22 @@ use Expression as E;
 pub fn decl_fixture(source: &str, rhs: Declaration<ParsingInfo>) {
     let mut lexer = LexicalAnalyzer::default();
     let lhs = parser::parse_declaration_phrase(lexer.tokenize(&into_unicode_text(source))).unwrap();
+
+    //dbg!(&lhs);
+    //    if let Declaration::Type(
+    //        _,
+    //        TypeDeclaration {
+    //            declarator: TypeDeclarator::Coproduct(_, ctor),
+    //            ..
+    //        },
+    //    ) = &lhs
+    //    {
+    //        for ctor in &ctor.constructors {
+    //            for s in &ctor.signature {
+    //                println!("decl_fixture: {:?}", s.deconstruct_apply_tree());
+    //            }
+    //        }
+    //    }
 
     assert_eq!(lhs.map(|_| ParsingInfo::default()), rhs)
 }

@@ -245,7 +245,7 @@ fn eval_coproduct_eval() {
 #[test]
 fn coproduct_binary_tree() {
     decl_fixture(
-        r#"|BinaryTree ::= forall a. Branch (BinaryTree a) a (BinaryTree a) | Leaf a
+        r#"|BinaryTree ::= forall a. Branch (BinaryTree b) c (BinaryTree d) | Leaf e
            "#,
         Declaration::Type(
             ParsingInfo::default(),
@@ -257,12 +257,12 @@ fn coproduct_binary_tree() {
                         constructor(
                             "Branch",
                             vec![
-                                tyapp(tyref("BinaryTree"), typar("a")),
-                                typar("a"),
-                                tyapp(tyref("BinaryTree"), typar("a")),
+                                tyapp(tyref("BinaryTree"), typar("b")),
+                                typar("c"),
+                                tyapp(tyref("BinaryTree"), typar("d")),
                             ],
                         ),
-                        constructor("Leaf", vec![typar("a")]),
+                        constructor("Leaf", vec![typar("e")]),
                     ],
                 ),
             },
@@ -341,6 +341,41 @@ fn type_arrow_expressions() {
     );
 
     decl_fixture(r#"|length :: Int -> Text = 1"#, rhs);
+}
+
+#[test]
+fn type_higher_arrow_expressions() {
+    let pi = ParsingInfo::default();
+    let rhs = Declaration::Value(
+        pi,
+        ValueDeclaration {
+            binder: ident("length"),
+            type_signature: Some(TypeSignature {
+                quantifier: None,
+                body: TypeExpression::Arrow(
+                    pi,
+                    Arrow {
+                        domain: TypeExpression::Arrow(
+                            pi,
+                            Arrow {
+                                domain: TypeExpression::Constructor(pi, Identifier::new("Int"))
+                                    .into(),
+                                codomain: TypeExpression::Constructor(pi, Identifier::new("Text"))
+                                    .into(),
+                            },
+                        )
+                        .into(),
+                        codomain: TypeExpression::Constructor(pi, Identifier::new("Bool")).into(),
+                    },
+                ),
+            }),
+            declarator: ValueDeclarator {
+                expression: int(1).into(),
+            },
+        },
+    );
+
+    decl_fixture(r#"|length :: (Int -> Text) -> Bool = 1"#, rhs);
 }
 
 #[test]

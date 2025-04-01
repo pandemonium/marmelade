@@ -328,18 +328,12 @@ fn parse_type_expression_prefix<'a>(
     remains: &'a [Token],
 ) -> ParseResult<'a, TypeExpression<ParsingInfo>> {
     match remains {
-        [T(TT::Identifier(id), pos), remains @ ..] => {
-            Ok((simple_type_expr_term(ParsingInfo::new(*pos), id), remains))
-        }
+        [T(TT::Identifier(id), pos), remains @ ..] => Ok((
+            parse_simple_type_expression_term(ParsingInfo::new(*pos), id),
+            remains,
+        )),
 
-        [T(TT::LeftParen, ..), ..] => {
-            let (term, remains) = parse_type_expression(&remains[1..])?;
-            if starts_with(TT::RightParen, remains) {
-                Ok((term, remains))
-            } else {
-                Err(ParseError::ExpectedTokenType(TT::RightParen))
-            }
-        }
+        [T(TT::LeftParen, ..), ..] => parse_type_expression(&remains[1..]),
 
         _otherwise => Err(ParseError::ExpectedTokenType(TT::Identifier(
             "<Constructor>".to_owned(),
@@ -347,7 +341,7 @@ fn parse_type_expression_prefix<'a>(
     }
 }
 
-fn simple_type_expr_term(pi: ParsingInfo, id: &str) -> TypeExpression<ParsingInfo> {
+fn parse_simple_type_expression_term(pi: ParsingInfo, id: &str) -> TypeExpression<ParsingInfo> {
     if is_lowercasse(id) {
         TypeExpression::Parameter(pi, Identifier::new(id))
     } else {
@@ -371,7 +365,7 @@ fn parse_type_expression_infix<'a>(
                     pi,
                     TypeApply {
                         constructor: lhs.into(),
-                        argument: simple_type_expr_term(pi, rhs).into(),
+                        argument: parse_simple_type_expression_term(pi, rhs).into(),
                     },
                 ),
                 remains,
@@ -390,6 +384,11 @@ fn parse_type_expression_infix<'a>(
                 )
             })
         }
+
+        // lookahead(1) to see if there is an arrow coming
+        // RightParen handled in infix so that we can return a null infix
+        [T(TT::RightParen, ..), T(TT::Arrow, ..), ..] => Ok((lhs, &remains[1..])),
+
         _otherwise => Ok((lhs, remains)),
     }
 }
@@ -1390,4 +1389,7 @@ mod tests {
             decls
         );
     }
+
+    #[test]
+    fn type_expression_with_functions() {}
 }
