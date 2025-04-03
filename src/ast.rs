@@ -1,7 +1,8 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fmt,
     hash::Hash,
+    mem,
 };
 
 use crate::{
@@ -969,6 +970,161 @@ impl<A> MatchClause<A> {
     }
 }
 
+pub struct MatchMatrix {
+    domain: PatternSet,
+    covered: PatternSet,
+}
+
+impl MatchMatrix {
+    pub fn from_scrutinee(scrutinee: Type, ctx: &TypingContext) -> Typing<Self> {
+        PatternSet::from_domain(scrutinee, ctx).map(|domain| Self {
+            domain,
+            covered: PatternSet::default(),
+        })
+    }
+
+    pub fn integrate(&mut self, pattern: PatternSet) {
+        self.covered.join_with(pattern);
+    }
+
+    pub fn is_useful(&self, pattern: &PatternSet) -> bool {
+        !pattern.is_covered(&self.covered)
+    }
+
+    pub fn is_exhaustive(&self) -> bool {
+        self.domain.subtract(&self.covered) == PatternSet::Nothing
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PatternSet {
+    Nothing,
+    Any,
+    Literal(Constant),
+    Coproduct(Vec<(Identifier, Vec<PatternSet>)>),
+    Product(Vec<PatternSet>),
+    Join(BTreeSet<PatternSet>),
+    Subtract {
+        lhs: Box<PatternSet>,
+        rhs: Box<PatternSet>,
+    },
+}
+
+impl PatternSet {
+    pub fn from_pattern<A>(pattern: Pattern<A>) -> Self {
+        match pattern {
+            Pattern::Coproduct(_, coproduct) => Self::Coproduct(vec![(
+                coproduct.constructor,
+                coproduct
+                    .argument
+                    .elements
+                    .into_iter()
+                    .map(Self::from_pattern)
+                    .collect(),
+            )]),
+            Pattern::Tuple(_, product) => Self::Product(
+                product
+                    .elements
+                    .into_iter()
+                    .map(Self::from_pattern)
+                    .collect(),
+            ),
+            Pattern::Literally(constant) => Self::Literal(constant),
+            Pattern::Otherwise(..) => Self::Any,
+        }
+    }
+
+    fn from_domain(domain: Type, ctx: &TypingContext) -> Typing<Self> {
+        Ok(match domain.expand_type(ctx)? {
+            Type::Product(product) => Self::from_product(ctx, product)?,
+            Type::Coproduct(coproduct) => Self::from_coproduct(ctx, coproduct)?,
+            _otherwise => PatternSet::Any,
+        })
+    }
+
+    fn from_coproduct(ctx: &TypingContext, coproduct: CoproductType) -> Typing<Self> {
+        Ok(Self::Coproduct(
+            coproduct
+                .into_iter()
+                .map(|(constructor, signature)| {
+                    if let product @ Type::Product(..) = signature {
+                        if let Self::Product(elements) = Self::from_domain(product, ctx)? {
+                            Ok((Identifier::new(&constructor), elements))
+                        } else {
+                            panic!("Constructor signatures are expected to be tuples")
+                        }
+                    } else {
+                        // internal error
+                        panic!("Constructor signatures are expected to be tuples")
+                    }
+                })
+                .collect::<Typing<_>>()?,
+        ))
+    }
+
+    fn from_product(ctx: &TypingContext, product: ProductType) -> Typing<Self> {
+        Ok(Self::Product(match product {
+            ProductType::Tuple(elements) => elements
+                .into_iter()
+                .map(|t| Self::from_domain(t, ctx))
+                .collect::<Typing<_>>()?,
+            ProductType::Struct(..) => todo!(),
+        }))
+    }
+
+    fn join_with(&mut self, rhs: Self) {
+        *self = match (mem::take(self), rhs) {
+            (Self::Any, _) | (_, Self::Any) => Self::Any,
+            (lhs @ Self::Literal(..), rhs @ Self::Literal(..)) => {
+                Self::Join(BTreeSet::from([lhs, rhs]))
+            }
+            (Self::Product(mut lhs), Self::Product(rhs)) => {
+                inner_join(&mut lhs, rhs);
+                Self::Product(lhs)
+            }
+            (Self::Coproduct(mut lhs), Self::Coproduct(rhs)) => {
+                let mut rhs = rhs.into_iter().collect::<HashMap<_, _>>();
+                for (identifier, lhs) in lhs.iter_mut() {
+                    if let Some(rhs) = rhs.remove(identifier) {
+                        inner_join(lhs, rhs);
+                    }
+                }
+                lhs.extend(rhs);
+                Self::Coproduct(lhs)
+            }
+            (Self::Join(mut lhs), Self::Join(rhs)) => Self::Join({
+                lhs.extend(rhs);
+                lhs
+            }),
+            (Self::Join(mut lhs), rhs) => Self::Join({
+                lhs.insert(rhs);
+                lhs
+            }),
+            (lhs, rhs) => panic!("error: {lhs:?} and {rhs:?} must not be joined"),
+        };
+    }
+
+    fn subtract(&self, _rhs: &Self) -> Self {
+        todo!()
+    }
+
+    fn is_covered(&self, _pattern: &Self) -> bool {
+        todo!()
+    }
+}
+
+fn inner_join(lhs: &mut Vec<PatternSet>, rhs: Vec<PatternSet>) {
+    for (lhs, rhs) in lhs.iter_mut().zip(rhs) {
+        lhs.join_with(rhs);
+    }
+}
+
+impl Default for PatternSet {
+    fn default() -> Self {
+        Self::Nothing
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern<A> {
     // First argument should be A, for god's sake.
@@ -1455,13 +1611,21 @@ impl fmt::Display for ProductIndex {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Constant {
     Int(i64),
     Float(f64),
     Text(String),
     Bool(bool),
     Unit,
+}
+
+impl Eq for Constant {}
+
+impl Ord for Constant {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).expect("error")
+    }
 }
 
 impl fmt::Display for Constant {

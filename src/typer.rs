@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     slice::Iter,
+    vec::IntoIter,
 };
 use thiserror::Error;
 
@@ -437,9 +438,14 @@ impl CoproductType {
         constructors.len()
     }
 
-    fn iter(&self) -> Iter<'_, (String, Type)> {
+    pub fn iter(&self) -> Iter<'_, (String, Type)> {
         let Self(constructors) = self;
         constructors.iter()
+    }
+
+    pub fn into_iter(self) -> IntoIter<(String, Type)> {
+        let Self(constructors) = self;
+        constructors.into_iter()
     }
 
     fn apply(self, subs: &Substitutions) -> Self {
