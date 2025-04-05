@@ -972,27 +972,27 @@ impl<A> MatchClause<A> {
 
 pub struct MatchMatrix {
     domain: PatternSet,
-    covered: PatternSet,
+    matched_space: PatternSet,
 }
 
 impl MatchMatrix {
     pub fn from_scrutinee(scrutinee: Type, ctx: &TypingContext) -> Typing<Self> {
         PatternSet::from_domain(scrutinee, ctx).map(|domain| Self {
             domain,
-            covered: PatternSet::default(),
+            matched_space: PatternSet::default(),
         })
     }
 
     pub fn integrate(&mut self, pattern: PatternSet) {
-        self.covered.join_with(pattern);
+        self.matched_space.join(pattern);
     }
 
     pub fn is_useful(&self, pattern: &PatternSet) -> bool {
-        !pattern.is_covered(&self.covered)
+        !pattern.is_included_in(&self.matched_space)
     }
 
     pub fn is_exhaustive(&self) -> bool {
-        self.domain.subtract(&self.covered) == PatternSet::Nothing
+        self.domain.exclude(&self.matched_space) == PatternSet::Nothing
     }
 }
 
@@ -1000,17 +1000,60 @@ impl MatchMatrix {
 pub enum PatternSet {
     Nothing,
     Any,
-    Literal(Constant),
-    Coproduct(Vec<(Identifier, Vec<PatternSet>)>),
-    Product(Vec<PatternSet>),
     Join(BTreeSet<PatternSet>),
-    Subtract {
+    Subtraction {
         lhs: Box<PatternSet>,
         rhs: Box<PatternSet>,
     },
+
+    // These are different from the rest
+    Literal(Constant),
+    Coproduct(Vec<(Identifier, Vec<PatternSet>)>),
+    Product(Vec<PatternSet>),
 }
 
 impl PatternSet {
+    pub fn is_nothing(&self) -> bool {
+        matches!(self, Self::Nothing)
+    }
+
+    pub fn is_any(&self) -> bool {
+        matches!(self, Self::Any)
+    }
+
+    pub fn simplify(&self) -> Self {
+        match self {
+            Self::Subtraction { rhs, .. } if rhs.simplify().is_any() => Self::Nothing,
+            Self::Coproduct(constructors) => {
+                let constructors = constructors
+                    .iter()
+                    .filter_map(|(constructor, args)| {
+                        let args = args.iter().map(Self::simplify).collect::<Vec<_>>();
+                        if args.iter().all(|arg| arg.is_nothing()) {
+                            None
+                        } else {
+                            Some((constructor.clone(), args))
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if constructors.is_empty() {
+                    Self::Nothing
+                } else {
+                    Self::Coproduct(constructors)
+                }
+            }
+            Self::Product(elements) => {
+                let elements = elements.iter().map(Self::simplify).collect::<Vec<_>>();
+                if elements.iter().all(|el| el.is_nothing()) {
+                    Self::Nothing
+                } else {
+                    Self::Product(elements)
+                }
+            }
+            otherwise => todo!(),
+        }
+    }
+
     pub fn from_pattern<A>(pattern: Pattern<A>) -> Self {
         match pattern {
             Pattern::Coproduct(_, coproduct) => Self::Coproduct(vec![(
@@ -1072,7 +1115,7 @@ impl PatternSet {
         }))
     }
 
-    fn join_with(&mut self, rhs: Self) {
+    fn join(&mut self, rhs: Self) {
         *self = match (mem::take(self), rhs) {
             (Self::Any, _) | (_, Self::Any) => Self::Any,
             (lhs @ Self::Literal(..), rhs @ Self::Literal(..)) => {
@@ -1084,8 +1127,8 @@ impl PatternSet {
             }
             (Self::Coproduct(mut lhs), Self::Coproduct(rhs)) => {
                 let mut rhs = rhs.into_iter().collect::<HashMap<_, _>>();
-                for (identifier, lhs) in lhs.iter_mut() {
-                    if let Some(rhs) = rhs.remove(identifier) {
+                for (constructor, lhs) in lhs.iter_mut() {
+                    if let Some(rhs) = rhs.remove(constructor) {
                         inner_join(lhs, rhs);
                     }
                 }
@@ -1104,18 +1147,46 @@ impl PatternSet {
         };
     }
 
-    fn subtract(&self, _rhs: &Self) -> Self {
-        todo!()
+    fn exclude(&self, rhs: &Self) -> Self {
+        match (self, rhs) {
+            (_lhs, Self::Any) => Self::Nothing,
+            (Self::Any, rhs) => Self::Subtraction {
+                lhs: self.clone().into(),
+                rhs: rhs.clone().into(),
+            },
+            (Self::Coproduct(lhs), Self::Coproduct(rhs)) => Self::Coproduct({
+                let rhs = rhs.iter().cloned().collect::<HashMap<_, _>>();
+                lhs.iter()
+                    .map(|(constructor, lhs)| {
+                        let rhs = rhs.get(constructor).expect("expected to be well-typed");
+                        (
+                            constructor.clone(),
+                            lhs.iter()
+                                .zip(rhs.iter())
+                                .map(|(lhs, rhs)| lhs.exclude(rhs).simplify())
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect()
+            }),
+            (Self::Product(lhs), Self::Product(rhs)) => Self::Product(
+                lhs.iter()
+                    .zip(rhs.iter())
+                    .map(|(lhs, rhs)| lhs.exclude(rhs).simplify())
+                    .collect::<Vec<_>>(),
+            ),
+            (lhs, rhs) => panic!("Absurd combination {lhs:?} {rhs:?}"),
+        }
     }
 
-    fn is_covered(&self, _pattern: &Self) -> bool {
+    fn is_included_in(&self, _pattern: &Self) -> bool {
         todo!()
     }
 }
 
 fn inner_join(lhs: &mut Vec<PatternSet>, rhs: Vec<PatternSet>) {
     for (lhs, rhs) in lhs.iter_mut().zip(rhs) {
-        lhs.join_with(rhs);
+        lhs.join(rhs);
     }
 }
 
