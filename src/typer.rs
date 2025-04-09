@@ -168,7 +168,7 @@ impl fmt::Display for TypeScheme {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Ord)]
 pub enum Type {
     Parameter(TypeParameter),
     Constant(BaseType),
@@ -328,7 +328,7 @@ pub const BASE_TYPES: &[BaseType] = &[
     BaseType::Text,
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Hash, Ord)]
 pub enum BaseType {
     Unit,
     Int,
@@ -361,7 +361,7 @@ impl fmt::Display for BaseType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Ord)]
 pub enum ProductType {
     Tuple(Vec<Type>),
     Struct(Vec<(ast::Identifier, Type)>),
@@ -417,7 +417,7 @@ impl fmt::Display for ProductType {
 }
 
 // Change this from (String, Type) into (String, Vec<Type>)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Ord)]
 pub struct CoproductType(Vec<(String, Type)>);
 
 impl CoproductType {
@@ -693,7 +693,7 @@ impl fmt::Display for TypingContext {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialOrd, PartialEq, Eq, Hash, Ord)]
 pub struct TypeParameter(u32);
 
 pub mod internal {

@@ -1,12 +1,6 @@
 List ::= ∀a. Cons a (List a) | Nil
 
-main =
-    map id (Cons 1 Nil)
-
-id :: ∀a. a -> a = λx. x
-(* hej *)
-
-map = λf xs.
+map::∀a b. (a -> b) -> List a -> List b = λf xs.
   let step = λxs x. Cons (f x) xs
   in fold_right Nil step xs
 
@@ -14,3 +8,9 @@ fold_right::∀b a. b -> (b -> a -> b) -> List a -> b = λacc f xs.
   deconstruct xs into
     Cons x xs -> f (fold_right acc f xs) x
   | Nil       -> acc
+
+main =
+    map id (Cons 1 Nil)
+
+id :: ∀a. a -> a = λx. x
+(* hej *)

@@ -145,7 +145,7 @@ impl fmt::Display for Identifier {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Ord)]
 pub struct TypeName(String);
 
 impl TypeName {
@@ -971,128 +971,95 @@ impl<A> MatchClause<A> {
 }
 
 pub struct MatchMatrix {
-    domain: PatternSet,
-    matched_space: PatternSet,
+    domain: DomainExpression,
+    matched_space: DomainExpression,
 }
 
 impl MatchMatrix {
     pub fn from_scrutinee(scrutinee: Type, ctx: &TypingContext) -> Typing<Self> {
-        PatternSet::from_domain(scrutinee, ctx).map(|domain| Self {
-            domain,
-            matched_space: PatternSet::default(),
+        Ok(Self {
+            domain: DomainExpression::from_type(scrutinee.expand_type(ctx)?),
+            matched_space: DomainExpression::default(),
         })
     }
 
-    pub fn integrate(&mut self, pattern: PatternSet) {
+    pub fn integrate(&mut self, pattern: DomainExpression) {
         self.matched_space.join(pattern);
     }
 
-    pub fn is_useful(&self, pattern: &PatternSet) -> bool {
-        !pattern.is_included_in(&self.matched_space)
+    pub fn is_useful(&self, pattern: &DomainExpression) -> bool {
+        !pattern.is_covered_by(&self.matched_space)
     }
 
     pub fn is_exhaustive(&self) -> bool {
-        self.domain.exclude(&self.matched_space) == PatternSet::Nothing
+        todo!()
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PatternSet {
+pub enum DomainExpression {
     Nothing,
-    Any,
-    Join(BTreeSet<PatternSet>),
+    Whole(Type),
+    Join(BTreeSet<DomainExpression>),
     Subtraction {
-        lhs: Box<PatternSet>,
-        rhs: Box<PatternSet>,
+        lhs: Box<DomainExpression>,
+        rhs: Box<DomainExpression>,
     },
 
     // These are different from the rest
     Literal(Constant),
-    Coproduct(Vec<(Identifier, Vec<PatternSet>)>),
-    Product(Vec<PatternSet>),
+    Coproduct(Vec<(Identifier, Vec<DomainExpression>)>),
+    Product(Vec<DomainExpression>),
 }
 
-impl PatternSet {
-    pub fn is_nothing(&self) -> bool {
-        matches!(self, Self::Nothing)
-    }
-
-    pub fn is_any(&self) -> bool {
-        matches!(self, Self::Any)
-    }
-
-    pub fn simplify(&self) -> Self {
-        match self {
-            Self::Subtraction { rhs, .. } if rhs.simplify().is_any() => Self::Nothing,
-            Self::Coproduct(constructors) => {
-                let constructors = constructors
-                    .iter()
-                    .filter_map(|(constructor, args)| {
-                        let args = args.iter().map(Self::simplify).collect::<Vec<_>>();
-                        if args.iter().all(|arg| arg.is_nothing()) {
-                            None
-                        } else {
-                            Some((constructor.clone(), args))
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                if constructors.is_empty() {
-                    Self::Nothing
-                } else {
-                    Self::Coproduct(constructors)
-                }
-            }
-            Self::Product(elements) => {
-                let elements = elements.iter().map(Self::simplify).collect::<Vec<_>>();
-                if elements.iter().all(|el| el.is_nothing()) {
-                    Self::Nothing
-                } else {
-                    Self::Product(elements)
-                }
-            }
-            otherwise => todo!(),
-        }
-    }
-
-    pub fn from_pattern<A>(pattern: Pattern<A>) -> Self {
-        match pattern {
+impl DomainExpression {
+    pub fn from_pattern<A>(pattern: &Pattern<A>, ctx: &TypingContext) -> Typing<Self>
+    where
+        A: fmt::Display + Clone + Parsed,
+    {
+        Ok(match pattern {
             Pattern::Coproduct(_, coproduct) => Self::Coproduct(vec![(
-                coproduct.constructor,
+                coproduct.constructor.clone(),
                 coproduct
                     .argument
                     .elements
-                    .into_iter()
-                    .map(Self::from_pattern)
-                    .collect(),
+                    .iter()
+                    .map(|p| Self::from_pattern(p, ctx))
+                    .collect::<Typing<_>>()?,
             )]),
             Pattern::Tuple(_, product) => Self::Product(
                 product
                     .elements
-                    .into_iter()
-                    .map(Self::from_pattern)
-                    .collect(),
+                    .iter()
+                    .map(|p| Self::from_pattern(p, ctx))
+                    .collect::<Typing<_>>()?,
             ),
-            Pattern::Literally(constant) => Self::Literal(constant),
-            Pattern::Otherwise(..) => Self::Any,
-        }
-    }
-
-    fn from_domain(domain: Type, ctx: &TypingContext) -> Typing<Self> {
-        Ok(match domain.expand_type(ctx)? {
-            Type::Product(product) => Self::from_product(ctx, product)?,
-            Type::Coproduct(coproduct) => Self::from_coproduct(ctx, coproduct)?,
-            _otherwise => PatternSet::Any,
+            Pattern::Literally(constant) => Self::Literal(constant.clone()),
+            Pattern::Otherwise(..) => {
+                let pattern = pattern.synthesize_type(&ctx)?;
+                Self::Whole(pattern.inferred_type)
+            }
         })
     }
 
-    fn from_coproduct(ctx: &TypingContext, coproduct: CoproductType) -> Typing<Self> {
-        Ok(Self::Coproduct(
+    // The constructor function ought to expand the type,
+    // but not the internal/ recursive one
+    fn from_type(domain: Type) -> Self {
+        match domain {
+            Type::Product(product) => Self::from_product(product),
+            Type::Coproduct(coproduct) => Self::from_coproduct(coproduct),
+            otherwise => Self::Whole(otherwise),
+        }
+    }
+
+    fn from_coproduct(coproduct: CoproductType) -> Self {
+        Self::Coproduct(
             coproduct
                 .into_iter()
                 .map(|(constructor, signature)| {
                     if let product @ Type::Product(..) = signature {
-                        if let Self::Product(elements) = Self::from_domain(product, ctx)? {
-                            Ok((Identifier::new(&constructor), elements))
+                        if let Self::Product(elements) = Self::from_type(product) {
+                            (Identifier::new(&constructor), elements)
                         } else {
                             panic!("Constructor signatures are expected to be tuples")
                         }
@@ -1101,23 +1068,24 @@ impl PatternSet {
                         panic!("Constructor signatures are expected to be tuples")
                     }
                 })
-                .collect::<Typing<_>>()?,
-        ))
+                .collect(),
+        )
     }
 
-    fn from_product(ctx: &TypingContext, product: ProductType) -> Typing<Self> {
-        Ok(Self::Product(match product {
-            ProductType::Tuple(elements) => elements
-                .into_iter()
-                .map(|t| Self::from_domain(t, ctx))
-                .collect::<Typing<_>>()?,
+    fn from_product(product: ProductType) -> Self {
+        Self::Product(match product {
+            ProductType::Tuple(elements) => {
+                elements.into_iter().map(|t| Self::from_type(t)).collect()
+            }
             ProductType::Struct(..) => todo!(),
-        }))
+        })
     }
 
+    // this has to join Patterns and not Domain
     fn join(&mut self, rhs: Self) {
         *self = match (mem::take(self), rhs) {
-            (Self::Any, _) | (_, Self::Any) => Self::Any,
+            (Self::Nothing, rhs) => rhs,
+            (Self::Whole(t), _) | (_, Self::Whole(t)) => Self::Whole(t),
             (lhs @ Self::Literal(..), rhs @ Self::Literal(..)) => {
                 Self::Join(BTreeSet::from([lhs, rhs]))
             }
@@ -1143,14 +1111,16 @@ impl PatternSet {
                 lhs.insert(rhs);
                 lhs
             }),
-            (lhs, rhs) => panic!("error: {lhs:?} and {rhs:?} must not be joined"),
+            (lhs, rhs) => panic!("join: {lhs:?} and {rhs:?} must not be joined"),
         };
     }
 
-    fn exclude(&self, rhs: &Self) -> Self {
+    // What does this return when there is nothing left?
+    // Is this what we need to do? rhs as Pattern.
+    fn eliminate(&self, rhs: &Self) -> Self {
         match (self, rhs) {
-            (_lhs, Self::Any) => Self::Nothing,
-            (Self::Any, rhs) => Self::Subtraction {
+            (_lhs, Self::Whole(..)) => Self::Nothing,
+            (Self::Whole(..), rhs) => Self::Subtraction {
                 lhs: self.clone().into(),
                 rhs: rhs.clone().into(),
             },
@@ -1163,7 +1133,7 @@ impl PatternSet {
                             constructor.clone(),
                             lhs.iter()
                                 .zip(rhs.iter())
-                                .map(|(lhs, rhs)| lhs.exclude(rhs).simplify())
+                                .map(|(lhs, rhs)| lhs.eliminate(rhs))
                                 .collect::<Vec<_>>(),
                         )
                     })
@@ -1172,25 +1142,50 @@ impl PatternSet {
             (Self::Product(lhs), Self::Product(rhs)) => Self::Product(
                 lhs.iter()
                     .zip(rhs.iter())
-                    .map(|(lhs, rhs)| lhs.exclude(rhs).simplify())
+                    .map(|(lhs, rhs)| lhs.eliminate(rhs))
                     .collect::<Vec<_>>(),
             ),
             (lhs, rhs) => panic!("Absurd combination {lhs:?} {rhs:?}"),
         }
     }
 
-    fn is_included_in(&self, _pattern: &Self) -> bool {
-        todo!()
+    fn is_covered_by(&self, rhs: &Self) -> bool {
+        println!("is_covered_by: LHS {self:?} RHS {rhs:?}");
+
+        match (self, rhs) {
+            // The second row after a wildcard, what is matched_space then?
+            // It is Nothing
+            (Self::Nothing, ..) | (.., Self::Whole(..)) => true,
+            (Self::Literal(lhs), Self::Literal(rhs)) => lhs == rhs,
+            (lhs, Self::Join(join)) => join.contains(lhs),
+            (Self::Coproduct(lhs), Self::Coproduct(rhs)) => lhs.iter().all(|(id, lhs)| {
+                rhs.iter().any(|(id1, rhs)| {
+                    (id == id1)
+                        && lhs
+                            .iter()
+                            .zip(rhs.iter())
+                            .all(|(lhs, rhs)| lhs.is_covered_by(rhs))
+                })
+            }),
+            (Self::Product(lhs), Self::Product(rhs)) => lhs
+                .iter()
+                .zip(rhs.iter())
+                .all(|(lhs, rhs)| lhs.is_covered_by(rhs)),
+            (lhs, rhs) => {
+                println!("is_covered_by: {lhs:?} is not covered by {rhs:?}");
+                false
+            }
+        }
     }
 }
 
-fn inner_join(lhs: &mut Vec<PatternSet>, rhs: Vec<PatternSet>) {
+fn inner_join(lhs: &mut Vec<DomainExpression>, rhs: Vec<DomainExpression>) {
     for (lhs, rhs) in lhs.iter_mut().zip(rhs) {
         lhs.join(rhs);
     }
 }
 
-impl Default for PatternSet {
+impl Default for DomainExpression {
     fn default() -> Self {
         Self::Nothing
     }

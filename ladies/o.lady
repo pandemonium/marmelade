@@ -1,3 +1,4 @@
 List ::= ∀a. Cons a (List a) | Nil
 
+(* Unable to unify Named("Int") with BaseType::Int. Hmm. *)
 main :: ∀a. Int = 1

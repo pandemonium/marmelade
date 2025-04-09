@@ -2,8 +2,8 @@ use std::fmt;
 
 use crate::{
     ast::{
-        self, Constructor, ConstructorPattern, Expression, Identifier, MatchClause, Pattern,
-        TuplePattern,
+        self, Constructor, ConstructorPattern, DomainExpression, Expression, Identifier,
+        MatchClause, MatchMatrix, Pattern, TuplePattern,
     },
     parser::ParsingInfo,
     typer::{
@@ -129,67 +129,99 @@ where
     A: fmt::Display + Clone + Parsed,
 {
     let scrutinee = infer_type(scrutinee, &ctx)?;
-    let mut subs = scrutinee.substitutions.clone();
+    let mut substitutions = scrutinee.substitutions.clone();
+    let ctx = ctx.apply_substitutions(&scrutinee.substitutions);
 
-    let mut ctx = ctx.apply_substitutions(&scrutinee.substitutions);
+    let consequents = infer_consequents(
+        annotation,
+        match_clauses,
+        &scrutinee,
+        &mut substitutions,
+        &ctx,
+    )?;
 
-    let mut consequents = vec![];
+    let consequent = unify_consequents(annotation, &consequents)?;
+    let substitutions = substitutions.compose(consequent.substitutions);
+    let inferred_type = consequent.inferred_type.apply(&substitutions);
 
-    for MatchClause {
-        pattern,
-        consequent,
-    } in match_clauses
-    {
-        let pattern_type = pattern.synthesize_type(&ctx)?;
-
-        let mut unification = scrutinee.inferred_type.unify(
-            &pattern_type
-                .inferred_type
-                .clone()
-                .apply(&scrutinee.substitutions),
-            annotation,
-        )?;
-
-        subs = subs.compose(unification.clone());
-
-        // TODO: move the annotation into the Pattern
-        let Match {
-            bindings,
-            substitutions,
-        } = pattern.deconstruct(
-            annotation,
-            &scrutinee.inferred_type.clone().apply(&unification),
-            &ctx,
-        )?;
-
-        unification = unification.compose(substitutions);
-
-        for (binding, scrutinee) in bindings {
-            let scheme = TypeScheme::from_constant(scrutinee.clone().apply(&unification));
-            ctx.bind(binding.into(), scheme);
+    let mut matrix = MatchMatrix::from_scrutinee(scrutinee.inferred_type, &ctx)?;
+    for clause in match_clauses {
+        let pattern = DomainExpression::from_pattern(&clause.pattern, &ctx)?;
+        if matrix.is_useful(&pattern) {
+            matrix.integrate(pattern);
+        } else {
+            println!("infer_deconstruct_into: {} is not useful.", clause.pattern);
         }
-
-        consequents.push(infer_type(consequent, &ctx)?);
     }
 
-    let TypeInference {
-        mut substitutions,
-        mut inferred_type,
-    } = consequents.remove(0);
+    Ok(TypeInference {
+        substitutions,
+        inferred_type,
+    })
+}
 
-    for consequent in consequents {
-        let consequent_ty = consequent.inferred_type.apply(&substitutions);
+fn unify_consequents<A>(annotation: &A, consequents: &[TypeInference]) -> Typing
+where
+    A: fmt::Display + Clone + Parsed,
+{
+    let mut substitutions = consequents[0].substitutions.clone();
+    let mut inferred_type = consequents[0].inferred_type.clone();
 
-        let substitutions1 = inferred_type.unify(&consequent_ty, annotation)?.clone();
-
-        substitutions = substitutions.compose(substitutions1);
+    for consequent in &consequents[1..] {
+        substitutions = substitutions.compose(inferred_type.unify(
+            &consequent.inferred_type.clone().apply(&substitutions),
+            annotation,
+        )?);
         inferred_type = inferred_type.apply(&substitutions);
     }
 
     Ok(TypeInference {
-        substitutions: subs.compose(substitutions.clone()),
-        inferred_type: inferred_type.apply(&subs.compose(substitutions)),
+        substitutions,
+        inferred_type,
     })
+}
+
+// Should this function keep
+fn infer_consequents<A>(
+    annotation: &A,
+    match_clauses: &[MatchClause<A>],
+    scrutinee: &TypeInference,
+    substitutions: &mut Substitutions,
+    ctx: &TypingContext,
+) -> Typing<Vec<TypeInference>>
+where
+    A: fmt::Display + Clone + Parsed,
+{
+    let mut ctx = ctx.clone();
+    let mut consequents = vec![];
+
+    for clause in match_clauses {
+        let pattern = clause.pattern.synthesize_type(&ctx)?;
+
+        *substitutions = substitutions.compose(scrutinee.inferred_type.unify(
+            &pattern.inferred_type.apply(&scrutinee.substitutions),
+            annotation,
+        )?);
+
+        let pattern = clause.pattern.deconstruct(
+            annotation,
+            &scrutinee.inferred_type.clone().apply(substitutions),
+            &ctx,
+        )?;
+
+        *substitutions = substitutions.compose(pattern.substitutions);
+
+        for (binding, scrutinee) in pattern.bindings {
+            ctx.bind(
+                binding.into(),
+                TypeScheme::from_constant(scrutinee.apply(&substitutions)),
+            );
+        }
+
+        consequents.push(infer_type(&clause.consequent, &ctx)?);
+    }
+
+    Ok(consequents)
 }
 
 #[derive(Debug, Default)]
@@ -220,7 +252,7 @@ impl<A> Pattern<A>
 where
     A: fmt::Display + Clone + Parsed,
 {
-    fn synthesize_type(&self, ctx: &TypingContext) -> Typing {
+    pub fn synthesize_type(&self, ctx: &TypingContext) -> Typing {
         match self {
             Self::Coproduct(_, pattern) => {
                 let coproduct_type = Constructor::<A>::constructed_type(&pattern.constructor, ctx)
