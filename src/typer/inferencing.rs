@@ -3,7 +3,7 @@ use std::fmt;
 use crate::{
     ast::{
         self, Constructor, ConstructorPattern, DomainExpression, Expression, Identifier,
-        MatchClause, MatchMatrix, Pattern, TuplePattern,
+        MatchClause, Pattern, PatternMatrix, TuplePattern,
     },
     parser::ParsingInfo,
     typer::{
@@ -128,14 +128,14 @@ fn infer_deconstruct_into<A>(
 where
     A: fmt::Display + Clone + Parsed,
 {
-    let scrutinee = infer_type(scrutinee, &ctx)?;
-    let mut substitutions = scrutinee.substitutions.clone();
-    let ctx = ctx.apply_substitutions(&scrutinee.substitutions);
+    let scrutinee_type = infer_type(scrutinee, &ctx)?;
+    let mut substitutions = scrutinee_type.substitutions.clone();
+    let ctx = ctx.apply_substitutions(&scrutinee_type.substitutions);
 
     let consequents = infer_consequents(
         annotation,
         match_clauses,
-        &scrutinee,
+        &scrutinee_type,
         &mut substitutions,
         &ctx,
     )?;
@@ -144,20 +144,30 @@ where
     let substitutions = substitutions.compose(consequent.substitutions);
     let inferred_type = consequent.inferred_type.apply(&substitutions);
 
-    let mut matrix = MatchMatrix::from_scrutinee(scrutinee.inferred_type, &ctx)?;
+    let mut matrix = PatternMatrix::from_scrutinee(scrutinee_type.inferred_type, &ctx)?;
     for clause in match_clauses {
         let pattern = DomainExpression::from_pattern(&clause.pattern, &ctx)?;
         if matrix.is_useful(&pattern) {
+            println!("infer_deconstruct_into: {} is useful.", clause.pattern);
             matrix.integrate(pattern);
         } else {
             println!("infer_deconstruct_into: {} is not useful.", clause.pattern);
         }
     }
 
-    Ok(TypeInference {
-        substitutions,
-        inferred_type,
-    })
+    if !matrix.is_exhaustive() {
+        Err(TypeError::IncompleteDeconstruction {
+            at: *annotation.info().location(),
+            // Fix the damn annotation shit
+            //            scrutinee: scrutinee.map(|x| scrutinee.in),
+            //            clauses: match_clauses,
+        })
+    } else {
+        Ok(TypeInference {
+            substitutions,
+            inferred_type,
+        })
+    }
 }
 
 fn unify_consequents<A>(annotation: &A, consequents: &[TypeInference]) -> Typing

@@ -7,7 +7,10 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    ast::{self, Expression, Identifier, Pattern, TypeExpression, TypeName, ValueDeclaration},
+    ast::{
+        self, Expression, Identifier, MatchClause, Pattern, TypeExpression, TypeName,
+        ValueDeclaration,
+    },
     lexer::SourceLocation,
     parser::ParsingInfo,
 };
@@ -581,6 +584,13 @@ pub enum TypeError {
     ExpectedType {
         expected_type: Type,
         literal: Expression<ParsingInfo>,
+    },
+
+    #[error("Deconstruction does not cover all of {{scrutinee}}")]
+    IncompleteDeconstruction {
+        at: SourceLocation,
+        //        scrutinee: Expression<ParsingInfo>,
+        //        clauses: Vec<MatchClause<ParsingInfo>>,
     },
 }
 

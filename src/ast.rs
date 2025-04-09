@@ -970,12 +970,12 @@ impl<A> MatchClause<A> {
     }
 }
 
-pub struct MatchMatrix {
+pub struct PatternMatrix {
     domain: DomainExpression,
     matched_space: DomainExpression,
 }
 
-impl MatchMatrix {
+impl PatternMatrix {
     pub fn from_scrutinee(scrutinee: Type, ctx: &TypingContext) -> Typing<Self> {
         Ok(Self {
             domain: DomainExpression::from_type(scrutinee.expand_type(ctx)?),
@@ -992,7 +992,7 @@ impl MatchMatrix {
     }
 
     pub fn is_exhaustive(&self) -> bool {
-        todo!()
+        self.domain.eliminate(&self.matched_space) == DomainExpression::Nothing
     }
 }
 
@@ -1153,11 +1153,9 @@ impl DomainExpression {
         println!("is_covered_by: LHS {self:?} RHS {rhs:?}");
 
         match (self, rhs) {
-            // The second row after a wildcard, what is matched_space then?
-            // It is Nothing
             (Self::Nothing, ..) | (.., Self::Whole(..)) => true,
             (Self::Literal(lhs), Self::Literal(rhs)) => lhs == rhs,
-            (lhs, Self::Join(join)) => join.contains(lhs),
+            (lhs, Self::Join(set)) => set.contains(lhs),
             (Self::Coproduct(lhs), Self::Coproduct(rhs)) => lhs.iter().all(|(id, lhs)| {
                 rhs.iter().any(|(id1, rhs)| {
                     (id == id1)
