@@ -111,14 +111,14 @@ impl TypingContext {
         body: &UntypedExpression,
         _info: &ParsingInfo,
     ) -> Typing {
-        let domain_type = if let Some(domain_type) = type_annotation {
+        let domain = if let Some(domain) = type_annotation {
             // can I use this to do checking someplace?
-            domain_type.clone()
+            domain.clone()
         } else {
             Type::fresh()
         };
 
-        let domain = TypeScheme::from_constant(domain_type);
+        let domain = TypeScheme::from_constant(domain);
 
         let mut ctx = self.clone();
         ctx.bind(name.clone().into(), domain.clone());
@@ -159,10 +159,6 @@ impl TypingContext {
 
         // I would like for this to unify and apply substitutions from the patterns
         // Did it used to do this before?
-        println!(
-            "infer_deconstruct_into: subs {substitutions} scrutinee {}",
-            scrutinee_type.inferred_type
-        );
         let mut matrix = PatternMatrix::from_scrutinee(
             scrutinee_type.inferred_type.apply(&substitutions),
             &ctx,
@@ -170,18 +166,18 @@ impl TypingContext {
         for clause in match_clauses {
             let pattern = DomainExpression::from_pattern(&clause.pattern, &ctx)?;
             if matrix.is_useful(&pattern) {
-                println!("infer_deconstruct_into: {} is useful.", clause.pattern);
                 matrix.integrate(pattern);
             } else {
                 println!("infer_deconstruct_into: {} is not useful.", clause.pattern);
             }
         }
 
-        if !matrix.is_exhaustive() {
+        let residual = matrix.residual();
+        if !residual.is_nothing() {
             Err(TypeError::IncompleteDeconstruction {
                 at: *parsing_info.info().location(),
                 scrutinee: scrutinee.clone(),
-                clauses: match_clauses.to_vec(),
+                residual,
             })
         } else {
             Ok(TypeInference {

@@ -14,9 +14,10 @@ fn main() {
         let mut linkage = Linkage::new(&source_code);
         stdlib::import(&mut linkage).unwrap();
 
-        let return_value = linkage.typecheck_and_interpret().expect("There are errors");
-
-        println!("#### {return_value}");
+        match linkage.typecheck_and_interpret() {
+            Ok(return_value) => println!("#### {return_value}"),
+            Err(fault) => println!("$$$ {fault}"),
+        }
     } else {
         println!("marmelade <file-path.lady>")
     }

@@ -994,8 +994,11 @@ impl PatternMatrix {
 
     pub fn is_exhaustive(&self) -> bool {
         let eliminate = self.domain.eliminate(&self.matched_space);
-        println!("is_exhaustive: {eliminate:?}");
         eliminate == DomainExpression::Nothing
+    }
+
+    pub fn residual(&self) -> DomainExpression {
+        self.domain.eliminate(&self.matched_space)
     }
 }
 
@@ -1013,6 +1016,75 @@ pub enum DomainExpression {
     Literal(Constant),
     Coproduct(Vec<(Identifier, Vec<DomainExpression>)>),
     Product(Vec<DomainExpression>),
+}
+
+impl fmt::Display for DomainExpression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Nothing => write!(f, "()"),
+            Self::Whole(ty) => write!(f, "dom({ty})"),
+            Self::Join(set) => {
+                let mut i = set.iter();
+
+                if let Some(s) = i.next() {
+                    write!(f, "{{ {s}")?;
+                }
+
+                for s in i {
+                    write!(f, "| {s}")?;
+                }
+
+                write!(f, " }}")
+            }
+            Self::Subtraction { lhs, rhs } => {
+                write!(f, "{lhs} \\ ")?;
+                write!(f, "({rhs})")
+            }
+            Self::Literal(constant) => write!(f, "{constant}"),
+            Self::Coproduct(constructors) => {
+                let mut i = constructors.iter();
+
+                if let Some((constructor, arguments)) = i.next() {
+                    write!(
+                        f,
+                        "{constructor} {}",
+                        arguments
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )?;
+                }
+
+                for (constructor, arguments) in i {
+                    write!(
+                        f,
+                        "{constructor} {}",
+                        arguments
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )?;
+                }
+
+                Ok(())
+            }
+            Self::Product(elements) => {
+                let mut i = elements.iter();
+
+                if let Some(element) = i.next() {
+                    write!(f, "{}", element)?;
+                }
+
+                for element in i {
+                    write!(f, "{}", element)?;
+                }
+
+                Ok(())
+            }
+        }
+    }
 }
 
 impl DomainExpression {
@@ -1045,7 +1117,6 @@ impl DomainExpression {
     // The constructor function ought to expand the type,
     // but not the internal/ recursive one
     fn from_type(domain: Type) -> Self {
-        println!("from_type: {domain}");
         match domain {
             Type::Product(product) => Self::from_product(product),
             Type::Coproduct(coproduct) => Self::from_coproduct(coproduct),
@@ -1169,13 +1240,11 @@ impl DomainExpression {
         }
     }
 
-    fn is_nothing(&self) -> bool {
+    pub fn is_nothing(&self) -> bool {
         self == &DomainExpression::Nothing
     }
 
     fn is_covered_by(&self, rhs: &Self) -> bool {
-        println!("is_covered_by: LHS {self:?} RHS {rhs:?}");
-
         match (self, rhs) {
             (Self::Nothing, ..) | (.., Self::Whole(..)) => true,
             (Self::Literal(lhs), Self::Literal(rhs)) => lhs == rhs,
@@ -1193,10 +1262,7 @@ impl DomainExpression {
                 .iter()
                 .zip(rhs.iter())
                 .all(|(lhs, rhs)| lhs.is_covered_by(rhs)),
-            (lhs, rhs) => {
-                println!("is_covered_by: {lhs:?} is not covered by {rhs:?}");
-                false
-            }
+            (_lhs, _rhs) => false,
         }
     }
 }

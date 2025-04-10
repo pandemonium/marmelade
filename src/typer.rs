@@ -8,8 +8,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        self, Expression, Identifier, MatchClause, Pattern, TypeExpression, TypeName,
-        ValueDeclaration,
+        self, DomainExpression, Expression, Identifier, MatchClause, Pattern, TypeExpression,
+        TypeName, ValueDeclaration,
     },
     lexer::SourceLocation,
     parser::ParsingInfo,
@@ -48,7 +48,6 @@ impl TypeChecker {
         if let Some(signature) = &declaration.type_signature {
             let type_scheme = signature.synthesize_type(typing_context)?;
             let expected_type = type_scheme.clone().instantiate(typing_context)?;
-            println!("check_declaration: {expected_type:?}");
             self.check(expected_type, &declaration.declarator.expression)?;
             let id = declaration.clone().binder;
             println!("type_check: `{id}` is `{type_scheme}`");
@@ -586,11 +585,11 @@ pub enum TypeError {
         literal: Expression<ParsingInfo>,
     },
 
-    #[error("Deconstruction does not cover all of {scrutinee}")]
+    #[error("Deconstruction does not cover all of `{scrutinee}` at {at}. Remaining: {residual}")]
     IncompleteDeconstruction {
         at: SourceLocation,
         scrutinee: Expression<ParsingInfo>,
-        clauses: Vec<MatchClause<ParsingInfo>>,
+        residual: DomainExpression,
     },
 }
 
