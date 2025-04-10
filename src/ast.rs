@@ -977,6 +977,7 @@ pub struct PatternMatrix {
 
 impl PatternMatrix {
     pub fn from_scrutinee(scrutinee: Type, ctx: &TypingContext) -> Typing<Self> {
+        println!("from_scrutinee: {scrutinee}");
         Ok(Self {
             domain: DomainExpression::from_type(scrutinee.expand_type(ctx)?),
             matched_space: DomainExpression::default(),
@@ -992,7 +993,9 @@ impl PatternMatrix {
     }
 
     pub fn is_exhaustive(&self) -> bool {
-        self.domain.eliminate(&self.matched_space) == DomainExpression::Nothing
+        let eliminate = self.domain.eliminate(&self.matched_space);
+        println!("is_exhaustive: {eliminate:?}");
+        eliminate == DomainExpression::Nothing
     }
 }
 
@@ -1013,10 +1016,7 @@ pub enum DomainExpression {
 }
 
 impl DomainExpression {
-    pub fn from_pattern<A>(pattern: &Pattern<A>, ctx: &TypingContext) -> Typing<Self>
-    where
-        A: fmt::Display + Clone + Parsed,
-    {
+    pub fn from_pattern(pattern: &Pattern<ParsingInfo>, ctx: &TypingContext) -> Typing<Self> {
         Ok(match pattern {
             Pattern::Coproduct(_, coproduct) => Self::Coproduct(vec![(
                 coproduct.constructor.clone(),
@@ -1045,6 +1045,7 @@ impl DomainExpression {
     // The constructor function ought to expand the type,
     // but not the internal/ recursive one
     fn from_type(domain: Type) -> Self {
+        println!("from_type: {domain}");
         match domain {
             Type::Product(product) => Self::from_product(product),
             Type::Coproduct(coproduct) => Self::from_coproduct(coproduct),
@@ -1124,21 +1125,7 @@ impl DomainExpression {
                 lhs: self.clone().into(),
                 rhs: rhs.clone().into(),
             },
-            (Self::Coproduct(lhs), Self::Coproduct(rhs)) => Self::Coproduct({
-                let rhs = rhs.iter().cloned().collect::<HashMap<_, _>>();
-                lhs.iter()
-                    .map(|(constructor, lhs)| {
-                        let rhs = rhs.get(constructor).expect("expected to be well-typed");
-                        (
-                            constructor.clone(),
-                            lhs.iter()
-                                .zip(rhs.iter())
-                                .map(|(lhs, rhs)| lhs.eliminate(rhs))
-                                .collect::<Vec<_>>(),
-                        )
-                    })
-                    .collect()
-            }),
+            (Self::Coproduct(lhs), Self::Coproduct(rhs)) => self.eliminate_constructors(lhs, rhs),
             (Self::Product(lhs), Self::Product(rhs)) => Self::Product(
                 lhs.iter()
                     .zip(rhs.iter())
@@ -1147,6 +1134,43 @@ impl DomainExpression {
             ),
             (lhs, rhs) => panic!("Absurd combination {lhs:?} {rhs:?}"),
         }
+    }
+
+    // [x | constructors(C) \ constructors(D), elements(C) \ elements(D), c in C \ d in D, x != Nothing]
+    fn eliminate_constructors(
+        &self,
+        lhs: &[(Identifier, Vec<DomainExpression>)],
+        rhs: &[(Identifier, Vec<DomainExpression>)],
+    ) -> DomainExpression {
+        let rhs = rhs.iter().cloned().collect::<HashMap<_, _>>();
+        let constructors = lhs
+            .iter()
+            .filter_map(|(constructor, lhs)| {
+                if let Some(rhs) = rhs.get(constructor) {
+                    let parameters = lhs
+                        .iter()
+                        .zip(rhs.iter())
+                        .map(|(lhs, rhs)| lhs.eliminate(rhs))
+                        .collect::<Vec<_>>();
+                    parameters
+                        .iter()
+                        .any(|de| !de.is_nothing())
+                        .then_some((constructor.clone(), parameters))
+                } else {
+                    Some((constructor.clone(), lhs.clone()))
+                }
+            })
+            .collect::<Vec<(Identifier, Vec<DomainExpression>)>>();
+
+        if constructors.is_empty() {
+            Self::Nothing
+        } else {
+            Self::Coproduct(constructors)
+        }
+    }
+
+    fn is_nothing(&self) -> bool {
+        self == &DomainExpression::Nothing
     }
 
     fn is_covered_by(&self, rhs: &Self) -> bool {

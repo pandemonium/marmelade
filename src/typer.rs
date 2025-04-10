@@ -586,11 +586,11 @@ pub enum TypeError {
         literal: Expression<ParsingInfo>,
     },
 
-    #[error("Deconstruction does not cover all of {{scrutinee}}")]
+    #[error("Deconstruction does not cover all of {scrutinee}")]
     IncompleteDeconstruction {
         at: SourceLocation,
-        //        scrutinee: Expression<ParsingInfo>,
-        //        clauses: Vec<MatchClause<ParsingInfo>>,
+        scrutinee: Expression<ParsingInfo>,
+        clauses: Vec<MatchClause<ParsingInfo>>,
     },
 }
 
@@ -660,13 +660,6 @@ impl TypingContext {
         self.bindings.get(binding)
     }
 
-    pub fn infer_type<A>(&self, e: &ast::Expression<A>) -> Typing
-    where
-        A: fmt::Display + Clone + Parsed,
-    {
-        inferencing::infer_type(e, self)
-    }
-
     fn free_variables(&self) -> HashSet<TypeParameter> {
         let mut bound = HashSet::new();
         let mut free = HashSet::default();
@@ -731,22 +724,6 @@ pub mod internal {
             let Self(id) = self;
             write!(f, "T#{id}")
         }
-    }
-}
-
-pub fn infer_declaration_type<A>(
-    declaration: &ast::Declaration<A>,
-    typing_context: &TypingContext,
-) -> Typing
-where
-    A: fmt::Debug + fmt::Display + Parsed + Clone,
-{
-    match declaration {
-        ast::Declaration::Value(_, declaration) => Ok(inferencing::infer_declarator_type(
-            &declaration.declarator,
-            typing_context,
-        )?),
-        _otherwise => todo!(),
     }
 }
 
