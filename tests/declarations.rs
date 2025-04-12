@@ -2,7 +2,7 @@ use marmelade::{
     ast::{
         Arrow, Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Identifier,
         MatchClause, Pattern, Product, TuplePattern, TypeApply, TypeDeclaration, TypeExpression,
-        TypeName, TypeSignature, UniversallyQuantified, ValueDeclaration, ValueDeclarator,
+        TypeName, TypeSignature, UniversalQuantifiers, ValueDeclaration, ValueDeclarator,
     },
     interpreter::{Base, Value},
     parser::ParsingInfo,
@@ -173,7 +173,7 @@ fn coproduct_perhaps() {
             TypeDeclaration {
                 binding: ident("Perhaps"),
                 declarator: coproduct(
-                    UniversallyQuantified::default().add(TypeName::new("a")),
+                    UniversalQuantifiers::default().add(TypeName::new("a")),
                     vec![
                         constructor("This", vec![typar("a")]),
                         constructor("Nope", vec![]),
@@ -194,7 +194,7 @@ fn coproduct_list() {
             TypeDeclaration {
                 binding: ident("List"),
                 declarator: coproduct(
-                    UniversallyQuantified::default().add(TypeName::new("a")),
+                    UniversalQuantifiers::default().add(TypeName::new("a")),
                     vec![
                         constructor("Cons", vec![typar("a"), tyapp(tyref("List"), typar("a"))]),
                         constructor("Nil", vec![]),
@@ -252,7 +252,7 @@ fn coproduct_binary_tree() {
             TypeDeclaration {
                 binding: ident("BinaryTree"),
                 declarator: coproduct(
-                    UniversallyQuantified::default().add(TypeName::new("a")),
+                    UniversalQuantifiers::default().add(TypeName::new("a")),
                     vec![
                         constructor(
                             "Branch",
@@ -278,7 +278,7 @@ fn constant_type_expressions() {
         ValueDeclaration {
             binder: ident("length"),
             type_signature: Some(TypeSignature {
-                quantifier: None,
+                quantifiers: None,
                 body: TypeExpression::Constructor(pi, Identifier::new("Int")),
             }),
             declarator: ValueDeclarator {
@@ -298,7 +298,7 @@ fn type_apply_type_expressions() {
         ValueDeclaration {
             binder: ident("length"),
             type_signature: Some(TypeSignature {
-                quantifier: None,
+                quantifiers: None,
                 body: TypeExpression::Apply(
                     pi,
                     TypeApply {
@@ -325,7 +325,7 @@ fn type_arrow_expressions() {
         ValueDeclaration {
             binder: ident("length"),
             type_signature: Some(TypeSignature {
-                quantifier: None,
+                quantifiers: None,
                 body: TypeExpression::Arrow(
                     pi,
                     Arrow {
@@ -351,7 +351,7 @@ fn type_higher_arrow_expressions() {
         ValueDeclaration {
             binder: ident("length"),
             type_signature: Some(TypeSignature {
-                quantifier: None,
+                quantifiers: None,
                 body: TypeExpression::Arrow(
                     pi,
                     Arrow {
@@ -386,7 +386,7 @@ fn complex_type_arrow_expressions() {
         ValueDeclaration {
             binder: ident("length"),
             type_signature: Some(TypeSignature {
-                quantifier: None,
+                quantifiers: None,
                 body: TypeExpression::Arrow(
                     pi,
                     Arrow {
@@ -435,7 +435,7 @@ fn coproduct_eval() {
         TypeDeclaration {
             binding: ident("Eval"),
             declarator: coproduct(
-                UniversallyQuantified::default()
+                UniversalQuantifiers::default()
                     .add(TypeName::new("a"))
                     .add(TypeName::new("e")),
                 vec![

@@ -120,41 +120,43 @@ impl Interpreter {
         A: fmt::Display + fmt::Debug + Clone + Parsed,
     {
         println!("Loading types and synthesizing constructors ...");
-
-        let type_bindings = module
-            .declarations
-            .iter()
-            .filter_map(|decl| {
-                if let Declaration::Type(
-                    _,
-                    TypeDeclaration {
-                        binding,
-                        declarator: TypeDeclarator::Coproduct(_, coproduct),
-                    },
-                ) = decl
-                {
-                    Some((binding.clone(), coproduct.clone()))
-                } else {
-                    None
+        let mut injections = vec![];
+        for decl in &module.declarations {
+            if let Declaration::Type(
+                _,
+                TypeDeclaration {
+                    binding,
+                    declarator,
+                },
+            ) = decl
+            {
+                match declarator {
+                    TypeDeclarator::Coproduct(_, coproduct) => {
+                        let coproduct = coproduct.make_implementation_module(
+                            &annotation,
+                            TypeName::new(&binding.as_str()),
+                            typing_context,
+                        )?;
+                        println!(
+                            "inject_types_and_synthetics: `{binding}` `{}`",
+                            coproduct.type_constructor
+                        );
+                        typing_context.bind(coproduct.name.into(), coproduct.type_constructor);
+                        for constructor in coproduct.constructors {
+                            injections.push(Declaration::Value(annotation.clone(), constructor));
+                        }
+                    }
+                    TypeDeclarator::Struct(_, record) => {
+                        let scheme = record.synthesize_type(typing_context)?;
+                        println!("inject_types_and_synthetics: `{binding}` `{scheme}`");
+                        typing_context.bind(TypeName::new(&binding.as_str()).into(), scheme);
+                    }
+                    _otherwise => todo!(),
                 }
-            })
-            .collect::<Vec<_>>();
-
-        for (binding, coproduct) in type_bindings {
-            let coproduct = coproduct.make_implementation_module(
-                &annotation,
-                TypeName::new(&binding.as_str()),
-                typing_context,
-            )?;
-
-            typing_context.bind(coproduct.name.into(), coproduct.declaring_type);
-
-            for constructor in coproduct.constructors {
-                module
-                    .declarations
-                    .push(Declaration::Value(annotation.clone(), constructor));
             }
         }
+
+        module.declarations.extend(injections);
 
         Ok(())
     }

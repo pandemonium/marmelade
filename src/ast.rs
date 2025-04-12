@@ -115,7 +115,7 @@ where
     }
 }
 
-// Could this be an enum?
+// Maybe this thing should carry a SourceLocation
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Identifier {
     Atom(String),
@@ -197,7 +197,7 @@ where
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypeSignature<A> {
-    pub quantifier: Option<UniversallyQuantified>,
+    pub quantifiers: Option<UniversalQuantifiers>,
     pub body: TypeExpression<A>,
 }
 
@@ -207,7 +207,7 @@ where
 {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeSignature<B> {
         TypeSignature {
-            quantifier: self.quantifier,
+            quantifiers: self.quantifiers,
             body: self.body.map(f),
         }
     }
@@ -215,7 +215,7 @@ where
     // Surely this resolves named types?
     pub fn synthesize_type(&self, ctx: &TypingContext) -> Typing<TypeScheme> {
         let type_parameters = self
-            .quantifier
+            .quantifiers
             .as_ref()
             .map(|forall| forall.fresh_type_parameters())
             .unwrap_or_else(|| HashMap::default());
@@ -348,9 +348,9 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
-pub struct UniversallyQuantified(pub Vec<TypeName>);
+pub struct UniversalQuantifiers(pub Vec<TypeName>);
 
-impl UniversallyQuantified {
+impl UniversalQuantifiers {
     pub fn add(self, quantifier: TypeName) -> Self {
         let Self(mut quantifiers) = self;
         quantifiers.push(quantifier);
@@ -369,9 +369,33 @@ impl UniversallyQuantified {
     }
 }
 
+impl fmt::Display for UniversalQuantifiers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self(quantifiers) = self;
+
+        if !quantifiers.is_empty() {
+            write!(f, "forall ")?;
+
+            let mut i = quantifiers.iter();
+
+            if let Some(q) = i.next() {
+                write!(f, "{q}")?;
+            }
+
+            for q in i {
+                write!(f, " {q}")?;
+            }
+
+            write!(f, ". ")?;
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Coproduct<A> {
-    pub forall: UniversallyQuantified,
+    pub forall: UniversalQuantifiers,
     pub constructors: Vec<Constructor<A>>,
 }
 
@@ -403,7 +427,7 @@ where
 
         Ok(CoproductModule {
             name: self_name.clone(),
-            declaring_type,
+            type_constructor: declaring_type,
             constructors: self
                 .constructors
                 .iter()
@@ -469,20 +493,70 @@ where
 
 pub struct CoproductModule<A> {
     pub name: TypeName,
-    pub declaring_type: TypeScheme,
+    pub type_constructor: TypeScheme,
     pub constructors: Vec<ValueDeclaration<A>>,
 }
 
+// Rename into Record?
 #[derive(Clone, Debug, PartialEq)]
-pub struct Struct<A>(pub Vec<StructField<A>>);
+pub struct Struct<A> {
+    pub forall: UniversalQuantifiers,
+    pub fields: Vec<StructField<A>>,
+}
 
 impl<A> Struct<A>
 where
     A: Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Struct<B> {
-        let Self(xs) = self;
-        Struct(xs.into_iter().map(|x| x.map(f)).collect())
+        let Self { forall, fields } = self;
+        Struct {
+            forall,
+            fields: fields.into_iter().map(|x| x.map(f)).collect(),
+        }
+    }
+
+    pub fn synthesize_type(&self, ctx: &TypingContext) -> Typing<TypeScheme> {
+        let universals = self.forall.fresh_type_parameters();
+        let record_type = self.synthesize_record_type(&universals, ctx)?;
+        self.make_type_scheme(universals, record_type)
+    }
+
+    fn synthesize_record_type(
+        &self,
+        universals: &HashMap<TypeName, TypeParameter>,
+        ctx: &TypingContext,
+    ) -> Result<Type, TypeError> {
+        Ok(Type::Product(ProductType::Struct(
+            self.fields
+                .iter()
+                .map(|f| {
+                    f.type_annotation
+                        .synthesize_type(universals, ctx)
+                        .map(|field_type| (f.name.clone(), field_type))
+                })
+                .collect::<Typing<_>>()?,
+        )))
+    }
+
+    fn make_type_scheme(
+        &self,
+        universals: HashMap<TypeName, TypeParameter>,
+        body: Type,
+    ) -> Typing<TypeScheme> {
+        let mut boofer = vec![];
+        for var in self.forall.parameters() {
+            let param = universals
+                .get(var)
+                .ok_or_else(|| TypeError::UndefinedQuantifier {
+                    quantifier: var.clone(),
+                    in_type: body.clone(),
+                })?;
+
+            boofer.push(param.clone());
+        }
+
+        Ok(TypeScheme::new(boofer.as_slice(), body))
     }
 }
 
@@ -530,8 +604,8 @@ where
                 }
                 Ok(())
             }
-            Self::Struct(_, Struct(fields)) => {
-                writeln!(f, "struct {{")?;
+            Self::Struct(_, Struct { forall, fields }) => {
+                writeln!(f, "{forall}struct {{")?;
                 for StructField {
                     name,
                     type_annotation,
@@ -716,9 +790,16 @@ where
         ctx: &TypingContext,
     ) -> Typing<Type> {
         match self {
-            // The name does not exist in Type Expression for the type
-            // that defines it.
-            Self::Constructor(_, name) => Ok(Type::Named(TypeName::new(&name.as_str()))),
+            Self::Constructor(_, name) => {
+                let name = TypeName::new(&name.as_str());
+                ctx.lookup(&name.clone().into())
+                    .unwrap_or_else(|| {
+                        // If the type scheme is defined, then instantiate it. Otherwise default to a named
+                        // reference. This is necessary when declaring recursive types.
+                        TypeScheme::from_constant(Type::Named(TypeName::new(&name.as_str())))
+                    })
+                    .instantiate(ctx)
+            }
             Self::Parameter(_, param) => {
                 let type_name = TypeName::new(&param.as_str());
 

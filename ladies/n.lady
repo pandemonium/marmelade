@@ -1,4 +1,11 @@
-List ::= ∀a. Cons a (List a) | Nil
+(* Annoying that I need the pipe between pattern clauses.
+   Also: parsing comments is broken.
+   Also: parsing pattern matches with a single clause is broken. :)
+*)
+
+List ::= ∀a.
+  Cons a (List a)
+  Nil
 
 map::∀a b. (a -> b) -> List a -> List b = λf xs.
   let step = λxs x. Cons (f x) xs
@@ -10,7 +17,7 @@ fold_right::∀b a. b -> (b -> a -> b) -> List a -> b = λacc f xs.
   | Nil       -> acc
 
 main =
-    map id (Cons 1 Nil)
+    1
 
 id :: ∀a. a -> a = λx. x
 (* hej *)

@@ -8,8 +8,8 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        self, DomainExpression, Expression, Identifier, MatchClause, Pattern, TypeExpression,
-        TypeName, ValueDeclaration,
+        self, DomainExpression, Expression, Identifier, Pattern, TypeExpression, TypeName,
+        ValueDeclaration,
     },
     lexer::SourceLocation,
     parser::ParsingInfo,
@@ -48,7 +48,11 @@ impl TypeChecker {
         if let Some(signature) = &declaration.type_signature {
             let type_scheme = signature.synthesize_type(typing_context)?;
             let expected_type = type_scheme.clone().instantiate(typing_context)?;
-            self.check(expected_type, &declaration.declarator.expression)?;
+            // Expand the type?
+            self.check(
+                expected_type.expand_type(&typing_context)?,
+                &declaration.declarator.expression,
+            )?;
             let id = declaration.clone().binder;
             println!("type_check: `{id}` is `{type_scheme}`");
             self.bind_type(id, type_scheme);

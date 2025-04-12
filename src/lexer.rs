@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self};
 
 use crate::ast::Identifier;
 
@@ -106,9 +106,12 @@ impl LexicalAnalyzer {
                 [',', remains @ ..] => self.emit(1, TokenType::Comma, remains),
                 ['(', remains @ ..] => self.emit(1, TokenType::LeftParen, remains),
                 [')', remains @ ..] => self.emit(1, TokenType::RightParen, remains),
+                ['{', remains @ ..] => self.emit(1, TokenType::LeftBrace, remains),
+                ['}', remains @ ..] => self.emit(1, TokenType::RightBrace, remains),
                 ['_', remains @ ..] => self.emit(1, TokenType::Underscore, remains),
                 ['|', remains @ ..] => self.emit(1, TokenType::Pipe, remains),
                 [';', remains @ ..] => self.emit(1, TokenType::Semicolon, remains),
+                [':', remains @ ..] => self.emit(1, TokenType::Colon, remains),
                 ['.', remains @ ..] => self.emit(1, TokenType::Period, remains),
 
                 ['+', remains @ ..] => self.emit(1, TokenType::Plus, remains),
@@ -354,10 +357,13 @@ pub enum TokenType {
     Comma,       // ,
     LeftParen,   // (
     RightParen,  // )
+    LeftBrace,   // {
+    RightBrace,  // }
     Underscore,  // _
     Pipe,        // |
     DoubleQuote, // "
     SingleQuote, // '
+    Colon,       // :
     Semicolon,   // ;
     Period,      // .
     Plus,        // +
@@ -656,10 +662,13 @@ impl fmt::Display for TokenType {
             Self::Comma => write!(f, ","),
             Self::LeftParen => write!(f, "("),
             Self::RightParen => write!(f, ")"),
+            Self::LeftBrace => write!(f, "{{"),
+            Self::RightBrace => write!(f, "}}"),
             Self::Underscore => write!(f, "_"),
             Self::Pipe => write!(f, "|"),
             Self::DoubleQuote => write!(f, "\""),
             Self::SingleQuote => write!(f, "'"),
+            Self::Colon => write!(f, ":"),
             Self::Semicolon => write!(f, ";"),
             Self::Period => write!(f, "."),
             Self::Plus => write!(f, "+"),

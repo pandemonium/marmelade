@@ -89,6 +89,10 @@ pub fn check(
         //        (expected, Expression::DeconstructInto(_, deconstruct)) => {
         //            todo!()
         //        }
+        //
+        // This defaults to simple unifications, but what about TypeConstructor vs expanded type?
+        //
+        //        (expected, Expression::)
         (expected, expression) => {
             let pi = expression.annotation();
             let expression = ctx.infer_type(&expression)?;
