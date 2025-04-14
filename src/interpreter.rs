@@ -5,8 +5,8 @@ use crate::{
     ast::{
         Apply, Binding, CompilationUnit, Constant, ControlFlow, Declaration, DeconstructInto,
         Expression, Identifier, ImportModule, Inject, Lambda, MatchClause, ModuleDeclarator,
-        Pattern, Product, Project, SelfReferential, Sequence, TypeDeclaration, TypeDeclarator,
-        TypeName,
+        Pattern, Product, ProductIndex, Project, SelfReferential, Sequence, TypeDeclaration,
+        TypeDeclarator, TypeName,
     },
     bridge::Bridge,
     interpreter::module::ModuleResolver,
@@ -418,6 +418,12 @@ pub enum RuntimeError {
 
     #[error("{scrutinee} did not match any case")]
     ExpectedMatch { scrutinee: Value },
+
+    #[error("Expected struct field {0}")]
+    ExpectedProductIndex(ProductIndex),
+
+    #[error("Must not project {lhs} with {rhs}")]
+    BadProjection { lhs: Value, rhs: ProductIndex },
 }
 
 pub type Interpretation<A = Value> = Result<A, RuntimeError>;
@@ -450,7 +456,7 @@ where
             }
             Self::Inject(_, inject) => reduce_inject_coproduct(inject, env),
             Self::Product(_, node) => reduce_product(node, env),
-            Self::Project(_, Project { .. }) => todo!(),
+            Self::Project(_, Project { base, index }) => reduce_projection(*base, index, env),
             Self::Binding(
                 _,
                 Binding {
@@ -464,6 +470,32 @@ where
             Self::ControlFlow(_, control) => reduce_control_flow(control, env),
             Self::DeconstructInto(_, deconstruct) => reduce_deconstruction(deconstruct, env),
         }
+    }
+}
+
+fn reduce_projection<A>(
+    base: Expression<A>,
+    index: ProductIndex,
+    env: &mut Environment,
+) -> Interpretation
+where
+    A: fmt::Debug + Clone,
+{
+    let base = base.reduce(env)?;
+    match (base, index) {
+        (Value::Struct(elements), ref index @ ProductIndex::Struct(ref rhs)) => elements
+            .iter()
+            .find_map(|(lhs, element)| (lhs == rhs).then_some(element))
+            .cloned()
+            .ok_or_else(|| RuntimeError::ExpectedProductIndex(index.clone())),
+        (Value::Tuple(elements), index @ ProductIndex::Tuple(rhs)) => {
+            println!("reduce_projection: {elements:?}");
+            elements
+                .get(rhs)
+                .cloned()
+                .ok_or_else(|| RuntimeError::ExpectedProductIndex(index))
+        }
+        (lhs, rhs) => Err(RuntimeError::BadProjection { lhs, rhs }),
     }
 }
 

@@ -402,7 +402,7 @@ pub enum Operator {
     Plus,
     Minus,
     Times,
-    Divides,
+    Division,
     Modulo,
 
     Equals,
@@ -411,7 +411,8 @@ pub enum Operator {
     Gt,
     Lt,
 
-    TupleCons,
+    Tuple,
+    Projection,
 
     And,
     Or,
@@ -431,13 +432,14 @@ impl Operator {
             TokenType::Plus => Some(Operator::Plus),
             TokenType::Minus => Some(Operator::Minus),
             TokenType::Star => Some(Operator::Times),
-            TokenType::Slash => Some(Operator::Divides),
+            TokenType::Slash => Some(Operator::Division),
             TokenType::Percent => Some(Operator::Modulo),
             TokenType::Gte => Some(Operator::Gte),
             TokenType::Lte => Some(Operator::Lte),
             TokenType::Gt => Some(Operator::Gt),
             TokenType::Lt => Some(Operator::Lt),
-            TokenType::Comma => Some(Operator::TupleCons),
+            TokenType::Comma => Some(Operator::Tuple),
+            TokenType::Period => Some(Operator::Projection),
             TokenType::Keyword(Keyword::And) => Some(Operator::And),
             TokenType::Keyword(Keyword::Or) => Some(Operator::Or),
             TokenType::Keyword(Keyword::Xor) => Some(Operator::Xor),
@@ -447,15 +449,16 @@ impl Operator {
     }
 
     pub fn is_right_associative(&self) -> bool {
-        matches!(self, Operator::TupleCons)
+        matches!(self, Operator::Tuple)
     }
 
     pub fn precedence(&self) -> usize {
         match self {
-            Self::Times | Self::Divides | Self::Modulo => 16,
+            Self::Projection => 17,
+            Self::Times | Self::Division | Self::Modulo => 16,
             Self::Plus | Self::Minus => 15,
 
-            Self::TupleCons => 14,
+            Self::Tuple => 14,
 
             Self::Equals | Self::Gte | Self::Lte | Self::Gt | Self::Lt => 13,
             Self::Not => 12,
@@ -465,17 +468,17 @@ impl Operator {
         }
     }
 
-    pub fn id(&self) -> Identifier {
-        Identifier::new(&self.function_identifier())
+    pub fn as_identifier(&self) -> Identifier {
+        Identifier::new(&self.name())
     }
 
-    pub fn function_identifier(&self) -> &str {
+    pub fn name(&self) -> &str {
         // These mappings are highly dubious
         match self {
             Self::Plus => "+",
             Self::Minus => "-",
             Self::Times => "*",
-            Self::Divides => "/",
+            Self::Division => "/",
             Self::Modulo => "%",
 
             Self::Equals => "=",
@@ -484,7 +487,8 @@ impl Operator {
             Self::Gt => ">",
             Self::Lt => "<",
 
-            Self::TupleCons => ",",
+            Self::Tuple => ",",
+            Self::Projection => ".",
 
             Self::And => "and",
             Self::Or => "or",
@@ -500,7 +504,7 @@ impl fmt::Display for Operator {
             Self::Plus => write!(f, "+"),
             Self::Minus => write!(f, "-"),
             Self::Times => write!(f, "*"),
-            Self::Divides => write!(f, "/"),
+            Self::Division => write!(f, "/"),
             Self::Modulo => write!(f, "%"),
 
             Self::Equals => write!(f, "="),
@@ -510,7 +514,8 @@ impl fmt::Display for Operator {
             Self::Gt => write!(f, ">"),
             Self::Lt => write!(f, "<"),
 
-            Self::TupleCons => write!(f, ","),
+            Self::Tuple => write!(f, ","),
+            Self::Projection => write!(f, "."),
 
             Self::And => write!(f, "and"),
             Self::Or => write!(f, "or"),

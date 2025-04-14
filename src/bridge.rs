@@ -150,9 +150,9 @@ where
 
 // The Comma operator has to be right associative or
 // it won't bind correctly.
-pub struct TupleConsSyntax;
+pub struct TupleSyntax;
 
-impl Bridge for TupleConsSyntax {
+impl Bridge for TupleSyntax {
     fn arity(&self) -> usize {
         2
     }

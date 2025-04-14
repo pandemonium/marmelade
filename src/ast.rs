@@ -1893,11 +1893,11 @@ pub enum Product<A> {
 impl<A> Product<A> {
     fn map<B>(self, f: fn(A) -> B) -> Product<B> {
         match self {
-            Self::Tuple(mut expressions) => {
-                Product::Tuple(expressions.drain(..).map(|x| x.map(f)).collect())
+            Self::Tuple(expressions) => {
+                Product::Tuple(expressions.into_iter().map(|x| x.map(f)).collect())
             }
-            Self::Struct(mut bindings) => {
-                Product::<B>::Struct(bindings.drain(..).map(|(k, v)| (k, v.map(f))).collect())
+            Self::Struct(bindings) => {
+                Product::<B>::Struct(bindings.into_iter().map(|(k, v)| (k, v.map(f))).collect())
             }
         }
     }

@@ -5,12 +5,12 @@ use crate::{
     ast::{
         Apply, Arrow, Binding, CompilationUnit, Constant, Constructor, ConstructorPattern,
         ControlFlow, Coproduct, Declaration, DeconstructInto, Expression, Identifier, Lambda,
-        MatchClause, ModuleDeclarator, Parameter, Pattern, Product, SelfReferential, Sequence,
-        Struct, StructField, TuplePattern, TypeApply, TypeDeclaration, TypeDeclarator,
-        TypeExpression, TypeName, TypeSignature, UniversalQuantifiers, ValueDeclaration,
-        ValueDeclarator,
+        MatchClause, ModuleDeclarator, Parameter, Pattern, Product, ProductIndex, Project,
+        SelfReferential, Sequence, Struct, StructField, TuplePattern, TypeApply, TypeDeclaration,
+        TypeDeclarator, TypeExpression, TypeName, TypeSignature, UniversalQuantifiers,
+        ValueDeclaration, ValueDeclarator,
     },
-    lexer::{Keyword, Layout, Operator, SourceLocation, Token, TokenType},
+    lexer::{Keyword, Layout, Literal, Operator, SourceLocation, Token, TokenType},
     typer,
 };
 
@@ -33,6 +33,36 @@ impl<'a, A> ParseResultOps<'a, A> for ParseResult<'a, A> {
     }
 }
 
+#[derive(Debug)]
+pub struct DisplayList<A>(Vec<A>);
+
+impl<A> fmt::Display for DisplayList<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut i = self.0.iter();
+        if let Some(element) = i.next() {
+            write!(f, "{element}")?;
+        }
+
+        while let Some(element) = i.next() {
+            write!(f, ", {element}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<A> From<Vec<A>> for DisplayList<A>
+where
+    A: fmt::Display,
+{
+    fn from(value: Vec<A>) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ParseError {
     #[error("Unexpected token {0}")]
@@ -43,6 +73,12 @@ pub enum ParseError {
 
     #[error("Expected: {0}")]
     ExpectedTokenType(TokenType),
+
+    #[error("Expected one of {one_of}; got {received}")]
+    Expected {
+        one_of: DisplayList<TokenType>,
+        received: TokenType,
+    },
 
     #[error("Declaration stream {1:?} is offside of {0}")]
     DeclarationOffside(SourceLocation, Vec<Token>),
@@ -602,19 +638,15 @@ fn parse_struct_literal<'a>(
 
     let mut remains = remains;
 
-    println!("parse_struct_literal: {remains:?}");
-
     if let [T(separator @ (TT::Semicolon | TT::Layout(Layout::Newline)), ..), ..] = remains {
         while matches!(remains, [T(t, ..), T(lookahead, ..), ..] if t == separator && lookahead != &TT::RightBrace)
         {
             let (field, remains1) = parse_struct_field_initializer(&remains[1..])?;
             fields.push(field);
+            remains = remains1;
 
             if starts_with(&TT::RightBrace, remains1) {
-                remains = remains1;
                 break;
-            } else {
-                remains = &remains1[1..];
             }
         }
     }
@@ -1008,23 +1040,67 @@ fn parse_operator<'a>(
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let operator_precedence = operator.precedence();
     if operator_precedence > context_precedence {
-        let (rhs, remains) = parse_expression(
-            remains,
-            if operator.is_right_associative() {
-                operator_precedence - 1
-            } else {
-                operator_precedence
-            },
-        )?;
+        let (lhs, remains) = if operator != &Operator::Projection {
+            parse_regular_operator(lhs, operator, remains, position, operator_precedence)?
+        } else {
+            parse_special_operator(lhs, remains)?
+        };
 
-        parse_expression_infix(
-            apply_binary_operator(*operator, lhs, rhs, position),
-            remains,
-            context_precedence,
-        )
+        parse_expression_infix(lhs, remains, context_precedence)
     } else {
         Ok((lhs, input))
     }
+}
+
+fn parse_special_operator<'a>(
+    lhs: Expression<ParsingInfo>,
+    remains: &'a [Token],
+) -> ParseResult<'a, Expression<ParsingInfo>> {
+    let index = match remains {
+        [T(TT::Identifier(name), pos), remains @ ..] => {
+            Ok(((ProductIndex::Struct(Identifier::new(name)), pos), remains))
+        }
+        [T(TT::Literal(Literal::Integer(index)), pos), remains @ ..] => {
+            Ok(((ProductIndex::Tuple(*index as usize), pos), remains))
+        }
+        _otherwise => Err(ParseError::Expected {
+            // I need a way to talk about a token's actual type
+            one_of: vec![
+                TT::Identifier("field-name".to_owned()),
+                TT::Literal(Literal::Integer(0)),
+            ]
+            .into(),
+            received: remains[0].token_type().clone(),
+        })?,
+    };
+
+    index.map_value(|(index, pos)| {
+        Expression::Project(
+            ParsingInfo::new(*pos),
+            Project {
+                base: lhs.into(),
+                index,
+            },
+        )
+    })
+}
+
+fn parse_regular_operator<'a>(
+    lhs: Expression<ParsingInfo>,
+    operator: &Operator,
+    remains: &'a [Token],
+    position: SourceLocation,
+    operator_precedence: usize,
+) -> ParseResult<'a, Expression<ParsingInfo>> {
+    parse_expression(
+        remains,
+        if operator.is_right_associative() {
+            operator_precedence - 1
+        } else {
+            operator_precedence
+        },
+    )
+    .map_value(|rhs| apply_binary_operator(position, lhs, *operator, rhs))
 }
 
 fn parse_juxtaposed<'a>(
@@ -1074,15 +1150,15 @@ fn parse_sequence<'a>(
 }
 
 fn apply_binary_operator(
-    op: Operator,
-    lhs: Expression<ParsingInfo>,
-    rhs: Expression<ParsingInfo>,
     position: SourceLocation,
+    lhs: Expression<ParsingInfo>,
+    op: Operator,
+    rhs: Expression<ParsingInfo>,
 ) -> Expression<ParsingInfo> {
     let apply_lhs = Expression::Apply(
         ParsingInfo::new(position),
         Apply {
-            function: Expression::Variable(ParsingInfo::new(position), op.id()).into(),
+            function: Expression::Variable(ParsingInfo::new(position), op.as_identifier()).into(),
             argument: lhs.into(),
         },
     );
@@ -1135,11 +1211,8 @@ mod tests {
                             function: E::Apply(
                                 (),
                                 Apply {
-                                    function: E::Variable(
-                                        (),
-                                        Id::new(&Operator::Plus.function_identifier())
-                                    )
-                                    .into(),
+                                    function: E::Variable((), Id::new(&Operator::Plus.name()))
+                                        .into(),
                                     argument: E::Variable((), Id::new("x")).into(),
                                 }
                             )

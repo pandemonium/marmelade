@@ -8,5 +8,6 @@
   [X] synthesize type
   [X] make_type_scheme - move from Coproduct?
   [ ] make_implementation_module for smart constructors and smart projectors
-  [ ] projections
+  [X] projections
+    [ ] tuple projections seem off. Runtime representation is flat, type represetation is nested (right.)
 [ ] modules
