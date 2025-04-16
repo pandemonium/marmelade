@@ -1,9 +1,5 @@
-List ::= forall a. Cons a (List a) | Nil
-
-Person ::= { Foo : Int; Bar : Int }
-
 main =
     let x =
-        { Foo: 2; Bar: 3; Quux: "hej" }
+        { Foo: 2; Bar: true; Quux: "hej" }
     in
-        (x.Quux, x.Bar, x.Foo).2
+        (x.Quux, x.Bar, x.Foo).0

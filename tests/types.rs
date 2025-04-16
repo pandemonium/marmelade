@@ -9,8 +9,8 @@ use marmelade::{
     parser::ParsingInfo,
     stdlib,
     typer::{
-        Binding, CoproductType, ProductType, Type, TypeInference, TypeParameter, TypeScheme,
-        TypingContext,
+        Binding, CoproductType, ProductType, TupleType, Type, TypeInference, TypeParameter,
+        TypeScheme, TypingContext,
     },
 };
 use tools::*;
@@ -32,12 +32,15 @@ fn list_type() {
     let lhs = Type::Coproduct(CoproductType::new(vec![
         (
             "Cons".to_owned(),
-            Type::Product(ProductType::Tuple(vec![
+            Type::Product(ProductType::Tuple(TupleType(vec![
                 ty.clone(),
                 Type::Apply(Type::Named(TypeName::new("List")).into(), ty.into()),
-            ])),
+            ]))),
         ),
-        ("Nil".to_owned(), Type::Product(ProductType::Tuple(vec![]))), // hmm
+        (
+            "Nil".to_owned(),
+            Type::Product(ProductType::Tuple(TupleType(vec![]))),
+        ), // hmm
     ]));
 
     let lhs = TypeScheme {

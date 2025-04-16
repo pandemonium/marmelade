@@ -8,7 +8,7 @@ use crate::{
         SelfReferential, Sequence,
     },
     parser::ParsingInfo,
-    typer::{TypeError, TypeScheme},
+    typer::{TupleType, TypeError, TypeScheme},
 };
 
 pub fn check(
@@ -78,7 +78,9 @@ pub fn check(
         (Type::Product(expected_type), Expression::Product(annotation, product)) => {
             check_product(&annotation, expected_type, product, ctx)
         }
+
         (_expected, Expression::Project(_, _project)) => todo!(),
+
         (expected, Expression::Binding(annotation, binding)) => {
             check_binding(&annotation, expected, binding, ctx)
         }
@@ -126,9 +128,9 @@ fn check_product(
 ) -> Typing<Substitutions> {
     let product = product.clone();
     match (expected_type, product) {
-        (ProductType::Tuple(types), Product::Tuple(expressions))
-            if types.len() == expressions.len() =>
-        {
+        (ProductType::Tuple(types), Product::Tuple(expressions)) => {
+            let TupleType(types) = types.unspine();
+
             let mut s = Substitutions::default();
             for (ty, expr) in types.into_iter().zip(expressions.into_iter()) {
                 s = s.compose(check(&expr, ty, &ctx.apply_substitutions(&s))?);

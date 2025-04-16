@@ -3,7 +3,7 @@ use std::{
     fmt,
 };
 
-use super::{CoproductType, Parsed, Type, TypeParameter, Typing};
+use super::{CoproductType, Parsed, TupleType, Type, TypeParameter, Typing};
 use crate::{
     ast::Identifier,
     typer::{ProductType, TypeError},
@@ -67,8 +67,8 @@ where
                 }
             }
             ref relation @ (
-                Type::Product(ProductType::Tuple(ref lhs_tuple)),
-                Type::Product(ProductType::Tuple(ref rhs_tuple)),
+                Type::Product(ProductType::Tuple(TupleType(ref lhs_tuple))),
+                Type::Product(ProductType::Tuple(TupleType(ref rhs_tuple))),
             ) if !self.is_reentrant(&relation) => {
                 self.enter(relation.clone());
                 self.unify_tuples(lhs_tuple, rhs_tuple)
@@ -105,13 +105,11 @@ where
                 Ok(constructor.compose(at))
             }
             (lhs, rhs) if lhs == rhs => Ok(Substitutions::default()),
-            (lhs, rhs) => {
-                Err(TypeError::UnifyImpossible {
-                    lhs: lhs.clone(),
-                    rhs: rhs.clone(),
-                    position: { self.annotation.info().location().clone() },
-                })
-            }
+            (lhs, rhs) => Err(TypeError::UnifyImpossible {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                position: { self.annotation.info().location().clone() },
+            }),
         }
     }
 
@@ -202,8 +200,8 @@ where
             Ok(substitution)
         } else {
             Err(TypeError::BadTupleArity {
-                lhs: ProductType::Tuple(lhs.to_vec()),
-                rhs: ProductType::Tuple(rhs.to_vec()),
+                lhs: ProductType::Tuple(TupleType(lhs.to_vec())),
+                rhs: ProductType::Tuple(TupleType(rhs.to_vec())),
             })
         }
     }

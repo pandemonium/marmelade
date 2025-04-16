@@ -1040,10 +1040,10 @@ fn parse_operator<'a>(
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let operator_precedence = operator.precedence();
     if operator_precedence > context_precedence {
-        let (lhs, remains) = if operator != &Operator::Projection {
-            parse_regular_operator(lhs, operator, remains, position, operator_precedence)?
+        let (lhs, remains) = if operator == &Operator::Projection {
+            parse_projection_operator(lhs, remains)?
         } else {
-            parse_special_operator(lhs, remains)?
+            parse_regular_operator(lhs, operator, remains, position, operator_precedence)?
         };
 
         parse_expression_infix(lhs, remains, context_precedence)
@@ -1052,7 +1052,7 @@ fn parse_operator<'a>(
     }
 }
 
-fn parse_special_operator<'a>(
+fn parse_projection_operator<'a>(
     lhs: Expression<ParsingInfo>,
     remains: &'a [Token],
 ) -> ParseResult<'a, Expression<ParsingInfo>> {

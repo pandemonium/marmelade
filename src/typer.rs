@@ -282,7 +282,7 @@ impl Type {
             }
             Self::Coproduct(c) => c.iter().flat_map(|(_, ty)| ty.free_variables()).collect(),
             Self::Product(x) => match x {
-                ProductType::Tuple(elements) => {
+                ProductType::Tuple(TupleType(elements)) => {
                     elements.iter().flat_map(|ty| ty.free_variables()).collect()
                 }
                 ProductType::Struct(elements) => elements
@@ -369,19 +369,17 @@ impl fmt::Display for BaseType {
 
 #[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Ord)]
 pub enum ProductType {
-    Tuple(Vec<Type>),
+    Tuple(TupleType),
     Struct(Vec<(ast::Identifier, Type)>),
 }
 
 impl ProductType {
     fn apply(self, subs: &Substitutions) -> ProductType {
         match self {
-            ProductType::Tuple(mut elements) => {
-                ProductType::Tuple(elements.drain(..).map(|ty| ty.apply(subs)).collect())
-            }
-            ProductType::Struct(mut elements) => ProductType::Struct(
+            ProductType::Tuple(tuple) => ProductType::Tuple(tuple.apply(subs)),
+            ProductType::Struct(elements) => ProductType::Struct(
                 elements
-                    .drain(..)
+                    .into_iter()
                     .map(|(label, ty)| (label, ty.apply(subs)))
                     .collect(),
             ),
@@ -389,10 +387,47 @@ impl ProductType {
     }
 }
 
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Ord)]
+pub struct TupleType(pub Vec<Type>);
+
+impl TupleType {
+    fn apply(self, subs: &Substitutions) -> Self {
+        let Self(elements) = self;
+        Self(elements.into_iter().map(|ty| ty.apply(subs)).collect())
+    }
+
+    pub fn arity(&self) -> usize {
+        let Self(elements) = self;
+        elements.len()
+    }
+
+    // When and where can I do this?
+    fn unspine(self) -> Self {
+        let Self(mut elements) = self;
+        let first = elements.remove(0);
+
+        Self({
+            let mut tail = elements
+                .into_iter()
+                .flat_map(|el| {
+                    if let Type::Product(ProductType::Tuple(spine)) = el {
+                        spine.unspine().0
+                    } else {
+                        vec![el]
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            tail.insert(0, first);
+            tail
+        })
+    }
+}
+
 impl fmt::Display for ProductType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Tuple(elements) => {
+            Self::Tuple(TupleType(elements)) => {
                 write!(f, "(")?;
                 write!(
                     f,
@@ -738,7 +773,7 @@ mod tests {
     use crate::{
         ast::{self, Apply, Inject, Lambda, Project},
         parser::ParsingInfo,
-        typer::{BaseType, ProductType, Type, TypeParameter, TypeScheme},
+        typer::{BaseType, ProductType, TupleType, Type, TypeParameter, TypeScheme},
     };
 
     fn mk_apply<A>(f: ast::Expression<A>, arg: ast::Expression<A>) -> ast::Expression<A>
@@ -792,10 +827,10 @@ mod tests {
         let t = ctx.infer_type(&e).unwrap();
         assert_eq!(
             t.inferred_type,
-            Type::Product(ProductType::Tuple(vec![
+            Type::Product(ProductType::Tuple(TupleType(vec![
                 Type::Constant(BaseType::Int),
                 Type::Constant(BaseType::Float)
-            ]))
+            ])))
         );
     }
 
@@ -813,10 +848,10 @@ mod tests {
         let t = ctx.infer_type(&e).unwrap();
         assert_eq!(
             t.inferred_type,
-            Type::Product(ProductType::Tuple(vec![
+            Type::Product(ProductType::Tuple(TupleType(vec![
                 Type::Constant(BaseType::Int),
                 Type::Constant(BaseType::Float)
-            ]))
+            ])))
         );
 
         let e = ast::Expression::Project(

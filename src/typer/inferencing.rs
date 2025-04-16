@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::UntypedExpression;
+use super::{TupleType, UntypedExpression};
 
 impl ast::Constant {
     pub fn synthesize_type(&self) -> Typing {
@@ -256,13 +256,22 @@ impl TypingContext {
         let base = self.infer_type(base)?;
 
         match (&base.inferred_type, index) {
-            (Type::Product(ProductType::Tuple(elements)), ast::ProductIndex::Tuple(index))
-                if *index < elements.len() =>
-            {
-                Ok(TypeInference::new(
-                    base.substitutions,
-                    elements[*index].clone(),
-                ))
+            // elements is a right-biased 2-tree so #3 is .1.1
+            (Type::Product(ProductType::Tuple(tuple)), ix @ ast::ProductIndex::Tuple(index)) => {
+                // This match clause is not efficient at all
+                let TupleType(elements) = tuple.clone().unspine();
+
+                if *index < elements.len() {
+                    Ok(TypeInference::new(
+                        base.substitutions,
+                        elements[*index].clone(),
+                    ))
+                } else {
+                    Err(TypeError::BadProjection {
+                        base: base.inferred_type,
+                        index: ix.clone(),
+                    })
+                }
             }
             (Type::Product(ProductType::Struct(elements)), ast::ProductIndex::Struct(id)) => {
                 if let Some((_, inferred_type)) = elements.iter().find(|(field, _)| field == id) {
@@ -311,7 +320,7 @@ impl TypingContext {
         // todo: don't I have to substitute my element types?
         Ok(TypeInference::new(
             substitutions,
-            Type::Product(ProductType::Tuple(types)),
+            Type::Product(ProductType::Tuple(TupleType(types))),
         ))
     }
 
@@ -550,7 +559,7 @@ impl Pattern<ParsingInfo> {
 
                 Ok(TypeInference {
                     substitutions,
-                    inferred_type: Type::Product(ProductType::Tuple(element_types)),
+                    inferred_type: Type::Product(ProductType::Tuple(TupleType(element_types))),
                 })
             }
             Self::Literally(pattern) => pattern.synthesize_type(),
@@ -592,7 +601,7 @@ impl Pattern<ParsingInfo> {
 
             (
                 Self::Tuple(_, TuplePattern { elements }),
-                Type::Product(ProductType::Tuple(tuple)),
+                Type::Product(ProductType::Tuple(TupleType(tuple))),
             ) if elements.len() == tuple.len() => {
                 let mut matched = Match::default();
                 for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {

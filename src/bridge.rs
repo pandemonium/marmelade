@@ -2,7 +2,7 @@ use crate::{
     ast::{Expression, Identifier, Lambda, Parameter},
     context::Linkage,
     interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
-    typer::{BaseType, ProductType, Type, TypeParameter, TypeScheme},
+    typer::{BaseType, ProductType, TupleType, Type, TypeParameter, TypeScheme},
 };
 
 pub type InvocationResult<A> = Result<A, RuntimeError>;
@@ -148,8 +148,6 @@ where
     }
 }
 
-// The Comma operator has to be right associative or
-// it won't bind correctly.
 pub struct TupleSyntax;
 
 impl Bridge for TupleSyntax {
@@ -178,10 +176,10 @@ impl Bridge for TupleSyntax {
             Type::Parameter(p).into(),
             Type::Arrow(
                 Type::Parameter(q).into(),
-                Type::Product(ProductType::Tuple(vec![
+                Type::Product(ProductType::Tuple(TupleType(vec![
                     Type::Parameter(p),
                     Type::Parameter(q),
-                ]))
+                ])))
                 .into(),
             )
             .into(),

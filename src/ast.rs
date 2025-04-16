@@ -10,8 +10,8 @@ use crate::{
     lexer::{self, SourceLocation},
     parser::ParsingInfo,
     typer::{
-        CoproductType, Parsed, ProductType, Type, TypeError, TypeParameter, TypeScheme, Typing,
-        TypingContext,
+        CoproductType, Parsed, ProductType, TupleType, Type, TypeError, TypeParameter, TypeScheme,
+        Typing, TypingContext,
     },
 };
 
@@ -482,7 +482,7 @@ where
                     tuple_signature.map(|signature| {
                         (
                             name.as_str().to_owned(),
-                            Type::Product(ProductType::Tuple(signature)),
+                            Type::Product(ProductType::Tuple(TupleType(signature))),
                         )
                     })
                 })
@@ -1227,7 +1227,7 @@ impl DomainExpression {
 
     fn from_product(product: ProductType) -> Self {
         Self::Product(match product {
-            ProductType::Tuple(elements) => {
+            ProductType::Tuple(TupleType(elements)) => {
                 elements.into_iter().map(|t| Self::from_type(t)).collect()
             }
             ProductType::Struct(..) => todo!(),
