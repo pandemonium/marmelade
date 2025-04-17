@@ -76,17 +76,17 @@ pub fn check(
         }
         (_expected, Expression::Inject(_, _inject)) => todo!(),
         (Type::Product(expected_type), Expression::Product(annotation, product)) => {
-            check_product(&annotation, expected_type, product, ctx)
+            check_product(annotation, expected_type, product, ctx)
         }
 
         (_expected, Expression::Project(_, _project)) => todo!(),
 
         (expected, Expression::Binding(annotation, binding)) => {
-            check_binding(&annotation, expected, binding, ctx)
+            check_binding(annotation, expected, binding, ctx)
         }
         (expected, Expression::Sequence(_, sequence)) => check_sequence(expected, sequence, ctx),
         (expected, Expression::ControlFlow(pi, control_flow)) => {
-            check_control_flow(&pi, expected, control_flow, ctx)
+            check_control_flow(pi, expected, control_flow, ctx)
         }
         //        (expected, Expression::DeconstructInto(_, deconstruct)) => {
         //            todo!()
@@ -97,7 +97,7 @@ pub fn check(
         //        (expected, Expression::)
         (expected, expression) => {
             let pi = expression.annotation();
-            let expression = ctx.infer_type(&expression)?;
+            let expression = ctx.infer_type(expression)?;
             unify(
                 &expected.apply(&expression.substitutions),
                 &expression.inferred_type,
@@ -112,9 +112,9 @@ fn check_sequence(
     sequence: &Sequence<ParsingInfo>,
     ctx: &TypingContext,
 ) -> Result<Substitutions, TypeError> {
-    let unification = check(&*sequence.this, Type::Constant(BaseType::Unit), ctx)?;
+    let unification = check(&sequence.this, Type::Constant(BaseType::Unit), ctx)?;
     check(
-        &*sequence.and_then,
+        &sequence.and_then,
         expected,
         &ctx.apply_substitutions(&unification),
     )
@@ -139,8 +139,8 @@ fn check_product(
         }
 
         (ProductType::Struct(mut lhs), Product::Struct(mut rhs)) if lhs.len() == rhs.len() => {
-            lhs.sort_by(|(p, _), (q, _)| p.cmp(&q));
-            rhs.sort_by(|(p, _), (q, _)| p.cmp(&q));
+            lhs.sort_by(|(p, _), (q, _)| p.cmp(q));
+            rhs.sort_by(|(p, _), (q, _)| p.cmp(q));
 
             let mut s = Substitutions::default();
             for ((lhs_label, expected), (rhs_label, expr)) in lhs.into_iter().zip(rhs.into_iter()) {
@@ -159,7 +159,7 @@ fn check_product(
 
         (expected_type, product) => Err(TypeError::ExpectedType {
             expected_type: Type::Product(expected_type),
-            literal: Expression::Product(pi.clone(), product.clone()),
+            literal: Expression::Product(*pi, product.clone()),
         }),
     }
 }
@@ -175,7 +175,7 @@ fn check_binding(
         bound,
         body,
     } = binding;
-    let bound = ctx.infer_type(&bound)?;
+    let bound = ctx.infer_type(bound)?;
 
     let mut ctx = ctx.clone();
     ctx.bind(binder.clone().into(), bound.inferred_type.generalize(&ctx));
@@ -198,7 +198,7 @@ fn check_lambda(
         parameter_name.clone().into(),
         TypeScheme::from_constant(parameter_type.clone()),
     );
-    let body = ctx.infer_type(&body)?;
+    let body = ctx.infer_type(body)?;
 
     let unification = expected_type.unify(
         &Type::Arrow(parameter_type.clone().into(), body.inferred_type.into()),
@@ -215,7 +215,7 @@ fn check_apply(
     argument: &UntypedExpression,
     ctx: &TypingContext,
 ) -> Typing<Substitutions> {
-    let argument = ctx.infer_type(&argument)?;
+    let argument = ctx.infer_type(argument)?;
     let unification = check(
         function,
         Type::Arrow(argument.inferred_type.into(), expected.clone().into()),

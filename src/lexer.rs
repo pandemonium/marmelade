@@ -165,7 +165,7 @@ impl LexicalAnalyzer {
             (input, &input[..0])
         };
 
-        let identifier = prefix.into_iter().collect::<String>();
+        let identifier = prefix.iter().collect::<String>();
         self.emit(
             identifier.len() as u32,
             TokenType::decode_reserved_words(identifier),
@@ -180,7 +180,7 @@ impl LexicalAnalyzer {
             (input, &input[..0])
         };
 
-        let image = prefix.into_iter().collect::<String>();
+        let image = prefix.iter().collect::<String>();
         self.emit(
             image.len() as u32,
             TokenType::Literal(Literal::Text(image)),
@@ -189,7 +189,7 @@ impl LexicalAnalyzer {
     }
 
     fn emit<'a>(&mut self, length: u32, token_type: TokenType, remains: &'a [char]) -> &'a [char] {
-        self.output.push(Token(token_type, self.location.clone()));
+        self.output.push(Token(token_type, self.location));
         self.location.move_right(length);
         remains
     }
@@ -210,7 +210,7 @@ impl LexicalAnalyzer {
     }
 
     fn compute_new_location(&mut self, whitespace: &[char]) -> SourceLocation {
-        let mut next_location = self.location.clone();
+        let mut next_location = self.location;
 
         for c in whitespace {
             match c {
@@ -274,7 +274,7 @@ fn is_special_symbol(c: char) -> bool {
 }
 
 fn is_number_prefix(c: char) -> bool {
-    c.is_digit(10) // Improved
+    c.is_ascii_digit()
 }
 
 fn is_identifier_prefix(c: char) -> bool {
@@ -423,7 +423,7 @@ pub enum Operator {
 
 impl Operator {
     pub const fn is_defined(token: &TokenType) -> bool {
-        Self::try_from(&token).is_some()
+        Self::try_from(token).is_some()
     }
 
     pub const fn try_from(token: &TokenType) -> Option<Self> {
@@ -469,7 +469,7 @@ impl Operator {
     }
 
     pub fn as_identifier(&self) -> Identifier {
-        Identifier::new(&self.name())
+        Identifier::new(self.name())
     }
 
     pub fn name(&self) -> &str {

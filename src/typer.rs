@@ -50,7 +50,7 @@ impl TypeChecker {
             let expected_type = type_scheme.clone().instantiate(typing_context)?;
             // Expand the type?
             self.check(
-                expected_type.expand_type(&typing_context)?,
+                expected_type.expand_type(typing_context)?,
                 &declaration.declarator.expression,
             )?;
             let id = declaration.clone().binder;
@@ -115,7 +115,7 @@ impl TypeScheme {
     fn into_type_apply_tree(self, name: TypeName) -> TypeScheme {
         let quantifiers = &self.quantifiers;
         let type_apply_tree = quantifiers.iter().fold(Type::Named(name), |tree, param| {
-            Type::Apply(tree.into(), Type::Parameter(param.clone()).into())
+            Type::Apply(tree.into(), Type::Parameter(*param).into())
         });
         Self::new(&self.quantifiers, type_apply_tree)
     }
@@ -140,7 +140,7 @@ impl TypeScheme {
 
         let mut subs = subs.clone();
         for q in &quantifiers {
-            subs.remove(&q);
+            subs.remove(q);
         }
 
         Self {
@@ -206,7 +206,7 @@ impl Type {
         match self {
             Type::Named(name) => ctx
                 .lookup(&name.clone().into())
-                .ok_or_else(|| TypeError::UndefinedType(name))?
+                .ok_or(TypeError::UndefinedType(name))?
                 .instantiate(ctx),
             Type::Apply(constuctor, at) => constuctor.apply_constructor(&mut vec![*at], ctx),
             otherwise => Ok(otherwise),
@@ -222,7 +222,7 @@ impl Type {
                 } = ctx
                     .lookup_scheme(&name.clone().into())
                     .cloned()
-                    .ok_or_else(|| TypeError::UndefinedType(name))?;
+                    .ok_or(TypeError::UndefinedType(name))?;
 
                 let mut subs = Substitutions::default();
                 for (param, arg) in quantifiers.drain(..).zip(arguments.drain(..)) {
@@ -403,24 +403,28 @@ impl TupleType {
 
     // When and where can I do this?
     pub fn unspine(self) -> Self {
-        let Self(mut elements) = self;
-        let first = elements.remove(0);
+        if !self.0.is_empty() {
+            let Self(mut elements) = self;
+            let first = elements.remove(0);
 
-        Self({
-            let mut tail = elements
-                .into_iter()
-                .flat_map(|el| {
-                    if let Type::Product(ProductType::Tuple(spine)) = el {
-                        spine.unspine().0
-                    } else {
-                        vec![el]
-                    }
-                })
-                .collect::<Vec<_>>();
+            Self({
+                let mut tail = elements
+                    .into_iter()
+                    .flat_map(|el| {
+                        if let Type::Product(ProductType::Tuple(spine)) = el {
+                            spine.unspine().0
+                        } else {
+                            vec![el]
+                        }
+                    })
+                    .collect::<Vec<_>>();
 
-            tail.insert(0, first);
-            tail
-        })
+                tail.insert(0, first);
+                tail
+            })
+        } else {
+            self
+        }
     }
 }
 
@@ -645,7 +649,7 @@ impl Binding {
 
     pub fn as_str(&self) -> &str {
         match self {
-            Binding::TypeTerm(name) | Binding::ValueTerm(name) => &name,
+            Binding::TypeTerm(name) | Binding::ValueTerm(name) => name,
         }
     }
 }

@@ -47,7 +47,7 @@ where
                 println!("type_check: `{id}` ...");
                 // Lose the map call here. The resolver must only work with ParsingInfo
                 // from the start.
-                type_checker.check_declaration(&declaration.map(|a| a.info().clone()))?;
+                type_checker.check_declaration(&declaration.map(|a| *a.info()))?;
             }
         }
         Ok(self)

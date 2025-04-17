@@ -31,7 +31,7 @@ impl<'a> Linkage<'a> {
 
     pub fn typecheck_and_interpret(self) -> Resolved<Value> {
         let mut lexer = LexicalAnalyzer::default();
-        let program = parser::parse_compilation_unit(lexer.tokenize(&self.main_source_text))?;
+        let program = parser::parse_compilation_unit(lexer.tokenize(self.main_source_text))?;
 
         Interpreter::new(self.interpreter_environment.into_parent())
             .load_and_run(self.typing_context, program)

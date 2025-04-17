@@ -218,7 +218,7 @@ where
             .quantifiers
             .as_ref()
             .map(|forall| forall.fresh_type_parameters())
-            .unwrap_or_else(|| HashMap::default());
+            .unwrap_or_default();
 
         Ok(TypeScheme {
             quantifiers: type_parameters.values().cloned().collect(),
@@ -432,7 +432,7 @@ where
                 .constructors
                 .iter()
                 .map(|constructor| {
-                    constructor.make_function(&annotation, self_name.clone(), &forall, ctx)
+                    constructor.make_function(annotation, self_name.clone(), &forall, ctx)
                 })
                 .collect::<Typing<_>>()?,
         })
@@ -459,7 +459,7 @@ where
                     in_type: body.clone(),
                 })?;
 
-            boofer.push(param.clone());
+            boofer.push(*param);
         }
 
         Ok(TypeScheme::new(boofer.as_slice(), body))
@@ -553,7 +553,7 @@ where
                     in_type: body.clone(),
                 })?;
 
-            boofer.push(param.clone());
+            boofer.push(*param);
         }
 
         Ok(TypeScheme::new(boofer.as_slice(), body))
@@ -662,7 +662,7 @@ where
                 // I could give this one the real TypeParameter via
                 // type_parameters. Then Parameter would hold Type
                 // instead of TypeExpression
-                expr.synthesize_type(&type_param_map, ctx).map(|ty| {
+                expr.synthesize_type(type_param_map, ctx).map(|ty| {
                     Parameter::new_with_type_annotation(Identifier::new(&format!("p{index}")), ty)
                 })
             })
@@ -670,7 +670,7 @@ where
 
         // It should really annotate it with types to make sure the
         // typer gets it right. But that should not be necessary yet.
-        let expression = self.make_injection_lambda_tree(&annotation, ty, parameters.clone());
+        let expression = self.make_injection_lambda_tree(annotation, ty, parameters.clone());
 
         Ok(ValueDeclaration {
             binder: self.name.clone(),
@@ -796,7 +796,7 @@ where
                     .unwrap_or_else(|| {
                         // If the type scheme is defined, then instantiate it. Otherwise default to a named
                         // reference. This is necessary when declaring recursive types.
-                        TypeScheme::from_constant(Type::Named(TypeName::new(&name.as_str())))
+                        TypeScheme::from_constant(Type::Named(TypeName::new(name.as_str())))
                     })
                     .instantiate(ctx)
             }
@@ -809,7 +809,7 @@ where
                     .map(Type::Parameter)
                     .ok_or_else(|| TypeError::UndefinedQuantifierInTypeExpression {
                         quantifier: type_name,
-                        in_expression: self.clone().map(|a| a.info().clone()),
+                        in_expression: self.clone().map(|a| *a.info()),
                     })
             }
             Self::Apply(_, node) => Ok(Type::Apply(
@@ -828,15 +828,14 @@ where
             match node {
                 TypeExpression::Constructor(_, name) => {
                     let _ = deps.insert(name);
-                    ()
                 }
                 TypeExpression::Apply(_, apply) => {
                     collect(&*apply.argument, deps);
-                    collect(&*&apply.constructor, deps);
+                    collect(&apply.constructor, deps);
                 }
                 TypeExpression::Arrow(_, arrow) => {
                     collect(&*arrow.domain, deps);
-                    collect(&*&arrow.codomain, deps);
+                    collect(&arrow.codomain, deps);
                 }
                 _otherwise => (),
             }
@@ -1189,7 +1188,7 @@ impl DomainExpression {
             ),
             Pattern::Literally(constant) => Self::Literal(constant.clone()),
             Pattern::Otherwise(..) => {
-                let pattern = pattern.synthesize_type(&ctx)?;
+                let pattern = pattern.synthesize_type(ctx)?;
                 Self::Whole(pattern.inferred_type)
             }
         })
@@ -1229,7 +1228,7 @@ impl DomainExpression {
         Self::Product(match product {
             ProductType::Tuple(tuple) => {
                 let TupleType(elements) = tuple.unspine();
-                elements.into_iter().map(|t| Self::from_type(t)).collect()
+                elements.into_iter().map(Self::from_type).collect()
             }
             ProductType::Struct(..) => todo!(),
         })
@@ -1349,7 +1348,7 @@ impl DomainExpression {
     }
 }
 
-fn inner_join(lhs: &mut Vec<DomainExpression>, rhs: Vec<DomainExpression>) {
+fn inner_join(lhs: &mut [DomainExpression], rhs: Vec<DomainExpression>) {
     for (lhs, rhs) in lhs.iter_mut().zip(rhs) {
         lhs.join(rhs);
     }
@@ -1380,7 +1379,7 @@ impl<A> Pattern<A> {
         }
     }
 
-    fn bindings<'a>(&'a self) -> Vec<&'a Identifier> {
+    fn bindings(&self) -> Vec<&Identifier> {
         match self {
             Self::Coproduct(_, pattern) => pattern
                 .argument
@@ -1629,7 +1628,7 @@ impl<A> Expression<A> {
         }
     }
 
-    pub fn free_identifiers<'a>(&'a self) -> HashSet<&'a Identifier> {
+    pub fn free_identifiers(&self) -> HashSet<&Identifier> {
         let mut free_identifiers = HashSet::default();
         self.find_unbound(&mut HashSet::default(), &mut free_identifiers);
 

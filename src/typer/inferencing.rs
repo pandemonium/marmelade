@@ -1,3 +1,5 @@
+use std::mem;
+
 use crate::{
     ast::{
         self, Constructor, ConstructorPattern, DomainExpression, Identifier, MatchClause, Pattern,
@@ -56,10 +58,10 @@ impl TypingContext {
                         Type::fresh().into(),
                     )),
                 );
-                ctx.infer_lambda(parameter, body, &parsing_info)
+                ctx.infer_lambda(parameter, body, parsing_info)
             }
             UntypedExpression::Lambda(parsing_info, ast::Lambda { parameter, body }) => {
-                self.infer_lambda(parameter, body, &parsing_info)
+                self.infer_lambda(parameter, body, parsing_info)
             }
             UntypedExpression::Apply(parsing_info, ast::Apply { function, argument }) => {
                 self.infer_application(function, argument, parsing_info)
@@ -90,7 +92,7 @@ impl TypingContext {
                 self.infer_type(and_then)
             }
             UntypedExpression::ControlFlow(parsing_info, control) => {
-                self.infer_control_flow(control, &parsing_info)
+                self.infer_control_flow(control, parsing_info)
             }
             UntypedExpression::DeconstructInto(
                 parsing_info,
@@ -216,7 +218,7 @@ impl TypingContext {
             for (binding, scrutinee) in pattern.bindings {
                 ctx.bind(
                     binding.into(),
-                    TypeScheme::from_constant(scrutinee.apply(&substitutions)),
+                    TypeScheme::from_constant(scrutinee.apply(substitutions)),
                 );
             }
 
@@ -337,7 +339,7 @@ impl TypingContext {
 
         Ok(TypeInference::new(
             substitutions,
-            Type::Product(ProductType::Struct(types.drain(..).collect())),
+            Type::Product(ProductType::Struct(mem::take(&mut types))),
         ))
     }
 
@@ -586,14 +588,14 @@ impl Pattern<ParsingInfo> {
                 Type::Coproduct(coproduct),
             ) => {
                 if let Some(constructor) = coproduct.constructor_signature(constructor) {
-                    Self::Tuple(annotation.clone(), argument.clone()).deconstruct(
+                    Self::Tuple(*annotation, argument.clone()).deconstruct(
                         annotation,
                         constructor,
                         ctx,
                     )
                 } else {
                     Err(TypeError::PatternMatchImpossible {
-                        pattern: self.clone().map(|annotation| annotation.info().clone()),
+                        pattern: self.clone().map(|annotation| *annotation.info()),
                         scrutinee: scrutinee.clone(),
                     })
                 }

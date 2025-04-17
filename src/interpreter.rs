@@ -133,7 +133,7 @@ impl Interpreter {
                 match declarator {
                     TypeDeclarator::Coproduct(_, coproduct) => {
                         let coproduct = coproduct.make_implementation_module(
-                            &annotation,
+                            annotation,
                             TypeName::new(&binding.as_str()),
                             typing_context,
                         )?;
@@ -391,7 +391,7 @@ impl fmt::Display for Environment {
         }
 
         if let Some(enclosing) = self.parent.as_ref() {
-            writeln!(f, "")?;
+            writeln!(f)?;
             write!(f, "{enclosing}")?;
         }
 
@@ -466,7 +466,9 @@ where
                     ..
                 },
             ) => reduce_binding(binder, *bound, *body, env),
-            Self::Sequence(_, Sequence { this, and_then }) => reduce_sequence(this, and_then, env),
+            Self::Sequence(_, Sequence { this, and_then }) => {
+                reduce_sequence(*this, *and_then, env)
+            }
             Self::ControlFlow(_, control) => reduce_control_flow(control, env),
             Self::DeconstructInto(_, deconstruct) => reduce_deconstruction(deconstruct, env),
         }
@@ -573,7 +575,7 @@ where
 
             Some(bindings)
         }
-        (_, Pattern::Literally(this)) => (scrutinee == &reduce_immediate(this)).then(|| vec![]),
+        (_, Pattern::Literally(this)) => (scrutinee == &reduce_immediate(this)).then(Vec::new),
         (_, Pattern::Otherwise(binding)) => Some(vec![(binding, scrutinee.clone())]),
         _otherwise => None,
     }
@@ -643,8 +645,8 @@ fn reduce_immediate(constant: Constant) -> Value {
 }
 
 fn reduce_sequence<A>(
-    this: Box<Expression<A>>,
-    and_then: Box<Expression<A>>,
+    this: Expression<A>,
+    and_then: Expression<A>,
     env: &mut Environment,
 ) -> Interpretation
 where
@@ -724,7 +726,7 @@ where
             capture.insert_binding(parameter.clone(), binding);
 
             let retval = body.reduce(&mut capture);
-            //            capture.remove_binding(&parameter);
+            capture.remove_binding(&parameter);
             retval
         }
         Value::RecursiveClosure(RecursiveClosure { inner, .. }) => {
@@ -736,7 +738,7 @@ where
             inner.capture.insert_binding(parameter.clone(), binding);
 
             let retval = inner.body.clone().reduce(&mut inner.capture);
-            //            inner.capture.remove_binding(&parameter);
+            inner.capture.remove_binding(&parameter);
 
             retval
         }

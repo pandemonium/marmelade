@@ -59,7 +59,7 @@ where
             (Type::Parameter(param), ty) | (ty, Type::Parameter(param)) => {
                 if ty.free_variables().contains(&param) {
                     Err(TypeError::InfiniteType {
-                        param: param.clone(),
+                        param,
                         ty: ty.clone(),
                     })
                 } else {
@@ -69,7 +69,7 @@ where
             ref relation @ (
                 Type::Product(ProductType::Tuple(ref lhs_tuple)),
                 Type::Product(ProductType::Tuple(ref rhs_tuple)),
-            ) if !self.is_reentrant(&relation) => {
+            ) if !self.is_reentrant(relation) => {
                 let TupleType(lhs_tuple) = lhs_tuple.clone().unspine();
                 let TupleType(rhs_tuple) = rhs_tuple.clone().unspine();
 
@@ -79,15 +79,15 @@ where
             ref relation @ (
                 Type::Product(ProductType::Struct(ref lhs)),
                 Type::Product(ProductType::Struct(ref rhs)),
-            ) if !self.is_reentrant(&relation) => {
+            ) if !self.is_reentrant(relation) => {
                 self.enter(relation.clone());
-                self.unify_structs(&lhs, &rhs)
+                self.unify_structs(lhs, rhs)
             }
             ref relation @ (Type::Coproduct(ref lhs), Type::Coproduct(ref rhs))
-                if !self.is_reentrant(&relation) =>
+                if !self.is_reentrant(relation) =>
             {
                 self.enter(relation.clone());
-                self.unify_coproducts(&lhs, &rhs)
+                self.unify_coproducts(lhs, rhs)
             }
             (Type::Arrow(lhs_domain, lhs_codomain), Type::Arrow(rhs_domain, rhs_codomain)) => {
                 let domain = self.unify(&lhs_domain, &rhs_domain)?;
@@ -111,7 +111,7 @@ where
             (lhs, rhs) => Err(TypeError::UnifyImpossible {
                 lhs: lhs.clone(),
                 rhs: rhs.clone(),
-                position: { self.annotation.info().location().clone() },
+                position: { *self.annotation.info().location() },
             }),
         }
     }
@@ -129,10 +129,10 @@ where
     {
         if lhs.len() == rhs.len() {
             let mut lhs_fields = lhs.iter().collect::<Vec<_>>();
-            lhs_fields.sort_by(|(p, _), (q, _)| p.cmp(&q));
+            lhs_fields.sort_by(|(p, _), (q, _)| p.cmp(q));
 
             let mut rhs_fields = rhs.iter().collect::<Vec<_>>();
-            rhs_fields.sort_by(|(p, _), (q, _)| p.cmp(&q));
+            rhs_fields.sort_by(|(p, _), (q, _)| p.cmp(q));
 
             let mut substitutions = Substitutions::default();
             for ((lhs_id, lhs_ty), (rhs_id, rhs_ty)) in
@@ -144,7 +144,7 @@ where
                     Err(TypeError::UnifyImpossible {
                         lhs: Type::Product(ProductType::Struct(lhs.to_vec())),
                         rhs: Type::Product(ProductType::Struct(lhs.to_vec())),
-                        position: self.annotation.info().location().clone(),
+                        position: *self.annotation.info().location(),
                     })?
                 }
             }
@@ -154,7 +154,7 @@ where
             Err(TypeError::UnifyImpossible {
                 lhs: Type::Product(ProductType::Struct(lhs.to_vec())),
                 rhs: Type::Product(ProductType::Struct(lhs.to_vec())),
-                position: self.annotation.info().location().clone(),
+                position: *self.annotation.info().location(),
             })
         }
     }
@@ -197,7 +197,7 @@ where
     {
         if lhs.len() == rhs.len() {
             let mut substitution = Substitutions::default();
-            for (lhs, rhs) in lhs.into_iter().zip(rhs.into_iter()) {
+            for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
                 substitution = substitution.compose(self.unify(lhs, rhs)?);
             }
             Ok(substitution)

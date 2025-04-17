@@ -136,7 +136,7 @@ where
 
     fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
         let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
-        Ok(self.0.clone()(p0).into())
+        Ok(self.0(p0).into())
     }
 
     fn synthesize_type(&self) -> TypeScheme {

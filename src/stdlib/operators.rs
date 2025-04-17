@@ -80,9 +80,9 @@ pub fn import(linkage: &mut Linkage) -> Interpretation<()> {
 
 fn binary_to_bool() -> TypeScheme {
     let ty = TypeParameter::fresh();
-    let tp = Box::new(Type::Parameter(ty.clone()));
+    let tp = Box::new(Type::Parameter(ty));
     TypeScheme {
-        quantifiers: vec![ty.clone()],
+        quantifiers: vec![ty],
         body: Type::Arrow(
             tp.clone(),
             Type::Arrow(tp, Type::Constant(BaseType::Bool).into()).into(),
@@ -92,10 +92,10 @@ fn binary_to_bool() -> TypeScheme {
 
 fn binary() -> TypeScheme {
     let ty = TypeParameter::fresh();
-    let tp = Box::new(Type::Parameter(ty.clone()));
+    let tp = Box::new(Type::Parameter(ty));
 
     TypeScheme {
-        quantifiers: vec![ty.clone()],
+        quantifiers: vec![ty],
         body: Type::Arrow(tp.clone(), Type::Arrow(tp.clone(), tp).into()),
     }
 }
