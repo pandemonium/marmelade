@@ -67,11 +67,14 @@ where
                 }
             }
             ref relation @ (
-                Type::Product(ProductType::Tuple(TupleType(ref lhs_tuple))),
-                Type::Product(ProductType::Tuple(TupleType(ref rhs_tuple))),
+                Type::Product(ProductType::Tuple(ref lhs_tuple)),
+                Type::Product(ProductType::Tuple(ref rhs_tuple)),
             ) if !self.is_reentrant(&relation) => {
+                let TupleType(lhs_tuple) = lhs_tuple.clone().unspine();
+                let TupleType(rhs_tuple) = rhs_tuple.clone().unspine();
+
                 self.enter(relation.clone());
-                self.unify_tuples(lhs_tuple, rhs_tuple)
+                self.unify_tuples(&lhs_tuple, &rhs_tuple)
             }
             ref relation @ (
                 Type::Product(ProductType::Struct(ref lhs)),

@@ -402,7 +402,7 @@ impl TupleType {
     }
 
     // When and where can I do this?
-    fn unspine(self) -> Self {
+    pub fn unspine(self) -> Self {
         let Self(mut elements) = self;
         let first = elements.remove(0);
 

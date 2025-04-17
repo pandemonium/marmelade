@@ -600,14 +600,23 @@ impl Pattern<ParsingInfo> {
             }
 
             (
-                Self::Tuple(_, TuplePattern { elements }),
-                Type::Product(ProductType::Tuple(TupleType(tuple))),
-            ) if elements.len() == tuple.len() => {
-                let mut matched = Match::default();
-                for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
-                    matched.merge_with(pattern.deconstruct(parsing_info, scrutinee, ctx)?)
+                pattern @ Self::Tuple(_, TuplePattern { elements }),
+                Type::Product(ProductType::Tuple(tuple)),
+            ) => {
+                let TupleType(tuple) = tuple.clone().unspine();
+
+                if tuple.len() == elements.len() {
+                    let mut matched = Match::default();
+                    for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
+                        matched.merge_with(pattern.deconstruct(parsing_info, scrutinee, ctx)?)
+                    }
+                    Ok(matched)
+                } else {
+                    Err(TypeError::PatternMatchImpossible {
+                        pattern: pattern.clone(),
+                        scrutinee: scrutinee.clone(),
+                    })
                 }
-                Ok(matched)
             }
 
             (Self::Literally(pattern), scrutinee) => {

@@ -2,4 +2,6 @@ main =
     let x =
         { Foo: 2; Bar: true; Quux: "hej" }
     in
-        (x.Quux, x.Bar, x.Foo).0
+        deconstruct x.Quux, x.Bar, x.Foo into
+          (a, b, c) -> print_endline (show a); print_endline (show b); print_endline (show c)
+        | otherwise -> print_endline (show otherwise)
