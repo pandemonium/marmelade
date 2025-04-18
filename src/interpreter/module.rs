@@ -93,7 +93,7 @@ pub struct DependencyGraph<'a> {
 impl<'a> DependencyGraph<'a> {
     pub fn from_declarations<A>(decls: &'a [Declaration<A>]) -> Self
     where
-        A: fmt::Debug + Clone + Parsed,
+        A: fmt::Display + fmt::Debug + Clone + Parsed,
     {
         let mut outbound = Vec::with_capacity(decls.len());
 

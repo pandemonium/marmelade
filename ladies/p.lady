@@ -1,6 +1,12 @@
-main =
-    deconstruct 1 into
-      1 -> "1"
-    | 2 -> "2"
-    | 3 -> "3"
-    | otherwise -> "otherwise"
+List ::= ∀a.
+  Cons a (List a)
+  Nil
+
+length :: forall a. List a -> Int =
+  lambda xs.
+    deconstruct xs into
+      Cons x xs -> 1 + length xs
+    | Nil -> 0
+
+main :: List Int =
+  Cons 1 Nil

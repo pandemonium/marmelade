@@ -50,7 +50,11 @@ where
             {
                 Ok(Substitutions::default())
             }
-            _otherwise => self.unify_expanded(lhs.clone(), rhs.clone()),
+            (lhs, rhs) if lhs == rhs => Ok(Substitutions::default()),
+            _otherwise => {
+                println!("unify: `{lhs}` `{rhs}`");
+                self.unify_expanded(lhs.clone(), rhs.clone())
+            }
         }
     }
 
@@ -58,23 +62,20 @@ where
         match (lhs, rhs) {
             (Type::Parameter(param), ty) | (ty, Type::Parameter(param)) => {
                 if ty.free_variables().contains(&param) {
-                    Err(TypeError::InfiniteType {
-                        param,
-                        ty: ty.clone(),
-                    })
+                    Err(TypeError::InfiniteType { param, ty })
                 } else {
                     Ok(Substitutions::from_single(param, ty))
                 }
             }
             ref relation @ (
-                Type::Product(ProductType::Tuple(ref lhs_tuple)),
-                Type::Product(ProductType::Tuple(ref rhs_tuple)),
+                Type::Product(ProductType::Tuple(ref lhs)),
+                Type::Product(ProductType::Tuple(ref rhs)),
             ) if !self.is_reentrant(relation) => {
-                let TupleType(lhs_tuple) = lhs_tuple.clone().unspine();
-                let TupleType(rhs_tuple) = rhs_tuple.clone().unspine();
+                let TupleType(lhs) = lhs.clone().unspine();
+                let TupleType(rhs) = rhs.clone().unspine();
 
                 self.enter(relation.clone());
-                self.unify_tuples(&lhs_tuple, &rhs_tuple)
+                self.unify_tuples(&lhs, &rhs)
             }
             ref relation @ (
                 Type::Product(ProductType::Struct(ref lhs)),
@@ -116,17 +117,11 @@ where
         }
     }
 
-    // todo: this is not ideal. Store a Vec instead of a HashMap
-    // This unifies without the nominal part of the type, if it
-    // even has one (a name.)
     fn unify_structs(
         &mut self,
         lhs: &[(Identifier, Type)],
         rhs: &[(Identifier, Type)],
-    ) -> Typing<Substitutions>
-    where
-        A: Parsed,
-    {
+    ) -> Typing<Substitutions> {
         if lhs.len() == rhs.len() {
             let mut lhs_fields = lhs.iter().collect::<Vec<_>>();
             lhs_fields.sort_by(|(p, _), (q, _)| p.cmp(q));
@@ -163,10 +158,7 @@ where
         &mut self,
         lhs: &CoproductType,
         rhs: &CoproductType,
-    ) -> Typing<Substitutions>
-    where
-        A: Parsed,
-    {
+    ) -> Typing<Substitutions> {
         if lhs.arity() == rhs.arity() {
             let mut sub = Substitutions::default();
 
@@ -191,10 +183,7 @@ where
         }
     }
 
-    fn unify_tuples(&mut self, lhs: &[Type], rhs: &[Type]) -> Typing<Substitutions>
-    where
-        A: Parsed,
-    {
+    fn unify_tuples(&mut self, lhs: &[Type], rhs: &[Type]) -> Typing<Substitutions> {
         if lhs.len() == rhs.len() {
             let mut substitution = Substitutions::default();
             for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {

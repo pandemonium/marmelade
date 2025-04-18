@@ -28,7 +28,7 @@ pub enum CompilationUnit<A> {
 }
 impl<A> CompilationUnit<A>
 where
-    A: fmt::Debug + Clone + Parsed,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> CompilationUnit<B> {
         match self {
@@ -71,7 +71,7 @@ pub struct ModuleDeclarator<A> {
 
 impl<A> ModuleDeclarator<A>
 where
-    A: fmt::Debug + Clone + Parsed,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     pub fn find_value_declaration<'a>(
         &'a self,
@@ -90,10 +90,10 @@ where
         DependencyGraph::from_declarations(&self.declarations)
     }
 
-    fn map<B>(mut self, f: fn(A) -> B) -> ModuleDeclarator<B> {
+    fn map<B>(self, f: fn(A) -> B) -> ModuleDeclarator<B> {
         ModuleDeclarator {
             name: self.name,
-            declarations: self.declarations.drain(..).map(|d| d.map(f)).collect(),
+            declarations: self.declarations.into_iter().map(|d| d.map(f)).collect(),
         }
     }
 }
@@ -175,7 +175,7 @@ pub struct ValueDeclaration<A> {
 
 impl<A> ValueDeclaration<A>
 where
-    A: Clone + Parsed + fmt::Debug,
+    A: Clone + Parsed + fmt::Debug + fmt::Display,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> ValueDeclaration<B> {
         ValueDeclaration {
@@ -203,7 +203,7 @@ pub struct TypeSignature<A> {
 
 impl<A> TypeSignature<A>
 where
-    A: Clone + Parsed + fmt::Debug,
+    A: Clone + Parsed + fmt::Debug + fmt::Display,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeSignature<B> {
         TypeSignature {
@@ -269,7 +269,7 @@ impl Declaration<ParsingInfo> {
 
 impl<A> Declaration<A>
 where
-    A: fmt::Debug + Clone + Parsed,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Declaration<B> {
         match self {
@@ -401,7 +401,7 @@ pub struct Coproduct<A> {
 
 impl<A> Coproduct<A>
 where
-    A: Clone + Parsed + fmt::Debug,
+    A: Clone + Parsed + fmt::Debug + fmt::Display,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Coproduct<B> {
         let Self {
@@ -506,7 +506,7 @@ pub struct Struct<A> {
 
 impl<A> Struct<A>
 where
-    A: Clone + Parsed,
+    A: fmt::Display + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Struct<B> {
         let Self { forall, fields } = self;
@@ -570,7 +570,7 @@ pub enum TypeDeclarator<A> {
 
 impl<A> TypeDeclarator<A>
 where
-    A: Clone + Parsed + fmt::Debug,
+    A: Clone + Parsed + fmt::Debug + fmt::Display,
 {
     fn map<B>(self, f: fn(A) -> B) -> TypeDeclarator<B> {
         match self {
@@ -627,7 +627,7 @@ pub struct StructField<A> {
 
 impl<A> StructField<A>
 where
-    A: Clone + Parsed,
+    A: fmt::Display + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> StructField<B> {
         StructField {
@@ -645,7 +645,7 @@ pub struct Constructor<A> {
 
 impl<A> Constructor<A>
 where
-    A: Clone + Parsed,
+    A: fmt::Display + Clone + Parsed,
 {
     fn make_function(
         &self,
@@ -688,7 +688,7 @@ where
         parameters: Vec<Parameter>,
     ) -> Expression<A>
     where
-        A: Clone + Parsed,
+        A: fmt::Display + Clone + Parsed,
     {
         let tuple = Product::Tuple(
             parameters
@@ -771,7 +771,7 @@ pub enum TypeExpression<A> {
 
 impl<A> TypeExpression<A>
 where
-    A: Clone + Parsed,
+    A: fmt::Display + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeExpression<B> {
         match self {
@@ -792,13 +792,21 @@ where
         match self {
             Self::Constructor(_, name) => {
                 let name = TypeName::new(&name.as_str());
-                ctx.lookup(&name.clone().into())
+                let scheme = ctx
+                    .lookup_scheme(&name.clone().into())
+                    .cloned()
                     .unwrap_or_else(|| {
                         // If the type scheme is defined, then instantiate it. Otherwise default to a named
                         // reference. This is necessary when declaring recursive types.
                         TypeScheme::from_constant(Type::Named(TypeName::new(name.as_str())))
-                    })
-                    .instantiate(ctx)
+                    });
+
+                // A little kludgy
+                if !scheme.is_type_constructor() {
+                    scheme.instantiate(ctx)
+                } else {
+                    Ok(Type::Named(TypeName::new(name.as_str())))
+                }
             }
             Self::Parameter(_, param) => {
                 let type_name = TypeName::new(&param.as_str());
@@ -823,6 +831,7 @@ where
         }
     }
 
+    // Why isn't this ever called? No initializatio order issues?
     fn dependencies(&self) -> HashSet<&Identifier> {
         fn collect<'a, A>(node: &'a TypeExpression<A>, deps: &mut HashSet<&'a Identifier>) {
             match node {
@@ -869,7 +878,7 @@ pub struct TypeApply<A> {
 
 impl<A> TypeApply<A>
 where
-    A: Clone + Parsed,
+    A: fmt::Display + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeApply<B> {
         TypeApply {
@@ -900,7 +909,7 @@ pub struct Arrow<A> {
 
 impl<A> Arrow<A>
 where
-    A: Clone + Parsed,
+    A: fmt::Display + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Arrow<B> {
         Arrow {
@@ -1929,7 +1938,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::ValueDeclaration;
+    use crate::{ast::ValueDeclaration, parser::ParsingInfo};
 
     use super::{Constant, Declaration, Expression, Identifier, ModuleDeclarator, ValueDeclarator};
 
@@ -1940,32 +1949,41 @@ mod tests {
             name: Identifier::new(""),
             declarations: vec![
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("bar")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("bar"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("foo")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("foo"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("quux")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("quux"),
+                            ),
                         },
                     },
                 ),
@@ -1982,42 +2000,54 @@ mod tests {
             name: Identifier::new(""),
             declarations: vec![
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("bar")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("bar"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("bar")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("bar"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("frobnicator")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("frobnicator"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("frobnicator"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Literal((), Constant::Int(1)),
+                            expression: Expression::Literal(
+                                ParsingInfo::default(),
+                                Constant::Int(1),
+                            ),
                         },
                     },
                 ),
@@ -2035,32 +2065,41 @@ mod tests {
             name: Identifier::new(""),
             declarations: vec![
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("bar")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("bar"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("bar")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("bar"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("frobnicator")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("frobnicator"),
+                            ),
                         },
                     },
                 ),
@@ -2078,42 +2117,54 @@ mod tests {
             name: Identifier::new(""),
             declarations: vec![
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("foo"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("bar")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("bar"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("quux"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("bar")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("bar"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("bar"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Variable((), Identifier::new("frobnicator")),
+                            expression: Expression::Variable(
+                                ParsingInfo::default(),
+                                Identifier::new("frobnicator"),
+                            ),
                         },
                     },
                 ),
                 Declaration::Value(
-                    (),
+                    ParsingInfo::default(),
                     ValueDeclaration {
                         binder: Identifier::new("frobnicator"),
                         type_signature: None,
                         declarator: ValueDeclarator {
-                            expression: Expression::Literal((), Constant::Int(1)),
+                            expression: Expression::Literal(
+                                ParsingInfo::default(),
+                                Constant::Int(1),
+                            ),
                         },
                     },
                 ),

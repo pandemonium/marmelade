@@ -49,10 +49,7 @@ impl TypeChecker {
             let type_scheme = signature.synthesize_type(typing_context)?;
             let expected_type = type_scheme.clone().instantiate(typing_context)?;
             // Expand the type?
-            self.check(
-                expected_type.expand_type(typing_context)?,
-                &declaration.declarator.expression,
-            )?;
+            self.check(expected_type, &declaration.declarator.expression)?;
             let id = declaration.clone().binder;
             println!("type_check: `{id}` is `{type_scheme}`");
             self.bind_type(id, type_scheme);

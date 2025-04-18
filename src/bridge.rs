@@ -5,33 +5,20 @@ use crate::{
     typer::{BaseType, ProductType, TupleType, Type, TypeParameter, TypeScheme},
 };
 
-pub type InvocationResult<A> = Result<A, RuntimeError>;
-
-#[derive(Debug, Clone)]
-pub struct BridgingInfo {
-    pub intended_target: Identifier,
-}
-
-impl BridgingInfo {
-    pub fn new(id: Identifier) -> Self {
-        Self {
-            intended_target: id,
-        }
-    }
-}
+#[derive(Debug, Copy, Clone)]
+pub struct BridgeInfo;
 
 pub trait Bridge {
     fn arity(&self) -> usize;
-    fn evaluate(&self, e: &Environment) -> InvocationResult<Value>;
+    fn evaluate(&self, e: &Environment) -> Interpretation;
     fn synthesize_type(&self) -> TypeScheme;
 
-    fn generate_lambda_tree(&self, target: Identifier) -> Expression<BridgingInfo> {
-        let info = BridgingInfo::new(target.clone());
+    fn generate_lambda_tree(&self, target: Identifier) -> Expression<BridgeInfo> {
         (0..self.arity()).rfold(
-            Expression::InvokeBridge(info.clone(), target),
+            Expression::InvokeBridge(BridgeInfo, target),
             |expression, parameter_index| {
                 Expression::Lambda(
-                    info.clone(),
+                    BridgeInfo,
                     Lambda {
                         parameter: Parameter::new(Identifier::new(&format!("p{parameter_index}"))),
                         body: expression.into(),
@@ -81,7 +68,7 @@ where
         1
     }
 
-    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
+    fn evaluate(&self, e: &Environment) -> Interpretation {
         let Self(f) = self;
         Ok(f(e.lookup(&Identifier::new("p0")).cloned()?.try_into()?).into())
     }
@@ -106,7 +93,7 @@ where
         2
     }
 
-    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
+    fn evaluate(&self, e: &Environment) -> Interpretation {
         let Self(f) = self;
         Ok(f(
             e.lookup(&Identifier::new("p0")).cloned()?.try_into()?,
@@ -134,7 +121,7 @@ where
         1
     }
 
-    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
+    fn evaluate(&self, e: &Environment) -> Interpretation {
         let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
         Ok(self.0(p0).into())
     }
@@ -155,7 +142,7 @@ impl Bridge for TupleSyntax {
         2
     }
 
-    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
+    fn evaluate(&self, e: &Environment) -> Interpretation {
         let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
         let p1 = e.lookup(&Identifier::new("p1")).cloned()?;
 
@@ -207,7 +194,7 @@ where
         2
     }
 
-    fn evaluate(&self, e: &Environment) -> InvocationResult<Value> {
+    fn evaluate(&self, e: &Environment) -> Interpretation {
         // Is there any way to do this without the happy path clones?!
         let p0 = e.lookup(&Identifier::new("p0")).cloned()?;
         let p1 = e.lookup(&Identifier::new("p1")).cloned()?;

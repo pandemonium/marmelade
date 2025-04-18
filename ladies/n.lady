@@ -16,8 +16,7 @@ fold_right::∀b a. b -> (b -> a -> b) -> List a -> b = λacc f xs.
     Cons x xs -> f (fold_right acc f xs) x
   | Nil       -> acc
 
-main =
-    1
+main = map id (Cons 1 (Cons 2 Nil))
 
 id :: ∀a. a -> a = λx. x
 (* hej *)
