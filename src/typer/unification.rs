@@ -51,10 +51,7 @@ where
                 Ok(Substitutions::default())
             }
             (lhs, rhs) if lhs == rhs => Ok(Substitutions::default()),
-            _otherwise => {
-                println!("unify: `{lhs}` `{rhs}`");
-                self.unify_expanded(lhs.clone(), rhs.clone())
-            }
+            _otherwise => self.unify_expanded(lhs.clone(), rhs.clone()),
         }
     }
 

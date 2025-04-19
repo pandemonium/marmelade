@@ -490,13 +490,10 @@ where
             .find_map(|(lhs, element)| (lhs == rhs).then_some(element))
             .cloned()
             .ok_or_else(|| RuntimeError::ExpectedProductIndex(index.clone())),
-        (Value::Tuple(elements), index @ ProductIndex::Tuple(rhs)) => {
-            println!("reduce_projection: {elements:?}");
-            elements
-                .get(rhs)
-                .cloned()
-                .ok_or_else(|| RuntimeError::ExpectedProductIndex(index))
-        }
+        (Value::Tuple(elements), index @ ProductIndex::Tuple(rhs)) => elements
+            .get(rhs)
+            .cloned()
+            .ok_or_else(|| RuntimeError::ExpectedProductIndex(index)),
         (lhs, rhs) => Err(RuntimeError::BadProjection { lhs, rhs }),
     }
 }

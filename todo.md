@@ -9,5 +9,7 @@
   [X] make_type_scheme - move from Coproduct?
   [ ] make_implementation_module for smart constructors and smart projectors
   [X] projections
-    [ ] tuple projections seem off. Runtime representation is flat, type represetation is nested (right.)
+    [X] tuple projections seem off. Runtime representation is flat, type represetation is nested (right.)
 [ ] modules
+[ ] undefined symbols fail in module satisfiability, they must
+      report `Undefined symbol x` instead

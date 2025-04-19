@@ -1066,7 +1066,6 @@ pub struct PatternMatrix {
 
 impl PatternMatrix {
     pub fn from_scrutinee(scrutinee: Type, ctx: &TypingContext) -> Typing<Self> {
-        println!("from_scrutinee: {scrutinee}");
         Ok(Self {
             domain: DomainExpression::from_type(scrutinee.expand_type(ctx)?),
             matched_space: DomainExpression::default(),
@@ -1287,12 +1286,19 @@ impl DomainExpression {
                 rhs: rhs.clone().into(),
             },
             (Self::Coproduct(lhs), Self::Coproduct(rhs)) => self.eliminate_constructors(lhs, rhs),
-            (Self::Product(lhs), Self::Product(rhs)) => Self::Product(
-                lhs.iter()
+            (Self::Product(lhs), Self::Product(rhs)) => {
+                let elements = lhs
+                    .iter()
                     .zip(rhs.iter())
                     .map(|(lhs, rhs)| lhs.eliminate(rhs))
-                    .collect::<Vec<_>>(),
-            ),
+                    .collect::<Vec<_>>();
+
+                if elements.iter().all(|e| e.is_nothing()) {
+                    Self::Nothing
+                } else {
+                    Self::Product(elements)
+                }
+            }
             (lhs, rhs) => panic!("Absurd combination {lhs:?} {rhs:?}"),
         }
     }

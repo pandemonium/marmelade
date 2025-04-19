@@ -74,12 +74,9 @@ pub fn check(
         (expected, Expression::Apply(pi, Apply { function, argument })) => {
             check_apply(pi, expected, function, argument, ctx)
         }
-        (_expected, Expression::Inject(_, _inject)) => todo!(),
         (Type::Product(expected_type), Expression::Product(annotation, product)) => {
             check_product(annotation, expected_type, product, ctx)
         }
-
-        (_expected, Expression::Project(_, _project)) => todo!(),
 
         (expected, Expression::Binding(annotation, binding)) => {
             check_binding(annotation, expected, binding, ctx)
