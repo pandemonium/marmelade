@@ -3,4 +3,7 @@ main =
         { Foo: 2; Bar: true; Quux: "hej" }
     in
         deconstruct x.Quux, x.Bar, x.Foo into
-          (a, b, c) -> print_endline (show a); print_endline (show b)
+          (a, b, c) ->
+             print_endline (show a)
+             print_endline (show b)
+             print_endline (show c)

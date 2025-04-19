@@ -1,0 +1,9 @@
+main =
+    let x =
+        { Foo: 2; Bar: true; Quux: "hej" }
+    in
+        deconstruct x into
+          { Foo: f; Bar: b; Quux: q } ->
+            print_endline (show q)
+        | { Foo: f; Bar: b; Quux: q } ->
+            print_endline (show b)

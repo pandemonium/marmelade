@@ -1,12 +1,12 @@
-use std::{any::Any, cell::RefCell, fmt, rc::Rc};
+use std::{any::Any, cell::RefCell, collections::HashMap, fmt, rc::Rc};
 use thiserror::Error;
 
 use crate::{
     ast::{
         Apply, Binding, CompilationUnit, Constant, ControlFlow, Declaration, DeconstructInto,
         Expression, Identifier, ImportModule, Inject, Lambda, MatchClause, ModuleDeclarator,
-        Pattern, Product, ProductIndex, Project, SelfReferential, Sequence, TypeDeclaration,
-        TypeDeclarator, TypeName,
+        Pattern, Product, ProductIndex, Project, SelfReferential, Sequence, StructPattern,
+        TypeDeclaration, TypeDeclarator, TypeName,
     },
     bridge::Bridge,
     interpreter::module::ModuleResolver,
@@ -501,7 +501,7 @@ where
 fn reduce_deconstruction<A>(
     DeconstructInto {
         scrutinee,
-        mut match_clauses,
+        match_clauses,
     }: DeconstructInto<A>,
     env: &mut Environment,
 ) -> Interpretation
@@ -511,7 +511,7 @@ where
     let scrutinee = scrutinee.reduce(env)?;
 
     match_clauses
-        .drain(..)
+        .into_iter()
         .find_map(|clause| clause.match_with(&scrutinee))
         .ok_or_else(|| RuntimeError::ExpectedMatch { scrutinee })
         .and_then(|matched| reduce_consequent(matched, env))
@@ -565,8 +565,24 @@ where
         (Value::Tuple(elements), Pattern::Tuple(_, pattern))
             if elements.len() == pattern.elements.len() =>
         {
-            let mut bindings = vec![];
+            let mut bindings = Vec::with_capacity(elements.len());
             for (value, pattern) in elements.iter().zip(pattern.elements) {
+                bindings.extend(extract_matched_bindings(value, pattern)?);
+            }
+
+            Some(bindings)
+        }
+        (Value::Struct(field_values), Pattern::Struct(_, StructPattern { fields }))
+            if fields.len() == field_values.len() =>
+        {
+            let field_values = field_values
+                .iter()
+                .map(|(field, value)| (field, value))
+                .collect::<HashMap<_, _>>();
+
+            let mut bindings = Vec::with_capacity(fields.len());
+            for (field, pattern) in fields {
+                let value = field_values.get(&field)?;
                 bindings.extend(extract_matched_bindings(value, pattern)?);
             }
 

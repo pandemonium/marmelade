@@ -6,9 +6,9 @@ use crate::{
         Apply, Arrow, Binding, CompilationUnit, Constant, Constructor, ConstructorPattern,
         ControlFlow, Coproduct, Declaration, DeconstructInto, Expression, Identifier, Lambda,
         MatchClause, ModuleDeclarator, Parameter, Pattern, Product, ProductIndex, Project,
-        SelfReferential, Sequence, Struct, StructField, TuplePattern, TypeApply, TypeDeclaration,
-        TypeDeclarator, TypeExpression, TypeName, TypeSignature, UniversalQuantifiers,
-        ValueDeclaration, ValueDeclarator,
+        SelfReferential, Sequence, Struct, StructField, StructPattern, TuplePattern, TypeApply,
+        TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, TypeSignature,
+        UniversalQuantifiers, ValueDeclaration, ValueDeclarator,
     },
     lexer::{Keyword, Layout, Literal, Operator, SourceLocation, Token, TokenType},
     typer,
@@ -771,10 +771,12 @@ fn parse_match_clause(remains: &[Token]) -> ParseResult<MatchClause<ParsingInfo>
     let (pattern, remains) = parse_pattern(remains)?;
     let remains = expect(&TT::Arrow, remains)?;
 
-    parse_expression(remains, 0).map_value(|consequent| MatchClause {
-        pattern,
-        consequent: consequent.into(),
-    })
+    parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0).map_value(
+        |consequent| MatchClause {
+            pattern,
+            consequent: consequent.into(),
+        },
+    )
 }
 
 fn parse_pattern(remains: &[Token]) -> ParseResult<Pattern<ParsingInfo>> {
@@ -795,7 +797,12 @@ fn parse_pattern(remains: &[Token]) -> ParseResult<Pattern<ParsingInfo>> {
         }
 
         [T(TT::LeftParen, position), remains @ ..] => parse_tuple_pattern(remains, position)
-            .map(|(tuple, remains)| (Pattern::Tuple(ParsingInfo::new(*position), tuple), remains)),
+            .map_value(|tuple| Pattern::Tuple(ParsingInfo::new(*position), tuple)),
+
+        [T(TT::LeftBrace, position), remains @ ..] => parse_struct_pattern(remains, position)
+            .map_value(|struct_pattern| {
+                Pattern::Struct(ParsingInfo::new(*position), struct_pattern)
+            }),
 
         otherwise => panic!("{otherwise:?}"),
     }
@@ -840,21 +847,73 @@ fn parse_tuple_pattern<'a>(
     mut remains: &'a [Token],
     _position: &SourceLocation,
 ) -> ParseResult<'a, TuplePattern<ParsingInfo>> {
-    let mut boofer = vec![];
+    let mut elements = vec![];
 
     let (pattern, remains1) = parse_pattern(remains)?;
     remains = remains1;
-    boofer.push(pattern);
+    elements.push(pattern);
 
     while matches!(remains, [T(TT::Comma, ..), ..]) {
         let (pattern, remains1) = parse_pattern(&remains[1..])?;
-        boofer.push(pattern);
+        elements.push(pattern);
         remains = remains1;
     }
 
     remains = expect(&TT::RightParen, remains)?;
 
-    Ok((TuplePattern { elements: boofer }, remains))
+    Ok((TuplePattern { elements }, remains))
+}
+
+fn parse_struct_pattern<'a>(
+    mut remains: &'a [Token],
+    _position: &SourceLocation,
+) -> ParseResult<'a, StructPattern<ParsingInfo>> {
+    let mut fields = vec![];
+
+    let (field, remains1) = parse_struct_pattern_field(remains)?;
+    remains = remains1;
+    fields.push(field);
+
+    while matches!(remains, [T(TT::Semicolon, ..), ..]) {
+        remains = expect(&TT::Semicolon, remains)?;
+
+        let (field, remains1) = parse_struct_pattern_field(remains)?;
+        fields.push(field);
+        remains = remains1;
+    }
+
+    remains = expect(&TT::RightBrace, remains)?;
+
+    Ok((StructPattern { fields }, remains))
+}
+
+fn parse_struct_pattern_field<'a>(
+    remains: &'a [Token],
+) -> ParseResult<'a, (Identifier, Pattern<ParsingInfo>)> {
+    if let [T(TT::Identifier(id), _pos), remains @ ..] = remains {
+        let identifier = Identifier::new(id);
+        match remains {
+            [T(TT::Colon, ..), remains @ ..] => {
+                let (pattern, remains) = parse_pattern(remains)?;
+                Ok(((identifier, pattern), remains))
+            }
+
+            [T(TT::Semicolon | TT::RightBrace, ..), ..] => Ok((
+                (identifier.clone(), Pattern::Otherwise(identifier)),
+                remains,
+            )),
+
+            otherwise => Err(ParseError::Expected {
+                one_of: vec![TT::Colon, TT::Semicolon].into(),
+                received: otherwise[0].token_type().clone(),
+            }),
+        }
+    } else {
+        // This pattern is sad
+        Err(ParseError::ExpectedTokenType(TT::Identifier(
+            "struct field".to_owned(),
+        )))
+    }
 }
 
 fn expect<'a>(token_type: &TokenType, remains: &'a [Token]) -> Result<&'a [Token], ParseError> {

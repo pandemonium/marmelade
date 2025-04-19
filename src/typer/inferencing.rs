@@ -1,9 +1,9 @@
-use std::mem;
+use std::{collections::HashMap, mem};
 
 use crate::{
     ast::{
         self, Constructor, ConstructorPattern, DomainExpression, Identifier, MatchClause, Pattern,
-        PatternMatrix, TuplePattern,
+        PatternMatrix, StructPattern, TuplePattern,
     },
     parser::ParsingInfo,
     typer::{
@@ -507,12 +507,12 @@ impl TypingContext {
 }
 
 #[derive(Debug, Default)]
-struct Match {
+struct Deconstructed {
     bindings: Vec<(Identifier, Type)>,
     substitutions: Substitutions,
 }
 
-impl Match {
+impl Deconstructed {
     fn merge_with(&mut self, rhs: Self) {
         self.bindings.extend(rhs.bindings);
         self.substitutions = self.substitutions.compose(rhs.substitutions);
@@ -541,21 +541,24 @@ impl Pattern<ParsingInfo> {
 
                 Ok(TypeInference::trivially(coproduct_type))
             }
+
             Self::Tuple(_, TuplePattern { elements }) => {
+                // Can these two be combined?
                 let elements = elements
                     .iter()
                     .map(|pattern| pattern.synthesize_type(ctx))
                     .collect::<Typing<Vec<_>>>()?;
 
+                let length = elements.len();
                 let (substitutions, element_types) = elements.into_iter().fold(
-                    (Substitutions::default(), vec![]),
-                    |(subs, mut el_tys),
+                    (Substitutions::default(), Vec::with_capacity(length)),
+                    |(subs, mut element_types),
                      TypeInference {
                          substitutions,
                          inferred_type,
                      }| {
-                        el_tys.push(inferred_type);
-                        (subs.compose(substitutions), el_tys)
+                        element_types.push(inferred_type);
+                        (subs.compose(substitutions), element_types)
                     },
                 );
 
@@ -564,22 +567,49 @@ impl Pattern<ParsingInfo> {
                     inferred_type: Type::Product(ProductType::Tuple(TupleType(element_types))),
                 })
             }
+
+            Self::Struct(_, StructPattern { fields }) => {
+                let fields = fields
+                    .iter()
+                    .map(|(field, pattern)| {
+                        pattern
+                            .synthesize_type(ctx)
+                            .map(|pattern_type| (field, pattern_type))
+                    })
+                    .collect::<Typing<Vec<_>>>()?;
+
+                let length = fields.len();
+                let (substitutions, types) = fields.into_iter().fold(
+                    (Substitutions::default(), Vec::with_capacity(length)),
+                    |(substitutions, mut fields), (identifier, inference)| {
+                        fields.push((identifier.clone(), inference.inferred_type));
+                        (substitutions.compose(inference.substitutions), fields)
+                    },
+                );
+
+                Ok(TypeInference {
+                    substitutions,
+                    inferred_type: Type::Product(ProductType::Struct(types)),
+                })
+            }
+
             Self::Literally(pattern) => pattern.synthesize_type(),
-            Self::Otherwise(_) => Ok(TypeInference::fresh()),
+
+            Self::Otherwise(..) => Ok(TypeInference::fresh()),
         }
     }
 
     fn deconstruct(
         &self,
         parsing_info: &ParsingInfo,
-        scrutinee_in: &Type,
+        scrutinee: &Type,
         ctx: &TypingContext,
-    ) -> Typing<Match> {
-        let scrutinee = scrutinee_in.clone().expand_type(ctx)?;
+    ) -> Typing<Deconstructed> {
+        let scrutinee = scrutinee.clone().expand_type(ctx)?;
         match (self, &scrutinee) {
             (
                 Self::Coproduct(
-                    annotation,
+                    parsing_info,
                     ConstructorPattern {
                         constructor,
                         argument,
@@ -588,15 +618,15 @@ impl Pattern<ParsingInfo> {
                 Type::Coproduct(coproduct),
             ) => {
                 if let Some(constructor) = coproduct.constructor_signature(constructor) {
-                    Self::Tuple(*annotation, argument.clone()).deconstruct(
-                        annotation,
+                    Self::Tuple(*parsing_info, argument.clone()).deconstruct(
+                        parsing_info,
                         constructor,
                         ctx,
                     )
                 } else {
                     Err(TypeError::PatternMatchImpossible {
                         pattern: self.clone().map(|annotation| *annotation.info()),
-                        scrutinee: scrutinee.clone(),
+                        scrutinee,
                     })
                 }
             }
@@ -608,33 +638,53 @@ impl Pattern<ParsingInfo> {
                 let TupleType(tuple) = tuple.clone().unspine();
 
                 if tuple.len() == elements.len() {
-                    let mut matched = Match::default();
+                    let mut deconstructed = Deconstructed::default();
                     for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
-                        matched.merge_with(pattern.deconstruct(parsing_info, scrutinee, ctx)?)
+                        deconstructed.merge_with(pattern.deconstruct(
+                            parsing_info,
+                            scrutinee,
+                            ctx,
+                        )?)
                     }
-                    Ok(matched)
+                    Ok(deconstructed)
                 } else {
                     Err(TypeError::PatternMatchImpossible {
                         pattern: pattern.clone(),
-                        scrutinee: scrutinee.clone(),
+                        scrutinee,
                     })
                 }
+            }
+
+            (
+                Self::Struct(_, StructPattern { fields }),
+                Type::Product(ProductType::Struct(struct_type)),
+            ) if fields.len() == struct_type.len() => {
+                let mut deconstructed = Deconstructed::default();
+                let rhs = struct_type.iter().cloned().collect::<HashMap<_, _>>();
+                for (field, pattern) in fields {
+                    let scrutinee = rhs.get(field).ok_or_else(|| TypeError::UndefinedField {
+                        position: *parsing_info.location(),
+                        label: field.clone(),
+                    })?;
+                    deconstructed.merge_with(pattern.deconstruct(parsing_info, scrutinee, ctx)?);
+                }
+                Ok(deconstructed)
             }
 
             (Self::Literally(pattern), scrutinee) => {
                 let pattern = pattern.synthesize_type()?;
                 let substutitions = scrutinee.unify(&pattern.inferred_type, parsing_info)?;
-                let mut matched = Match::default();
-                matched.add_substitutions(substutitions.compose(pattern.substitutions));
+                let mut deconstructed = Deconstructed::default();
+                deconstructed.add_substitutions(substutitions.compose(pattern.substitutions));
 
-                Ok(matched)
+                Ok(deconstructed)
             }
 
             (Self::Otherwise(pattern), _scrutinee) => {
-                let mut matched = Match::default();
+                let mut deconstructed = Deconstructed::default();
                 // This has the expanded type here.
-                matched.add_binding(pattern.clone(), scrutinee_in.clone());
-                Ok(matched)
+                deconstructed.add_binding(pattern.clone(), scrutinee.clone());
+                Ok(deconstructed)
             }
 
             // This ought to  be all bindings in the pattern, but with

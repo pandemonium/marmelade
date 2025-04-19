@@ -1055,6 +1055,8 @@ impl<A> MatchClause<A> {
         let bindings = self.pattern.bindings();
         bound.extend(bindings);
         self.consequent.find_unbound(bound, free);
+
+        // Why am I doing this?
         free.extend(self.pattern.free_variables());
     }
 }
@@ -1103,7 +1105,8 @@ pub enum DomainExpression {
     // These are different from the rest
     Literal(Constant),
     Coproduct(Vec<(Identifier, Vec<DomainExpression>)>),
-    Product(Vec<DomainExpression>),
+    Tuple(Vec<DomainExpression>),
+    Struct(Vec<(Identifier, DomainExpression)>),
 }
 
 impl fmt::Display for DomainExpression {
@@ -1113,15 +1116,12 @@ impl fmt::Display for DomainExpression {
             Self::Whole(ty) => write!(f, "dom({ty})"),
             Self::Join(set) => {
                 let mut i = set.iter();
-
                 if let Some(s) = i.next() {
                     write!(f, "{{ {s}")?;
                 }
-
                 for s in i {
                     write!(f, "| {s}")?;
                 }
-
                 write!(f, " }}")
             }
             Self::Subtraction { lhs, rhs } => {
@@ -1131,7 +1131,6 @@ impl fmt::Display for DomainExpression {
             Self::Literal(constant) => write!(f, "{constant}"),
             Self::Coproduct(constructors) => {
                 let mut i = constructors.iter();
-
                 if let Some((constructor, arguments)) = i.next() {
                     write!(
                         f,
@@ -1158,17 +1157,24 @@ impl fmt::Display for DomainExpression {
 
                 Ok(())
             }
-            Self::Product(elements) => {
+            Self::Tuple(elements) => {
                 let mut i = elements.iter();
-
                 if let Some(element) = i.next() {
                     write!(f, "{}", element)?;
                 }
-
                 for element in i {
                     write!(f, "{}", element)?;
                 }
-
+                Ok(())
+            }
+            Self::Struct(fields) => {
+                let mut i = fields.iter();
+                if let Some((identifier, expr)) = i.next() {
+                    write!(f, "{identifier}: {expr}")?;
+                }
+                for (identifier, expr) in i {
+                    write!(f, "{identifier}: {expr}")?;
+                }
                 Ok(())
             }
         }
@@ -1187,14 +1193,25 @@ impl DomainExpression {
                     .map(|p| Self::from_pattern(p, ctx))
                     .collect::<Typing<_>>()?,
             )]),
-            Pattern::Tuple(_, product) => Self::Product(
+
+            Pattern::Tuple(_, product) => Self::Tuple(
                 product
                     .elements
                     .iter()
                     .map(|p| Self::from_pattern(p, ctx))
                     .collect::<Typing<_>>()?,
             ),
+
+            Pattern::Struct(_, record) => Self::Struct(
+                record
+                    .fields
+                    .iter()
+                    .map(|(field, p)| Self::from_pattern(p, ctx).map(|expr| (field.clone(), expr)))
+                    .collect::<Typing<_>>()?,
+            ),
+
             Pattern::Literally(constant) => Self::Literal(constant.clone()),
+
             Pattern::Otherwise(..) => {
                 let pattern = pattern.synthesize_type(ctx)?;
                 Self::Whole(pattern.inferred_type)
@@ -1218,7 +1235,7 @@ impl DomainExpression {
                 .into_iter()
                 .map(|(constructor, signature)| {
                     if let product @ Type::Product(..) = signature {
-                        if let Self::Product(elements) = Self::from_type(product) {
+                        if let Self::Tuple(elements) = Self::from_type(product) {
                             (Identifier::new(&constructor), elements)
                         } else {
                             panic!("Constructor signatures are expected to be tuples")
@@ -1233,60 +1250,86 @@ impl DomainExpression {
     }
 
     fn from_product(product: ProductType) -> Self {
-        Self::Product(match product {
+        match product {
             ProductType::Tuple(tuple) => {
                 let TupleType(elements) = tuple.unspine();
-                elements.into_iter().map(Self::from_type).collect()
+                Self::Tuple(elements.into_iter().map(Self::from_type).collect())
             }
-            ProductType::Struct(..) => todo!(),
-        })
+            ProductType::Struct(fields) => Self::Struct(
+                fields
+                    .into_iter()
+                    .map(|(field, ty)| (field, Self::from_type(ty)))
+                    .collect(),
+            ),
+        }
     }
 
-    // this has to join Patterns and not Domain
     fn join(&mut self, rhs: Self) {
         *self = match (mem::take(self), rhs) {
             (Self::Nothing, rhs) => rhs,
+
             (Self::Whole(t), _) | (_, Self::Whole(t)) => Self::Whole(t),
+
             (lhs @ Self::Literal(..), rhs @ Self::Literal(..)) => {
                 Self::Join(BTreeSet::from([lhs, rhs]))
             }
-            (Self::Product(mut lhs), Self::Product(rhs)) => {
+
+            (Self::Tuple(mut lhs), Self::Tuple(rhs)) => {
                 inner_join(&mut lhs, rhs);
-                Self::Product(lhs)
+                Self::Tuple(lhs)
             }
-            (Self::Coproduct(mut lhs), Self::Coproduct(rhs)) => {
+
+            (Self::Struct(mut lhs), Self::Struct(rhs)) => Self::Struct({
                 let mut rhs = rhs.into_iter().collect::<HashMap<_, _>>();
+
+                for (field, lhs) in lhs.iter_mut() {
+                    lhs.join(rhs.remove(field).expect("bad pattern"));
+                }
+
+                lhs
+            }),
+
+            (Self::Coproduct(mut lhs), Self::Coproduct(rhs)) => Self::Coproduct({
+                let mut rhs = rhs.into_iter().collect::<HashMap<_, _>>();
+
                 for (constructor, lhs) in lhs.iter_mut() {
                     if let Some(rhs) = rhs.remove(constructor) {
                         inner_join(lhs, rhs);
                     }
                 }
+
                 lhs.extend(rhs);
-                Self::Coproduct(lhs)
-            }
+                lhs
+            }),
+
             (Self::Join(mut lhs), Self::Join(rhs)) => Self::Join({
                 lhs.extend(rhs);
                 lhs
             }),
+
             (Self::Join(mut lhs), rhs) => Self::Join({
                 lhs.insert(rhs);
                 lhs
             }),
+
             (lhs, rhs) => panic!("join: {lhs:?} and {rhs:?} must not be joined"),
         };
     }
 
-    // What does this return when there is nothing left?
-    // Is this what we need to do? rhs as Pattern.
     fn eliminate(&self, rhs: &Self) -> Self {
+        println!("eliminate: {self} {rhs}");
+
         match (self, rhs) {
             (_lhs, Self::Whole(..)) => Self::Nothing,
+
             (Self::Whole(..), rhs) => Self::Subtraction {
                 lhs: self.clone().into(),
                 rhs: rhs.clone().into(),
             },
+
             (Self::Coproduct(lhs), Self::Coproduct(rhs)) => self.eliminate_constructors(lhs, rhs),
-            (Self::Product(lhs), Self::Product(rhs)) => {
+
+            (Self::Tuple(lhs), Self::Tuple(rhs)) => {
                 let elements = lhs
                     .iter()
                     .zip(rhs.iter())
@@ -1296,9 +1339,34 @@ impl DomainExpression {
                 if elements.iter().all(|e| e.is_nothing()) {
                     Self::Nothing
                 } else {
-                    Self::Product(elements)
+                    Self::Tuple(elements)
                 }
             }
+
+            (Self::Struct(lhs), Self::Struct(rhs)) => {
+                let mut rhs = rhs.iter().cloned().collect::<HashMap<_, _>>();
+
+                let fields = lhs
+                    .iter()
+                    .map(|(field, lhs)| {
+                        (
+                            field.clone(),
+                            lhs.eliminate(&rhs.remove(field).expect("bad pattern")),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                println!("eliminate: {fields:?}");
+
+                if fields.iter().all(|(_, e)| e.is_nothing()) {
+                    println!("Gone");
+                    Self::Nothing
+                } else {
+                    println!("Not Gone");
+                    Self::Struct(fields)
+                }
+            }
+
             (lhs, rhs) => panic!("Absurd combination {lhs:?} {rhs:?}"),
         }
     }
@@ -1343,8 +1411,11 @@ impl DomainExpression {
     fn is_covered_by(&self, rhs: &Self) -> bool {
         match (self, rhs) {
             (Self::Nothing, ..) | (.., Self::Whole(..)) => true,
+
             (Self::Literal(lhs), Self::Literal(rhs)) => lhs == rhs,
+
             (lhs, Self::Join(set)) => set.contains(lhs),
+
             (Self::Coproduct(lhs), Self::Coproduct(rhs)) => lhs.iter().all(|(id, lhs)| {
                 rhs.iter().any(|(id1, rhs)| {
                     (id == id1)
@@ -1354,10 +1425,23 @@ impl DomainExpression {
                             .all(|(lhs, rhs)| lhs.is_covered_by(rhs))
                 })
             }),
-            (Self::Product(lhs), Self::Product(rhs)) => lhs
+
+            (Self::Tuple(lhs), Self::Tuple(rhs)) => lhs
                 .iter()
                 .zip(rhs.iter())
                 .all(|(lhs, rhs)| lhs.is_covered_by(rhs)),
+
+            (Self::Struct(lhs), Self::Struct(rhs)) => {
+                let mut rhs = rhs
+                    .iter()
+                    .map(|(field, rhs)| (field, rhs))
+                    .collect::<HashMap<_, _>>();
+
+                lhs.iter().all(|(field, lhs)| {
+                    lhs.is_covered_by(rhs.remove(field).expect("Internal error"))
+                })
+            }
+
             (_lhs, _rhs) => false,
         }
     }
@@ -1380,6 +1464,7 @@ pub enum Pattern<A> {
     // First argument should be A, for god's sake.
     Coproduct(A, ConstructorPattern<A>),
     Tuple(A, TuplePattern<A>),
+    Struct(A, StructPattern<A>),
     Literally(Constant),
     Otherwise(Identifier),
 }
@@ -1389,6 +1474,7 @@ impl<A> Pattern<A> {
         match self {
             Self::Coproduct(a, pattern) => Pattern::Coproduct(f(a), pattern.map(f)),
             Self::Tuple(a, pattern) => Pattern::Tuple(f(a), pattern.map(f)),
+            Self::Struct(a, pattern) => Pattern::Struct(f(a), pattern.map(f)),
             Self::Literally(literal) => Pattern::Literally(literal),
             Self::Otherwise(id) => Pattern::Otherwise(id),
         }
@@ -1403,11 +1489,22 @@ impl<A> Pattern<A> {
                 .flat_map(|p| p.bindings())
                 .collect(),
             Self::Tuple(_, p) => p.elements.iter().flat_map(|p| p.bindings()).collect(),
+            Self::Struct(_, p) => p
+                .fields
+                .iter()
+                .flat_map(|(field, p)| {
+                    let mut pattern_bindings = p.bindings();
+                    pattern_bindings.push(field);
+                    pattern_bindings
+                })
+                .collect(),
             Self::Literally(_) => vec![],
             Self::Otherwise(pattern) => vec![pattern],
         }
     }
 
+    // Why is this necessary?
+    // This thing only collects coproduct constructor names
     fn free_variables(&self) -> HashSet<&Identifier> {
         match self {
             Self::Coproduct(_, pattern) => {
@@ -1422,11 +1519,19 @@ impl<A> Pattern<A> {
                 );
                 free
             }
+
             Self::Tuple(_, pattern) => pattern
                 .elements
                 .iter()
                 .flat_map(|p| p.free_variables())
                 .collect(),
+
+            Self::Struct(_, pattern) => pattern
+                .fields
+                .iter()
+                .flat_map(|(_field, p)| p.free_variables())
+                .collect(),
+
             _otherwise => HashSet::default(),
         }
     }
@@ -1453,9 +1558,26 @@ pub struct TuplePattern<A> {
 }
 
 impl<A> TuplePattern<A> {
-    pub fn map<B>(mut self, f: fn(A) -> B) -> TuplePattern<B> {
+    pub fn map<B>(self, f: fn(A) -> B) -> TuplePattern<B> {
         TuplePattern {
-            elements: self.elements.drain(..).map(|p| p.map(f)).collect(),
+            elements: self.elements.into_iter().map(|p| p.map(f)).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructPattern<A> {
+    pub fields: Vec<(Identifier, Pattern<A>)>,
+}
+
+impl<A> StructPattern<A> {
+    pub fn map<B>(self, f: fn(A) -> B) -> StructPattern<B> {
+        StructPattern {
+            fields: self
+                .fields
+                .into_iter()
+                .map(|(field, p)| (field, p.map(f)))
+                .collect(),
         }
     }
 }
@@ -1491,6 +1613,7 @@ where
                 },
             ) => write!(f, "C_{constructor} [{argument}]"),
             Self::Tuple(_, pattern) => write!(f, "T_{pattern}"),
+            Self::Struct(_, pattern) => write!(f, "S_{pattern}"),
             Self::Literally(literal) => write!(f, "L_{literal}"),
             Self::Otherwise(id) => write!(f, "O_`{id}`"),
         }
@@ -1507,6 +1630,19 @@ where
             write!(f, "{pattern}")?;
         }
         write!(f, ")")
+    }
+}
+
+impl<A> fmt::Display for StructPattern<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{")?;
+        for (field, pattern) in &self.fields {
+            write!(f, "{field}: {pattern}")?;
+        }
+        write!(f, "}}")
     }
 }
 
