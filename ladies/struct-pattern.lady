@@ -5,5 +5,5 @@ main =
         deconstruct x into
           { Foo: f; Bar: b; Quux: q } ->
             print_endline (show q)
-        | { Foo: f; Bar: b; Quux: q } ->
-            print_endline (show b)
+        | otherwise ->
+            print_endline (show otherwise)

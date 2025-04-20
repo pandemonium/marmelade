@@ -738,21 +738,24 @@ fn parse_deconstruct_into(
         strip_if_starts_with(TT::Layout(Layout::Indent), remains),
     )?;
 
-    let mut boofer = vec![];
+    let mut match_clauses = vec![];
 
     let (match_clause, remains1) =
         parse_match_clause(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
     remains = strip_if_starts_with(TT::Layout(Layout::Dedent), remains1);
     remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
-    boofer.push(match_clause);
+    match_clauses.push(match_clause);
 
     // This syntax won't work because Newline triggers the
     // sequence parse rule so the expression in the consequent
     // continues
     while matches!(remains, [T(TT::Pipe, ..), ..]) {
         let (match_clause, remains1) = parse_match_clause(&remains[1..])?;
-        boofer.push(match_clause);
+        match_clauses.push(match_clause);
         remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains1);
+        remains = strip_if_starts_with(TT::Layout(Layout::Dedent), remains);
+
+        println!("parse_deconstruct_into: {remains:?}");
     }
 
     Ok((
@@ -760,7 +763,7 @@ fn parse_deconstruct_into(
             ParsingInfo::new(position),
             DeconstructInto {
                 scrutinee: scrutinee.into(),
-                match_clauses: boofer,
+                match_clauses,
             },
         ),
         remains,
