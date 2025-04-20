@@ -40,6 +40,12 @@ pub enum ResolutionError {
 
     #[error("Parse error {0}")]
     ParseError(#[from] ParseError),
+
+    #[error("{root} has an unsatisfied dependency on {dependency}")]
+    UnsatisfiedDependency {
+        root: Identifier,
+        dependency: Identifier,
+    },
 }
 
 pub struct Interpreter {

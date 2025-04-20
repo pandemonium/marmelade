@@ -1069,7 +1069,7 @@ pub struct PatternMatrix {
 impl PatternMatrix {
     pub fn from_scrutinee(scrutinee: Type, ctx: &TypingContext) -> Typing<Self> {
         Ok(Self {
-            domain: DomainExpression::from_type(scrutinee.expand_type(ctx)?),
+            domain: DomainExpression::from_type(scrutinee),
             matched_space: DomainExpression::default(),
         })
     }
@@ -1089,6 +1089,12 @@ impl PatternMatrix {
 
     pub fn residual(&self) -> DomainExpression {
         self.domain.eliminate(&self.matched_space)
+    }
+}
+
+impl fmt::Display for PatternMatrix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
     }
 }
 
@@ -1317,8 +1323,6 @@ impl DomainExpression {
     }
 
     fn eliminate(&self, rhs: &Self) -> Self {
-        println!("eliminate: {self} {rhs}");
-
         match (self, rhs) {
             (_lhs, Self::Whole(..)) => Self::Nothing,
 
@@ -1356,13 +1360,9 @@ impl DomainExpression {
                     })
                     .collect::<Vec<_>>();
 
-                println!("eliminate: {fields:?}");
-
                 if fields.iter().all(|(_, e)| e.is_nothing()) {
-                    println!("Gone");
                     Self::Nothing
                 } else {
-                    println!("Not Gone");
                     Self::Struct(fields)
                 }
             }
@@ -1408,8 +1408,17 @@ impl DomainExpression {
         self == &DomainExpression::Nothing
     }
 
-    fn is_covered_by(&self, rhs: &Self) -> bool {
-        match (self, rhs) {
+    pub fn is_saturated(&self) -> bool {
+        match self {
+            Self::Whole(..) => true,
+            Self::Tuple(elements) => elements.iter().all(|e| e.is_saturated()),
+            Self::Struct(fields) => fields.iter().all(|(_, f)| f.is_saturated()),
+            _otherwise => false,
+        }
+    }
+
+    fn is_covered_by(&self, matched_space: &Self) -> bool {
+        match (self, matched_space) {
             (Self::Nothing, ..) | (.., Self::Whole(..)) => true,
 
             (Self::Literal(lhs), Self::Literal(rhs)) => lhs == rhs,
@@ -1442,7 +1451,7 @@ impl DomainExpression {
                 })
             }
 
-            (_lhs, _rhs) => false,
+            (_lhs, rhs) => rhs.is_saturated(),
         }
     }
 }

@@ -162,9 +162,13 @@ impl TypingContext {
         // I would like for this to unify and apply substitutions from the patterns
         // Did it used to do this before?
         let mut matrix = PatternMatrix::from_scrutinee(
-            scrutinee_type.inferred_type.apply(&substitutions),
+            scrutinee_type
+                .inferred_type
+                .expand_type(&ctx)?
+                .apply(&substitutions),
             &ctx,
         )?;
+
         for clause in match_clauses {
             let pattern = DomainExpression::from_pattern(&clause.pattern, &ctx)?;
             if matrix.is_useful(&pattern) {
@@ -336,6 +340,11 @@ impl TypingContext {
             substitutions = substitutions.compose(initializer.substitutions);
             types.push((label.clone(), initializer.inferred_type));
         }
+
+        let mut types = types
+            .into_iter()
+            .map(|(field, t)| (field, t.apply(&substitutions)))
+            .collect::<Vec<_>>();
 
         Ok(TypeInference::new(
             substitutions,

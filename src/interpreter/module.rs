@@ -24,21 +24,18 @@ where
 {
     pub fn initialize(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Resolved<Self> {
         let dependency_graph = module.dependency_graph();
-        if !dependency_graph.is_wellformed() {
-            if !dependency_graph.is_acyclic() {
-                Err(ResolutionError::DependencyCycle)
-            } else if !dependency_graph.is_satisfiable() {
-                Err(ResolutionError::UnsatisfiedDependencies)
-            } else {
-                unreachable!()
-            }
-        } else {
-            Ok(Self {
-                module,
-                dependency_graph,
-                resolved: prelude,
-            })
+
+        if !dependency_graph.is_acyclic() {
+            Err(ResolutionError::DependencyCycle)?
         }
+
+        dependency_graph.check_satisfiable()?;
+
+        Ok(Self {
+            module,
+            dependency_graph,
+            resolved: prelude,
+        })
     }
 
     pub fn type_check(self, mut type_checker: TypeChecker) -> Resolved<Self> {
@@ -179,17 +176,27 @@ impl<'a> DependencyGraph<'a> {
 
     pub fn is_satisfiable(&'a self) -> bool {
         self.dependencies.iter().all(|(_, deps)| {
-            deps.iter().all(|&dep| {
-                let retval = self.dependencies.iter().any(|(key, _)| *key == dep);
-
-                if !retval {
-                    println!("is_satisfiable: `{dep}` not found");
-                    println!("is_satisfiable: {:?}", self.dependencies)
-                }
-
-                retval
-            })
+            deps.iter()
+                .all(|&dep| self.dependencies.iter().any(|(key, _)| *key == dep))
         })
+    }
+
+    pub fn check_satisfiable(&self) -> Resolved<()> {
+        for (root, deps) in &self.dependencies {
+            for dep in deps {
+                if !self.dependencies.iter().any(|(root1, _)| root1 == dep) {
+                    // I need SourceLocation here
+                    // Identifier should contain it, really. How hard would that be?
+                    // Identifier::new has to pass in a SourceLocation (or ParsingInfo.)
+                    Err(ResolutionError::UnsatisfiedDependency {
+                        root: (*root).clone(),
+                        dependency: (*dep).clone(),
+                    })?
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn is_acyclic(&self) -> bool {
