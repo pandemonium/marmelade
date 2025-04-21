@@ -65,8 +65,6 @@ where
 pub struct ModuleDeclarator<A> {
     pub name: Identifier,
     pub declarations: Vec<Declaration<A>>,
-    // pub main: Expression,
-    // I would like this, but I have to think a little more about it
 }
 
 impl<A> ModuleDeclarator<A>
@@ -397,6 +395,7 @@ impl fmt::Display for UniversalQuantifiers {
 pub struct Coproduct<A> {
     pub forall: UniversalQuantifiers,
     pub constructors: Vec<Constructor<A>>,
+    //    pub associated_module: Option<ModuleDeclarator<A>>,
 }
 
 impl<A> Coproduct<A>
@@ -407,13 +406,17 @@ where
         let Self {
             forall,
             constructors,
+            //            associated_module,
         } = self;
         Coproduct {
             forall,
             constructors: constructors.into_iter().map(|c| c.map(f)).collect(),
+            //            associated_module: associated_module.map(|m| m.map(f)),
         }
     }
 
+    // This should store the things in the associated module instead
+    // Start with the struct
     pub fn make_implementation_module(
         &self,
         annotation: &A,
@@ -502,27 +505,33 @@ pub struct CoproductModule<A> {
 pub struct Struct<A> {
     pub forall: UniversalQuantifiers,
     pub fields: Vec<StructField<A>>,
+    pub associated_module: Option<ModuleDeclarator<A>>,
 }
 
 impl<A> Struct<A>
 where
-    A: fmt::Display + Clone + Parsed,
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Struct<B> {
-        let Self { forall, fields } = self;
+        let Self {
+            forall,
+            fields,
+            associated_module,
+        } = self;
         Struct {
             forall,
             fields: fields.into_iter().map(|x| x.map(f)).collect(),
+            associated_module: associated_module.map(|m| m.map(f)),
         }
     }
 
     pub fn synthesize_type(&self, ctx: &TypingContext) -> Typing<TypeScheme> {
         let universals = self.forall.fresh_type_parameters();
-        let record_type = self.synthesize_record_type(&universals, ctx)?;
+        let record_type = self.synthesize_struct_type(&universals, ctx)?;
         self.make_type_scheme(universals, record_type)
     }
 
-    fn synthesize_record_type(
+    fn synthesize_struct_type(
         &self,
         universals: &HashMap<TypeName, TypeParameter>,
         ctx: &TypingContext,
@@ -604,7 +613,7 @@ where
                 }
                 Ok(())
             }
-            Self::Struct(_, Struct { forall, fields }) => {
+            Self::Struct(_, Struct { forall, fields, .. }) => {
                 writeln!(f, "{forall}struct {{")?;
                 for StructField {
                     name,
@@ -1067,7 +1076,7 @@ pub struct PatternMatrix {
 }
 
 impl PatternMatrix {
-    pub fn from_scrutinee(scrutinee: Type, ctx: &TypingContext) -> Typing<Self> {
+    pub fn from_scrutinee(scrutinee: Type, _ctx: &TypingContext) -> Typing<Self> {
         Ok(Self {
             domain: DomainExpression::from_type(scrutinee),
             matched_space: DomainExpression::default(),
@@ -1094,7 +1103,11 @@ impl PatternMatrix {
 
 impl fmt::Display for PatternMatrix {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        let Self {
+            domain,
+            matched_space,
+        } = self;
+        write!(f, "domain: {domain} and matched space: {matched_space}")
     }
 }
 
@@ -1216,7 +1229,7 @@ impl DomainExpression {
                     .collect::<Typing<_>>()?,
             ),
 
-            Pattern::Literally(constant) => Self::Literal(constant.clone()),
+            Pattern::Literally(_, constant) => Self::Literal(constant.clone()),
 
             Pattern::Otherwise(..) => {
                 let pattern = pattern.synthesize_type(ctx)?;
@@ -1474,8 +1487,8 @@ pub enum Pattern<A> {
     Coproduct(A, ConstructorPattern<A>),
     Tuple(A, TuplePattern<A>),
     Struct(A, StructPattern<A>),
-    Literally(Constant),
-    Otherwise(Identifier),
+    Literally(A, Constant),
+    Otherwise(A, Identifier),
 }
 
 impl<A> Pattern<A> {
@@ -1484,8 +1497,8 @@ impl<A> Pattern<A> {
             Self::Coproduct(a, pattern) => Pattern::Coproduct(f(a), pattern.map(f)),
             Self::Tuple(a, pattern) => Pattern::Tuple(f(a), pattern.map(f)),
             Self::Struct(a, pattern) => Pattern::Struct(f(a), pattern.map(f)),
-            Self::Literally(literal) => Pattern::Literally(literal),
-            Self::Otherwise(id) => Pattern::Otherwise(id),
+            Self::Literally(a, literal) => Pattern::Literally(f(a), literal),
+            Self::Otherwise(a, id) => Pattern::Otherwise(f(a), id),
         }
     }
 
@@ -1507,8 +1520,8 @@ impl<A> Pattern<A> {
                     pattern_bindings
                 })
                 .collect(),
-            Self::Literally(_) => vec![],
-            Self::Otherwise(pattern) => vec![pattern],
+            Self::Literally(..) => vec![],
+            Self::Otherwise(_, pattern) => vec![pattern],
         }
     }
 
@@ -1542,6 +1555,16 @@ impl<A> Pattern<A> {
                 .collect(),
 
             _otherwise => HashSet::default(),
+        }
+    }
+
+    pub fn annotation(&self) -> &A {
+        match self {
+            Pattern::Coproduct(annotation, ..) => annotation,
+            Pattern::Tuple(annotation, ..) => annotation,
+            Pattern::Struct(annotation, ..) => annotation,
+            Pattern::Literally(annotation, ..) => annotation,
+            Pattern::Otherwise(annotation, ..) => annotation,
         }
     }
 }
@@ -1620,11 +1643,11 @@ where
                     constructor,
                     argument,
                 },
-            ) => write!(f, "C_{constructor} [{argument}]"),
-            Self::Tuple(_, pattern) => write!(f, "T_{pattern}"),
-            Self::Struct(_, pattern) => write!(f, "S_{pattern}"),
-            Self::Literally(literal) => write!(f, "L_{literal}"),
-            Self::Otherwise(id) => write!(f, "O_`{id}`"),
+            ) => write!(f, "{constructor} {argument}"),
+            Self::Tuple(_, pattern) => write!(f, "( {pattern} )"),
+            Self::Struct(_, pattern) => write!(f, "{{ {pattern} }}"),
+            Self::Literally(_, literal) => write!(f, "{literal}"),
+            Self::Otherwise(_, id) => write!(f, "{id}"),
         }
     }
 }
@@ -2070,7 +2093,7 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Tuple(expressions) => {
-                write!(f, "T(")?;
+                write!(f, "(")?;
                 for e in expressions {
                     write!(f, "{e},")?;
                 }

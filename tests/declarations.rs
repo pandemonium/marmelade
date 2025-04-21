@@ -21,7 +21,7 @@ fn pattern_match_basic() {
             DeconstructInto {
                 scrutinee: int(1).into(),
                 match_clauses: vec![MatchClause {
-                    pattern: Pattern::Otherwise(ident("a_number")),
+                    pattern: Pattern::Otherwise(ParsingInfo::default(), ident("a_number")),
                     consequent: int(2).into(),
                 }],
             },
@@ -51,15 +51,15 @@ fn pattern_match_basic2() {
                             ParsingInfo::default(),
                             TuplePattern {
                                 elements: vec![
-                                    Pattern::Otherwise(ident("a")),
-                                    Pattern::Otherwise(ident("b")),
+                                    Pattern::Otherwise(ParsingInfo::default(), ident("a")),
+                                    Pattern::Otherwise(ParsingInfo::default(), ident("b")),
                                 ],
                             },
                         ),
                         consequent: var("b").into(),
                     },
                     MatchClause {
-                        pattern: Pattern::Otherwise(ident("otherwise")),
+                        pattern: Pattern::Otherwise(ParsingInfo::default(), ident("otherwise")),
                         consequent: int(3).into(),
                     },
                     MatchClause {
@@ -67,8 +67,8 @@ fn pattern_match_basic2() {
                             ParsingInfo::default(),
                             TuplePattern {
                                 elements: vec![
-                                    Pattern::Otherwise(ident("x")),
-                                    Pattern::Otherwise(ident("y")),
+                                    Pattern::Otherwise(ParsingInfo::default(), ident("x")),
+                                    Pattern::Otherwise(ParsingInfo::default(), ident("y")),
                                 ],
                             },
                         ),
@@ -118,8 +118,8 @@ fn pattern_match_tuple_match() {
                         ParsingInfo::default(),
                         TuplePattern {
                             elements: vec![
-                                Pattern::Literally(Constant::Int(1)),
-                                Pattern::Literally(Constant::Int(2)),
+                                Pattern::Literally(ParsingInfo::default(), Constant::Int(1)),
+                                Pattern::Literally(ParsingInfo::default(), Constant::Int(2)),
                             ],
                         },
                     ),
@@ -148,8 +148,8 @@ fn pattern_match_constructor() {
                                     ParsingInfo::default(),
                                     TuplePattern {
                                         elements: vec![
-                                            Pattern::Otherwise(ident("x")),
-                                            Pattern::Otherwise(ident("y")),
+                                            Pattern::Otherwise(ParsingInfo::default(), ident("x")),
+                                            Pattern::Otherwise(ParsingInfo::default(), ident("y")),
                                         ],
                                     },
                                 )],

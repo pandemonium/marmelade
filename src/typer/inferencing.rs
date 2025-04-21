@@ -174,7 +174,13 @@ impl TypingContext {
             if matrix.is_useful(&pattern) {
                 matrix.integrate(pattern);
             } else {
-                println!("infer_deconstruct_into: {} is not useful.", clause.pattern);
+                eprintln!(
+                    // It is because Expr here is an Apply tree to the TupleSyntax
+                    // operator. HTF do I print this?
+                    "{}: case {} is not useful for {scrutinee}.",
+                    clause.pattern.annotation().location(),
+                    clause.pattern
+                );
             }
         }
 
@@ -211,11 +217,9 @@ impl TypingContext {
                 parsing_info,
             )?);
 
-            let pattern = clause.pattern.deconstruct(
-                parsing_info,
-                &scrutinee.inferred_type.clone().apply(substitutions),
-                &ctx,
-            )?;
+            let pattern = clause
+                .pattern
+                .deconstruct(&scrutinee.inferred_type.clone().apply(substitutions), &ctx)?;
 
             *substitutions = substitutions.compose(pattern.substitutions);
 
@@ -602,18 +606,13 @@ impl Pattern<ParsingInfo> {
                 })
             }
 
-            Self::Literally(pattern) => pattern.synthesize_type(),
+            Self::Literally(_, pattern) => pattern.synthesize_type(),
 
             Self::Otherwise(..) => Ok(TypeInference::fresh()),
         }
     }
 
-    fn deconstruct(
-        &self,
-        parsing_info: &ParsingInfo,
-        scrutinee: &Type,
-        ctx: &TypingContext,
-    ) -> Typing<Deconstructed> {
+    fn deconstruct(&self, scrutinee: &Type, ctx: &TypingContext) -> Typing<Deconstructed> {
         let scrutinee = scrutinee.clone().expand_type(ctx)?;
         match (self, &scrutinee) {
             (
@@ -627,11 +626,7 @@ impl Pattern<ParsingInfo> {
                 Type::Coproduct(coproduct),
             ) => {
                 if let Some(constructor) = coproduct.constructor_signature(constructor) {
-                    Self::Tuple(*parsing_info, argument.clone()).deconstruct(
-                        parsing_info,
-                        constructor,
-                        ctx,
-                    )
+                    Self::Tuple(*parsing_info, argument.clone()).deconstruct(constructor, ctx)
                 } else {
                     Err(TypeError::PatternMatchImpossible {
                         pattern: self.clone().map(|annotation| *annotation.info()),
@@ -649,11 +644,7 @@ impl Pattern<ParsingInfo> {
                 if tuple.len() == elements.len() {
                     let mut deconstructed = Deconstructed::default();
                     for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
-                        deconstructed.merge_with(pattern.deconstruct(
-                            parsing_info,
-                            scrutinee,
-                            ctx,
-                        )?)
+                        deconstructed.merge_with(pattern.deconstruct(scrutinee, ctx)?)
                     }
                     Ok(deconstructed)
                 } else {
@@ -665,7 +656,7 @@ impl Pattern<ParsingInfo> {
             }
 
             (
-                Self::Struct(_, StructPattern { fields }),
+                Self::Struct(parsing_info, StructPattern { fields }),
                 Type::Product(ProductType::Struct(struct_type)),
             ) if fields.len() == struct_type.len() => {
                 let mut deconstructed = Deconstructed::default();
@@ -675,12 +666,12 @@ impl Pattern<ParsingInfo> {
                         position: *parsing_info.location(),
                         label: field.clone(),
                     })?;
-                    deconstructed.merge_with(pattern.deconstruct(parsing_info, scrutinee, ctx)?);
+                    deconstructed.merge_with(pattern.deconstruct(scrutinee, ctx)?);
                 }
                 Ok(deconstructed)
             }
 
-            (Self::Literally(pattern), scrutinee) => {
+            (Self::Literally(parsing_info, pattern), scrutinee) => {
                 let pattern = pattern.synthesize_type()?;
                 let substutitions = scrutinee.unify(&pattern.inferred_type, parsing_info)?;
                 let mut deconstructed = Deconstructed::default();
@@ -689,7 +680,7 @@ impl Pattern<ParsingInfo> {
                 Ok(deconstructed)
             }
 
-            (Self::Otherwise(pattern), _scrutinee) => {
+            (Self::Otherwise(_parsing_info, pattern), _scrutinee) => {
                 let mut deconstructed = Deconstructed::default();
                 // This has the expanded type here.
                 deconstructed.add_binding(pattern.clone(), scrutinee.clone());

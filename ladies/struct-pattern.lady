@@ -3,7 +3,7 @@ main =
         { Foo: 2; Bar: true; Quux: "hej" }
     in
         deconstruct x into
-          { Foo: f; Bar: b; Quux: q } ->
-            print_endline (show q)
+          { Foo: 2; Bar: b; Quux: q } ->
+            q
         | otherwise ->
-            print_endline (show otherwise)
+            "Hi, mom"

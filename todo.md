@@ -3,8 +3,10 @@
 [X] remove PhantomData - it is incorrectly used
 [ ] improve error reporting, it should print where it goes bad
 [ ] can the error report show the source code?
+[ ] string interpolation
+
 # Parser
-[ ] Does not seem to want to parse more than two match clauses?
+[X] Does not seem to want to parse more than two match clauses?
 [ ] structs
   [X] parser
   [X] synthesize type
@@ -14,5 +16,5 @@
   [X] projections
     [X] tuple projections seem off. Runtime representation is flat, type represetation is nested (right.)
 [ ] modules
-[ ] undefined symbols fail in module satisfiability, they must
+[X] undefined symbols fail in module satisfiability, they must
       report `Undefined symbol x` instead

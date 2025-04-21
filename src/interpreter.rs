@@ -594,8 +594,8 @@ where
 
             Some(bindings)
         }
-        (_, Pattern::Literally(this)) => (scrutinee == &reduce_immediate(this)).then(Vec::new),
-        (_, Pattern::Otherwise(binding)) => Some(vec![(binding, scrutinee.clone())]),
+        (_, Pattern::Literally(_, this)) => (scrutinee == &reduce_immediate(this)).then(Vec::new),
+        (_, Pattern::Otherwise(_, binding)) => Some(vec![(binding, scrutinee.clone())]),
         _otherwise => None,
     }
 }

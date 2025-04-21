@@ -256,8 +256,10 @@ fn parse_type_declarator(remains: &[Token]) -> ParseResult<TypeDeclarator<Parsin
     match remains {
         [T(TT::LeftBrace, pos), remains @ ..] => parse_struct_declarator(remains)
             .map_value(|product| TypeDeclarator::Struct(ParsingInfo::new(*pos), product)),
+
         [T(.., pos), ..] => parse_coproduct(remains)
             .map_value(|coproduct| TypeDeclarator::Coproduct(ParsingInfo::new(*pos), coproduct)),
+
         otherwise => panic!("{otherwise:?}"),
     }
 }
@@ -299,9 +301,19 @@ fn parse_struct_declarator(remains: &[Token]) -> ParseResult<Struct<ParsingInfo>
 
     let mut fields = vec![];
 
+    // Strips a potential Indent first here. This is the C++ brace case
     let (field, mut remains) =
         parse_struct_field_declaration(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
     fields.push(field);
+
+    // Strips another potential Indent here. This is the F# brace case, e.g.:
+    // { Foo : X
+    //   Bar : Y
+    // }
+    let (field, remains1) =
+        parse_struct_field_declaration(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+    fields.push(field);
+    remains = remains1;
 
     // field : type [ (; field : type)* ]
     //   or
@@ -318,7 +330,11 @@ fn parse_struct_declarator(remains: &[Token]) -> ParseResult<Struct<ParsingInfo>
     }
 
     Ok((
-        Struct { forall, fields },
+        Struct {
+            forall,
+            fields,
+            associated_module: None,
+        },
         expect(
             &TT::RightBrace,
             strip_if_starts_with(TT::Layout(Layout::Dedent), remains),
@@ -740,22 +756,19 @@ fn parse_deconstruct_into(
 
     let mut match_clauses = vec![];
 
-    let (match_clause, remains1) =
-        parse_match_clause(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+    let (match_clause, remains1) = parse_match_clause(strip_if_starts_with(
+        TT::Layout(Layout::Indent),
+        strip_if_starts_with(TT::Layout(Layout::Newline), remains),
+    ))?;
     remains = strip_if_starts_with(TT::Layout(Layout::Dedent), remains1);
     remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
     match_clauses.push(match_clause);
 
-    // This syntax won't work because Newline triggers the
-    // sequence parse rule so the expression in the consequent
-    // continues
     while matches!(remains, [T(TT::Pipe, ..), ..]) {
         let (match_clause, remains1) = parse_match_clause(&remains[1..])?;
         match_clauses.push(match_clause);
         remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains1);
         remains = strip_if_starts_with(TT::Layout(Layout::Dedent), remains);
-
-        println!("parse_deconstruct_into: {remains:?}");
     }
 
     Ok((
@@ -791,13 +804,15 @@ fn parse_pattern(remains: &[Token]) -> ParseResult<Pattern<ParsingInfo>> {
             parse_constructor_pattern(remains, position)
         }
 
-        [T(TT::Identifier(id), _position), remains @ ..] => {
-            Ok((Pattern::Otherwise(Identifier::new(id)), remains))
-        }
+        [T(TT::Identifier(id), position), remains @ ..] => Ok((
+            Pattern::Otherwise(ParsingInfo::new(*position), Identifier::new(id)),
+            remains,
+        )),
 
-        [T(TT::Literal(lit), _position), remains @ ..] => {
-            Ok((Pattern::Literally(lit.clone().into()), remains))
-        }
+        [T(TT::Literal(lit), position), remains @ ..] => Ok((
+            Pattern::Literally(ParsingInfo::new(*position), lit.clone().into()),
+            remains,
+        )),
 
         [T(TT::LeftParen, position), remains @ ..] => parse_tuple_pattern(remains, position)
             .map_value(|tuple| Pattern::Tuple(ParsingInfo::new(*position), tuple)),
@@ -890,9 +905,9 @@ fn parse_struct_pattern<'a>(
     Ok((StructPattern { fields }, remains))
 }
 
-fn parse_struct_pattern_field<'a>(
-    remains: &'a [Token],
-) -> ParseResult<'a, (Identifier, Pattern<ParsingInfo>)> {
+fn parse_struct_pattern_field(
+    remains: &[Token],
+) -> ParseResult<(Identifier, Pattern<ParsingInfo>)> {
     if let [T(TT::Identifier(id), _pos), remains @ ..] = remains {
         let identifier = Identifier::new(id);
         match remains {
@@ -901,8 +916,11 @@ fn parse_struct_pattern_field<'a>(
                 Ok(((identifier, pattern), remains))
             }
 
-            [T(TT::Semicolon | TT::RightBrace, ..), ..] => Ok((
-                (identifier.clone(), Pattern::Otherwise(identifier)),
+            [T(TT::Semicolon | TT::RightBrace, position), ..] => Ok((
+                (
+                    identifier.clone(),
+                    Pattern::Otherwise(ParsingInfo::new(*position), identifier),
+                ),
                 remains,
             )),
 
@@ -1052,19 +1070,22 @@ fn parse_expression_infix(
 
         // <expr> <expr>
         // -- Function application
-        [T(tt, ..), ..]
-            if !matches!(
-                tt,
-                TT::Layout(Layout::Dedent)
-                    | TT::End
-                    | TT::Keyword(And | Or | Xor | Else | Into | In)
-            ) =>
+        [T(token, ..), lookahead, ..]
+            if is_expression_prefix(token)
+                && !matches!(lookahead, T(TT::TypeAscribe | TT::Equals, ..)) =>
         {
             parse_juxtaposed(lhs, input, precedence)
         }
 
         _otherwise => Ok((lhs, input)),
     }
+}
+
+fn is_expression_prefix(tt: &TokenType) -> bool {
+    !matches!(
+        tt,
+        TT::Layout(Layout::Dedent) | TT::End | TT::Keyword(And | Or | Xor | Else | Into | In)
+    )
 }
 
 // This is an annoying function
