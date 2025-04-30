@@ -3,10 +3,10 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        Apply, Binding, CompilationUnit, Constant, ControlFlow, Declaration, DeconstructInto,
-        Expression, Identifier, ImportModule, Inject, Lambda, MatchClause, ModuleDeclarator,
-        Pattern, Product, ProductIndex, Project, SelfReferential, Sequence, StructPattern,
-        TypeDeclaration, TypeDeclarator, TypeName,
+        Apply, Binding, CompilationUnit, Constant, ControlFlow, Coproduct, Declaration,
+        DeconstructInto, Expression, Identifier, ImportModule, Inject, Lambda, MatchClause,
+        ModuleDeclarator, Pattern, Product, ProductIndex, Project, SelfReferential, Sequence,
+        Struct, StructPattern, TypeDeclaration, TypeDeclarator, TypeName,
     },
     bridge::Bridge,
     interpreter::module::ModuleResolver,
@@ -95,7 +95,7 @@ impl Interpreter {
 
         ModuleResolver::initialize(&module, self.prelude)?
             .type_check(type_checker)?
-            .resolve()
+            .into_environment()
     }
 
     fn inject_prelude<A>(&self, annotation: &A, module: &mut ModuleDeclarator<A>)
@@ -127,6 +127,7 @@ impl Interpreter {
     {
         println!("Loading types and synthesizing constructors ...");
         let mut injections = vec![];
+
         for decl in &module.declarations {
             if let Declaration::Type(
                 _,
@@ -137,32 +138,89 @@ impl Interpreter {
             ) = decl
             {
                 match declarator {
-                    TypeDeclarator::Coproduct(_, coproduct) => {
-                        let coproduct = coproduct.make_implementation_module(
-                            annotation,
-                            TypeName::new(&binding.as_str()),
-                            typing_context,
-                        )?;
-                        println!(
-                            "inject_types_and_synthetics: `{binding}` `{}`",
-                            coproduct.type_constructor
-                        );
-                        typing_context.bind(coproduct.name.into(), coproduct.type_constructor);
-                        for constructor in coproduct.constructors {
-                            injections.push(Declaration::Value(annotation.clone(), constructor));
-                        }
-                    }
-                    TypeDeclarator::Struct(_, record) => {
-                        let scheme = record.synthesize_type(typing_context)?;
-                        println!("inject_types_and_synthetics: `{binding}` `{scheme}`");
-                        typing_context.bind(TypeName::new(&binding.as_str()).into(), scheme);
-                    }
+                    TypeDeclarator::Coproduct(_, coproduct) => self.inject_coproduct(
+                        annotation,
+                        typing_context,
+                        &mut injections,
+                        coproduct,
+                        binding,
+                    )?,
+
+                    TypeDeclarator::Struct(_, record) => self.inject_struct(
+                        annotation,
+                        typing_context,
+                        &mut injections,
+                        record,
+                        binding,
+                    )?,
+
                     _otherwise => todo!(),
                 }
             }
         }
 
         module.declarations.extend(injections);
+
+        Ok(())
+    }
+
+    fn inject_coproduct<A>(
+        &self,
+        annotation: &A,
+        typing_context: &mut TypingContext,
+        injections: &mut Vec<Declaration<A>>,
+        coproduct: &Coproduct<A>,
+        binding: &Identifier,
+    ) -> Typing<()>
+    where
+        A: fmt::Display + fmt::Debug + Clone + Parsed,
+    {
+        if let Some(module) = coproduct.associated_module.as_ref() {
+            let mut module = module.clone().with_scoped_names();
+            self.inject_types_and_synthetics(annotation, &mut module, typing_context)?;
+            injections.extend(module.declarations);
+        }
+
+        let coproduct = coproduct.make_implementation_module(
+            annotation,
+            TypeName::new(&binding.as_str()),
+            typing_context,
+        )?;
+
+        println!(
+            "inject_types_and_synthetics: `{binding}` `{}`",
+            coproduct.declared_type
+        );
+
+        typing_context.bind(coproduct.name.into(), coproduct.declared_type);
+
+        for constructor in coproduct.constructors {
+            injections.push(Declaration::Value(annotation.clone(), constructor));
+        }
+
+        Ok(())
+    }
+
+    fn inject_struct<A>(
+        &self,
+        annotation: &A,
+        typing_context: &mut TypingContext,
+        injections: &mut Vec<Declaration<A>>,
+        record: &Struct<A>,
+        binding: &Identifier,
+    ) -> Typing<()>
+    where
+        A: fmt::Display + fmt::Debug + Clone + Parsed,
+    {
+        let scheme = record.synthesize_type(typing_context)?;
+        println!("inject_types_and_synthetics: `{binding}` `{scheme}`");
+        typing_context.bind(TypeName::new(&binding.as_str()).into(), scheme);
+
+        if let Some(associated) = record.associated_module.as_ref() {
+            let mut module = associated.clone().with_scoped_names();
+            self.inject_types_and_synthetics(annotation, &mut module, typing_context)?;
+            injections.extend(module.declarations);
+        }
 
         Ok(())
     }

@@ -173,6 +173,7 @@ pub fn coproduct(
         Coproduct {
             forall,
             constructors,
+            associated_module: None,
         },
     )
 }

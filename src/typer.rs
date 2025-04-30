@@ -27,6 +27,8 @@ mod unification;
     I don't really like the way the associated functions
       are distributed over the types either.
 */
+
+// This trait has to go
 pub trait Parsed {
     fn info(&self) -> &ParsingInfo;
 }
@@ -637,6 +639,7 @@ pub enum TypeError {
 pub enum Binding {
     TypeTerm(String),
     ValueTerm(String),
+    ModuleTerm(String),
 }
 
 impl Binding {
@@ -646,7 +649,7 @@ impl Binding {
 
     pub fn as_str(&self) -> &str {
         match self {
-            Binding::TypeTerm(name) | Binding::ValueTerm(name) => name,
+            Self::TypeTerm(name) | Self::ValueTerm(name) | Self::ModuleTerm(name) => name,
         }
     }
 }
@@ -656,6 +659,7 @@ impl fmt::Display for Binding {
         match self {
             Self::TypeTerm(name) => write!(f, "Type@{name}"),
             Self::ValueTerm(name) => write!(f, "Value@{name}"),
+            Self::ModuleTerm(name) => write!(f, "Module@{name}"),
         }
     }
 }
@@ -728,6 +732,7 @@ impl fmt::Display for TypingContext {
             match binding {
                 Binding::TypeTerm(id) => writeln!(f, "{id} ::= {ty}")?,
                 Binding::ValueTerm(id) => writeln!(f, "{id} :: {ty}")?,
+                Binding::ModuleTerm(id) => writeln!(f, "{id}:: module {ty}")?,
             }
         }
 

@@ -3,15 +3,22 @@
    Also: parsing pattern matches with a single clause is broken. :)
 *)
 
-List ::= ∀a.
-  Cons a (List a)
-  Nil
+Window_Manager where
+  make_window :: Rect -> Window
 
-map::∀a b. (a -> b) -> List a -> List b = λf xs.
+List ::= ∀a.
+    Cons a (List a) | Nil
+  where
+    hd :: List a -> Option a = λπ.
+      Cons x xs -> Some x
+    | Nil       -> None
+
+
+map :: ∀a b. (a -> b) -> List a -> List b = λf xs.
   let step = λxs x. Cons (f x) xs
   in fold_right Nil step xs
 
-fold_right::∀b a. b -> (b -> a -> b) -> List a -> b = λacc f xs.
+fold_right :: ∀b a. b -> (b -> a -> b) -> List a -> b = λacc f xs.
   deconstruct xs into
     Cons x xs -> f (fold_right acc f xs) x
   | Nil       -> acc

@@ -216,7 +216,7 @@ pub fn define<B>(
 where
     B: Bridge + 'static,
 {
-    let bridge_name = syntactical_name.scoped_with("bridge");
+    let bridge_name = syntactical_name.prefixed_with(Identifier::new("bridge"));
 
     linkage.bind_type(bridge_name.clone().into(), bridge.synthesize_type());
     linkage.bind_type(syntactical_name.clone().into(), bridge.synthesize_type());

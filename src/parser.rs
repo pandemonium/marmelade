@@ -143,51 +143,46 @@ pub fn parse_compilation_unit(input: &[Token]) -> Result<CompilationUnit<Parsing
 
 pub fn parse_declarations(input: &[Token]) -> ParseResult<Vec<Declaration<ParsingInfo>>> {
     let mut declarations = Vec::default();
-    let mut input = input;
+
+    let (decl, mut remains) = parse_declaration(input)?;
+    let current_block = *decl.position();
+    declarations.push(decl);
+
+    //    println!("parse_decls(1): {:?}", remains);
+    //    println!();
 
     loop {
-        let (declaration, remains) = parse_declaration(input)?;
-        let current_block = *declaration.position();
-        declarations.push(declaration);
+        // Re-write as a match
+        // remains starts with End because
+        if let [T(TT::Layout(Layout::Dedent | Layout::Newline), block), remains1 @ ..] = remains {
+            if starts_with(&TT::End, remains1) {
+                break Ok((declarations, remains));
+            }
 
-        // This logic is highly dubious
-        input = find_next_in_block(current_block, remains, |token_type| {
-            matches!(token_type, TT::Identifier(..) | TT::End)
-        })?;
+            if block.is_same_block(&current_block) {
+                let (decl, remains1) = parse_declaration(remains1)?;
+                //                println!("parse_decls(2): {:?}", remains1);
+                //                println!();
 
-        if matches!(input, [T(TT::Layout(Layout::Dedent) | TT::End, ..), ..]) {
+                declarations.push(decl);
+                remains = remains1;
+            } else if block.is_left_of(current_block.column) {
+                break Ok((declarations, remains));
+            } else {
+                Err(ParseError::DeclarationOffside(
+                    current_block,
+                    remains1.to_vec(),
+                ))?
+            }
+        } else if let [T(TT::End, ..), remains @ ..] = remains {
             break Ok((declarations, remains));
-        }
-    }
-}
+        } else {
+            // parse_expression eats my Dedent somewhere.
+            let (decl, remains1) = parse_declaration(remains)?;
+            //            println!("parse_decls: {:?}", &remains1[..6]);
 
-pub fn find_next_in_block(
-    current_block: SourceLocation,
-    input: &[Token],
-    is_next_start_token_type: fn(&TT) -> bool,
-) -> Result<&[Token], ParseError> {
-    let mut input = input;
-    loop {
-        match input {
-            [T(TT::Layout(Layout::Dedent | Layout::Newline), position), remains @ ..] => {
-                if position.is_same_block(&current_block) {
-                    break Ok(remains);
-                } else {
-                    input = remains
-                }
-            }
-            remains @ [t, ..] if is_next_start_token_type(t.token_type()) => {
-                // This end-check is... bad. Should I get rid of End?
-                if t.location().is_same_block(&current_block) || t.token_type() == &TT::End {
-                    break Ok(remains);
-                } else {
-                    break Err(ParseError::DeclarationOffside(
-                        *t.location(),
-                        remains.to_vec(),
-                    ));
-                }
-            }
-            otherwise => break Err(ParseError::UnexpectedRemains(otherwise.to_vec())),
+            declarations.push(decl);
+            remains = remains1;
         }
     }
 }
@@ -239,29 +234,69 @@ fn parse_type_binding<'a>(
     position: &SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration<ParsingInfo>> {
-    parse_type_declarator(strip_if_starts_with(TT::Layout(Layout::Indent), remains)).map_value(
-        |declarator| {
-            Declaration::Type(
-                ParsingInfo::new(*position),
-                TypeDeclaration {
-                    binding: Identifier::new(binder),
-                    declarator,
-                },
-            )
-        },
+    parse_type_declarator(
+        Identifier::new(binder),
+        strip_if_starts_with(TT::Layout(Layout::Indent), remains),
     )
+    .map_value(|declarator| {
+        Declaration::Type(
+            ParsingInfo::new(*position),
+            TypeDeclaration {
+                binding: Identifier::new(binder),
+                declarator,
+            },
+        )
+    })
 }
 
-fn parse_type_declarator(remains: &[Token]) -> ParseResult<TypeDeclarator<ParsingInfo>> {
+fn parse_type_declarator(
+    binder: Identifier,
+    remains: &[Token],
+) -> ParseResult<TypeDeclarator<ParsingInfo>> {
     match remains {
-        [T(TT::LeftBrace, pos), remains @ ..] => parse_struct_declarator(remains)
-            .map_value(|product| TypeDeclarator::Struct(ParsingInfo::new(*pos), product)),
+        [T(TT::LeftBrace, position), remains @ ..] => {
+            let (struct_declarator, remains) = parse_struct_declarator(remains)?;
+
+            let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+            if starts_with(&TT::Keyword(Keyword::Where), remains) {
+                let remains = expect(&TT::Layout(Layout::Indent), &remains[1..])?;
+                parse_associated_module(binder, *position, struct_declarator, remains)
+            } else {
+                Ok((
+                    TypeDeclarator::Struct(ParsingInfo::new(*position), struct_declarator),
+                    remains,
+                ))
+            }
+        }
 
         [T(.., pos), ..] => parse_coproduct(remains)
             .map_value(|coproduct| TypeDeclarator::Coproduct(ParsingInfo::new(*pos), coproduct)),
 
         otherwise => panic!("{otherwise:?}"),
     }
+}
+
+fn parse_associated_module<'a>(
+    binder: Identifier,
+    position: SourceLocation,
+    struct_declarator: Struct<ParsingInfo>,
+    remains: &'a [Token],
+) -> ParseResult<'a, TypeDeclarator<ParsingInfo>> {
+    println!("parse_associated_module: {:?}", &remains[..6]);
+    parse_declarations(remains).map_value(|declarations| {
+        println!("parse_associated_module: {declarations:?}");
+        let module = ModuleDeclarator {
+            name: binder,
+            declarations,
+        };
+        TypeDeclarator::Struct(
+            ParsingInfo::new(position),
+            Struct {
+                associated_module: Some(module),
+                ..struct_declarator
+            },
+        )
+    })
 }
 
 fn parse_universal_quantifier(remains: &[Token]) -> ParseResult<UniversalQuantifiers> {
@@ -368,18 +403,18 @@ fn parse_coproduct(remains: &[Token]) -> ParseResult<Coproduct<ParsingInfo>> {
     // parse the first constructor to see:
     //   if there are more constructors and
     //   how they are separated. (Newline or Pipe.)
-    let mut boofer = vec![];
+    let mut constructors = vec![];
     let (constructor, remains1) =
         parse_constructor(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
 
     remains = remains1;
-    boofer.push(constructor);
+    constructors.push(constructor);
 
     // Constructors are either inline, separated by |, or broken down, separated by Newline
     if let [T(separator @ (TT::Pipe | TT::Layout(Layout::Newline)), ..), ..] = remains {
         while matches!(remains, [t, ..] if t.token_type() == separator) {
             let (constructor, remains1) = parse_constructor(&remains[1..])?;
-            boofer.push(constructor);
+            constructors.push(constructor);
 
             remains = remains1;
         }
@@ -388,7 +423,8 @@ fn parse_coproduct(remains: &[Token]) -> ParseResult<Coproduct<ParsingInfo>> {
     Ok((
         Coproduct {
             forall,
-            constructors: boofer,
+            constructors,
+            associated_module: None,
         },
         remains,
     ))
@@ -1113,10 +1149,10 @@ fn parse_operator<'a>(
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let operator_precedence = operator.precedence();
     if operator_precedence > context_precedence {
-        let (lhs, remains) = if operator == &Operator::Projection {
-            parse_projection_operator(lhs, remains)?
+        let (lhs, remains) = if operator == &Operator::Select {
+            parse_select_operator(lhs, remains)?
         } else {
-            parse_regular_operator(lhs, operator, remains, position, operator_precedence)?
+            parse_operator_default(lhs, operator, remains, position, operator_precedence)?
         };
 
         parse_expression_infix(lhs, remains, context_precedence)
@@ -1125,11 +1161,62 @@ fn parse_operator<'a>(
     }
 }
 
-fn parse_projection_operator(
+//enum Selector<A> {
+//    Name(Identifier),
+//    Member(ModuleName, Identifier),
+//    Project(Project<A>),
+//}
+
+fn parse_select_operator(
     lhs: Expression<ParsingInfo>,
     remains: &[Token],
 ) -> ParseResult<Expression<ParsingInfo>> {
-    let index = match remains {
+    // It is not this simple. Structs are most often going
+    // to be accessed through a variable. That is not a stable
+    // identifier. The parser cannot know what that is.
+    //
+    // Then again: Modules are structs in both the TypingContext and
+    //             the interpreter Environment.
+    //
+    // A.b.c is: reduce(project(reduce(project(reduce(Var(A)), b), c)))
+    //
+    // Hmm, so they should all be Projections? But rename Projection into Select with Selector
+
+    match lhs {
+        Expression::Variable(parsing_info, identifier) => {
+            parse_identifier_path(parsing_info, identifier, remains)
+        }
+        lhs => parse_projection(lhs, remains),
+    }
+}
+
+fn parse_identifier_path(
+    annotation: ParsingInfo,
+    lhs: Identifier,
+    remains: &[Token],
+) -> ParseResult<Expression<ParsingInfo>> {
+    match remains {
+        [T(TT::Identifier(name), _pos), remains @ ..] => Ok((
+            Expression::Variable(annotation, Identifier::Select(lhs.into(), name.to_owned())),
+            remains,
+        )),
+        _otherwise => Err(ParseError::Expected {
+            // I need a way to talk about a token's actual type
+            one_of: vec![
+                TT::Identifier("field-name".to_owned()),
+                TT::Literal(Literal::Integer(0)),
+            ]
+            .into(),
+            received: remains[0].token_type().clone(),
+        })?,
+    }
+}
+
+fn parse_projection(
+    lhs: Expression<ParsingInfo>,
+    remains: &[Token],
+) -> ParseResult<Expression<ParsingInfo>> {
+    match remains {
         [T(TT::Identifier(name), pos), remains @ ..] => {
             Ok(((ProductIndex::Struct(Identifier::new(name)), pos), remains))
         }
@@ -1145,9 +1232,8 @@ fn parse_projection_operator(
             .into(),
             received: remains[0].token_type().clone(),
         })?,
-    };
-
-    index.map_value(|(index, pos)| {
+    }
+    .map_value(|(index, pos)| {
         Expression::Project(
             ParsingInfo::new(*pos),
             Project {
@@ -1158,7 +1244,7 @@ fn parse_projection_operator(
     })
 }
 
-fn parse_regular_operator<'a>(
+fn parse_operator_default<'a>(
     lhs: Expression<ParsingInfo>,
     operator: &Operator,
     remains: &'a [Token],
@@ -1173,7 +1259,7 @@ fn parse_regular_operator<'a>(
             operator_precedence
         },
     )
-    .map_value(|rhs| apply_binary_operator(position, lhs, *operator, rhs))
+    .map_value(|rhs| apply_infix(position, lhs, *operator, rhs))
 }
 
 fn parse_juxtaposed(
@@ -1222,7 +1308,7 @@ fn parse_sequence(
     }
 }
 
-fn apply_binary_operator(
+fn apply_infix(
     position: SourceLocation,
     lhs: Expression<ParsingInfo>,
     op: Operator,

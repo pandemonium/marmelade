@@ -7,3 +7,5 @@ main =
              print_endline (show a)
              print_endline (show b)
              print_endline (show c)
+        | otherwise ->
+            print_endline "Hi, mom"

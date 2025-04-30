@@ -3,13 +3,19 @@ Rectangle ::=
     Height : Int
     Spoon  : Text
   }
+  with
+    hi = lambda x. 10
 
 area :: Rectangle -> Int = lambda self.
-    deconstruct self into
+  deconstruct self into
+    { Width: w; Height: h; Spoon } -> w * h
+
+area2 :: Rectangle -> Int = lambda self.
+  deconstruct self into
     { Width: w; Height: h; Spoon } -> w * h
 
 main =
   let r =
     { Width: 10; Height: 10; Spoon: "hi" }
   in
-     area r
+     Rectangle.hi 1

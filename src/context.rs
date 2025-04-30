@@ -1,8 +1,10 @@
+use std::marker::PhantomData;
+
 use crate::{
-    ast::Identifier,
-    interpreter::{Environment, Interpreter, Resolved, Value},
+    ast::{CompilationUnit, Identifier},
+    interpreter::{DependencyGraph, Environment, Interpreter, Resolved, Value},
     lexer::LexicalAnalyzer,
-    parser,
+    parser::{self, ParsingInfo},
     typer::{Binding, TypeScheme, TypingContext},
 };
 
@@ -31,9 +33,43 @@ impl<'a> Linkage<'a> {
 
     pub fn typecheck_and_interpret(self) -> Resolved<Value> {
         let mut lexer = LexicalAnalyzer::default();
-        let program = parser::parse_compilation_unit(lexer.tokenize(self.main_source_text))?;
+        let input = lexer.tokenize(self.main_source_text);
+        let program = parser::parse_compilation_unit(input)?.scope_library_modules();
 
         Interpreter::new(self.interpreter_environment.into_parent())
             .load_and_run(self.typing_context, program)
+    }
+
+    //    pub fn frobnicate(self) -> Resolved<Value> {
+    //        let mut lexer = LexicalAnalyzer::default();
+    //        let input = lexer.tokenize(self.main_source_text);
+    //        let program = parser::parse_compilation_unit(input)?.scope_library_modules();
+    //
+    //
+    //
+    //        todo!()
+    //    }
+}
+
+pub struct Start;
+
+pub struct Compilation<'a, Stage> {
+    program: &'a CompilationUnit<ParsingInfo>,
+    dependency_graph: DependencyGraph<'a>,
+    environment: Environment,
+    _stage: PhantomData<Stage>,
+}
+
+impl<'a, A> Compilation<'a, A> {
+    pub fn new(
+        program: &'a CompilationUnit<ParsingInfo>,
+        environment: Environment,
+    ) -> Compilation<'a, Start> {
+        Compilation {
+            program,
+            dependency_graph: program.dependency_graph(),
+            environment,
+            _stage: PhantomData::default(),
+        }
     }
 }

@@ -6,12 +6,15 @@ use std::{
 use super::{Environment, ResolutionError, Resolved};
 use crate::{
     ast::{
-        Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration, ValueDeclarator,
+        CompilationUnit, Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration,
+        ValueDeclarator,
     },
     typer::{Parsed, TypeChecker},
 };
 
 // Untyped instead.
+// It ought to take a CompilationUnit and also be called something else.
+// How about Compiler?
 pub struct ModuleResolver<'a, A> {
     module: &'a ModuleDeclarator<A>,
     dependency_graph: DependencyGraph<'a>,
@@ -50,7 +53,8 @@ where
         Ok(self)
     }
 
-    pub fn resolve(mut self) -> Resolved<Environment> {
+    pub fn into_environment(mut self) -> Resolved<Environment> {
+        // How does this deal with modules?
         for id in self.dependency_graph.compute_resolution_order() {
             self.resolve_declaration(id)?
         }
@@ -88,6 +92,26 @@ pub struct DependencyGraph<'a> {
 }
 
 impl<'a> DependencyGraph<'a> {
+    pub fn from_compilation_unit<A>(unit: &'a CompilationUnit<A>) -> Self
+    where
+        A: fmt::Debug + fmt::Display + Clone + Parsed,
+    {
+        match unit {
+            CompilationUnit::Implicit(_, module) => Self::from_declarations(&module.declarations),
+            CompilationUnit::Library(_, library) => {
+                let mut main = Self::from_declarations(&library.main.declarations);
+
+                for module in &library.modules {
+                    let module = Self::from_declarations(&module.declarations);
+
+                    main.dependencies.extend(module.dependencies);
+                }
+
+                main
+            }
+        }
+    }
+
     pub fn from_declarations<A>(decls: &'a [Declaration<A>]) -> Self
     where
         A: fmt::Display + fmt::Debug + Clone + Parsed,
@@ -106,7 +130,6 @@ impl<'a> DependencyGraph<'a> {
                     },
                 ) => {
                     for dep in exported_symbols {
-                        //                        outbound.entry(dep).or_default();
                         outbound.push((dep, vec![]));
                     }
                 }
@@ -182,6 +205,7 @@ impl<'a> DependencyGraph<'a> {
     }
 
     pub fn check_satisfiable(&self) -> Resolved<()> {
+        // union all snd, compare to fst
         for (root, deps) in &self.dependencies {
             for dep in deps {
                 if !self.dependencies.iter().any(|(root1, _)| root1 == dep) {

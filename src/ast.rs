@@ -33,14 +33,35 @@ where
     pub fn map<B>(self, f: fn(A) -> B) -> CompilationUnit<B> {
         match self {
             Self::Implicit(a, module) => CompilationUnit::Implicit(f(a), module.map(f)),
-            Self::Library(a, LibraryDeclarator { mut modules, main }) => CompilationUnit::Library(
+            Self::Library(a, LibraryDeclarator { modules, main }) => CompilationUnit::Library(
                 f(a),
                 LibraryDeclarator {
-                    modules: modules.drain(..).map(|m| m.map(f)).collect(),
+                    modules: modules.into_iter().map(|m| m.map(f)).collect(),
                     main: main.map(f),
                 },
             ),
         }
+    }
+
+    pub fn scope_library_modules(self) -> Self {
+        if let Self::Library(a, LibraryDeclarator { modules, main }) = self {
+            Self::Library(
+                a,
+                LibraryDeclarator {
+                    modules: modules
+                        .into_iter()
+                        .map(|module| module.with_scoped_names())
+                        .collect(),
+                    main,
+                },
+            )
+        } else {
+            self
+        }
+    }
+
+    pub fn dependency_graph<'a>(&'a self) -> DependencyGraph<'a> {
+        DependencyGraph::from_compilation_unit(self)
     }
 }
 
@@ -71,6 +92,22 @@ impl<A> ModuleDeclarator<A>
 where
     A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
+    pub fn with_scoped_names(self) -> Self {
+        let name = self.name.clone();
+        self.prefixed_with(name)
+    }
+
+    pub fn prefixed_with(self, name: Identifier) -> Self {
+        Self {
+            name: self.name.prefixed_with(name.clone()),
+            declarations: self
+                .declarations
+                .into_iter()
+                .map(|decl| decl.prefixed_with(name.clone()))
+                .collect(),
+        }
+    }
+
     pub fn find_value_declaration<'a>(
         &'a self,
         id: &'a Identifier,
@@ -114,6 +151,9 @@ where
 }
 
 // Maybe this thing should carry a SourceLocation
+// I also would like this to contain the identifier from the parse
+// although that might be impossible since some names are static.
+// Or is it?
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Identifier {
     Atom(String),
@@ -132,8 +172,23 @@ impl Identifier {
         }
     }
 
-    pub fn scoped_with(&self, scope: &str) -> Self {
-        Self::Select(Self::Atom(scope.to_owned()).into(), self.as_str())
+    // Is this function generally safe?
+    // What is: "a.b".prefix_with "c"
+    pub fn prefixed_with(&self, prefix: Identifier) -> Self {
+        fn prefigure(id: Identifier, prefix: Identifier) -> Identifier {
+            match id {
+                Identifier::Atom(suffix) => Identifier::Select(prefix.into(), suffix),
+                Identifier::Select(base, x) => {
+                    Identifier::Select(prefigure(*base, prefix).into(), x)
+                }
+            }
+        }
+
+        prefigure(self.clone(), prefix)
+    }
+
+    pub fn suffix_with(&self, suffix: &str) -> Self {
+        Self::Select(self.clone().into(), suffix.to_owned())
     }
 }
 
@@ -191,6 +246,14 @@ where
         deps.extend(self.declarator.dependencies());
         deps
     }
+
+    pub fn prefixed_with(self, name: Identifier) -> Self {
+        Self {
+            binder: self.binder.prefixed_with(name),
+            type_signature: self.type_signature,
+            declarator: self.declarator,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -236,6 +299,15 @@ pub struct TypeDeclaration<A> {
     pub declarator: TypeDeclarator<A>,
 }
 
+impl<A> TypeDeclaration<A> {
+    pub fn prefixed_with(self, name: Identifier) -> Self {
+        Self {
+            binding: self.binding.prefixed_with(name),
+            declarator: self.declarator,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImportModule {
     pub exported_symbols: Vec<Identifier>,
@@ -247,6 +319,7 @@ pub enum Declaration<A> {
     Type(A, TypeDeclaration<A>),
     Module(A, ModuleDeclarator<A>),
     ImportModule(A, ImportModule),
+    // with aliasing
     // Use()    ??
 }
 
@@ -303,6 +376,15 @@ where
             Self::ImportModule(a, ImportModule { exported_symbols }) => {
                 Declaration::ImportModule(f(a), ImportModule { exported_symbols })
             }
+        }
+    }
+
+    pub fn prefixed_with(self, name: Identifier) -> Self {
+        match self {
+            Self::Value(a, decl) => Self::Value(a, decl.prefixed_with(name)),
+            Self::Type(a, decl) => Self::Type(a, decl.prefixed_with(name)),
+            Self::Module(a, module) => Self::Module(a, module.prefixed_with(name)),
+            otherwise => otherwise,
         }
     }
 }
@@ -395,7 +477,7 @@ impl fmt::Display for UniversalQuantifiers {
 pub struct Coproduct<A> {
     pub forall: UniversalQuantifiers,
     pub constructors: Vec<Constructor<A>>,
-    //    pub associated_module: Option<ModuleDeclarator<A>>,
+    pub associated_module: Option<ModuleDeclarator<A>>,
 }
 
 impl<A> Coproduct<A>
@@ -406,12 +488,12 @@ where
         let Self {
             forall,
             constructors,
-            //            associated_module,
+            associated_module,
         } = self;
         Coproduct {
             forall,
             constructors: constructors.into_iter().map(|c| c.map(f)).collect(),
-            //            associated_module: associated_module.map(|m| m.map(f)),
+            associated_module: associated_module.map(|m| m.map(f)),
         }
     }
 
@@ -423,14 +505,14 @@ where
         self_name: TypeName,
         ctx: &TypingContext,
     ) -> Typing<CoproductModule<A>> {
-        let declaring_type = self.synthesize_type(ctx)?;
-        println!("make_implementation_module: {declaring_type}");
+        let declared_type = self.synthesize_type(ctx)?;
+        println!("make_implementation_module: {declared_type}");
 
         let forall = self.forall.fresh_type_parameters();
 
         Ok(CoproductModule {
             name: self_name.clone(),
-            type_constructor: declaring_type,
+            declared_type,
             constructors: self
                 .constructors
                 .iter()
@@ -496,12 +578,12 @@ where
 
 pub struct CoproductModule<A> {
     pub name: TypeName,
-    pub type_constructor: TypeScheme,
+    pub declared_type: TypeScheme,
     pub constructors: Vec<ValueDeclaration<A>>,
 }
 
 // Rename into Record?
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Struct<A> {
     pub forall: UniversalQuantifiers,
     pub fields: Vec<StructField<A>>,
@@ -1743,6 +1825,7 @@ pub struct Project<A> {
     pub base: Box<Expression<A>>,
     pub index: ProductIndex,
 }
+
 impl<A> Project<A> {
     fn map<B>(self, f: fn(A) -> B) -> Project<B> {
         Project {
