@@ -15,53 +15,24 @@ use crate::{
     },
 };
 
+mod names;
+
 #[derive(Debug)]
-pub struct LibraryDeclarator<A> {
-    pub modules: Vec<ModuleDeclarator<A>>,
+pub struct CompilationUnit<A> {
+    pub annotation: A,
     pub main: ModuleDeclarator<A>,
 }
 
-#[derive(Debug)]
-pub enum CompilationUnit<A> {
-    Implicit(A, ModuleDeclarator<A>),
-    Library(A, LibraryDeclarator<A>),
-}
 impl<A> CompilationUnit<A>
 where
-    A: fmt::Display + fmt::Debug + Clone + Parsed,
+    A: fmt::Display + fmt::Debug + Copy + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> CompilationUnit<B> {
-        match self {
-            Self::Implicit(a, module) => CompilationUnit::Implicit(f(a), module.map(f)),
-            Self::Library(a, LibraryDeclarator { modules, main }) => CompilationUnit::Library(
-                f(a),
-                LibraryDeclarator {
-                    modules: modules.into_iter().map(|m| m.map(f)).collect(),
-                    main: main.map(f),
-                },
-            ),
+        let Self { annotation, main } = self;
+        CompilationUnit {
+            annotation: f(annotation),
+            main: main.map(f),
         }
-    }
-
-    pub fn scope_library_modules(self) -> Self {
-        if let Self::Library(a, LibraryDeclarator { modules, main }) = self {
-            Self::Library(
-                a,
-                LibraryDeclarator {
-                    modules: modules
-                        .into_iter()
-                        .map(|module| module.with_scoped_names())
-                        .collect(),
-                    main,
-                },
-            )
-        } else {
-            self
-        }
-    }
-
-    pub fn dependency_graph<'a>(&'a self) -> DependencyGraph<'a> {
-        DependencyGraph::from_compilation_unit(self)
     }
 }
 
@@ -70,15 +41,8 @@ where
     A: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Implicit(_, module) => writeln!(f, "{module}"),
-            Self::Library(_, LibraryDeclarator { modules, main }) => {
-                for m in modules {
-                    writeln!(f, "{m}")?;
-                }
-                write!(f, "{main}")
-            }
-        }
+        let Self { annotation, main } = self;
+        writeln!(f, "Compilation unit {annotation}, main: {main}")
     }
 }
 
@@ -90,7 +54,7 @@ pub struct ModuleDeclarator<A> {
 
 impl<A> ModuleDeclarator<A>
 where
-    A: fmt::Display + fmt::Debug + Clone + Parsed,
+    A: fmt::Display + fmt::Debug + Copy + Parsed,
 {
     pub fn with_scoped_names(self) -> Self {
         let name = self.name.clone();
@@ -172,23 +136,61 @@ impl Identifier {
         }
     }
 
-    // Is this function generally safe?
-    // What is: "a.b".prefix_with "c"
+    pub fn mangle(&self, prefix: &str) -> Self {
+        match self {
+            Self::Atom(id) => Self::Atom(format!("{prefix}${id}")),
+            Self::Select(parent, id) => {
+                Self::Select((*parent.clone()).into(), format!("{prefix}${id}"))
+            }
+        }
+    }
+
+    pub fn head(&self) -> &Self {
+        match self {
+            Self::Atom(..) => self,
+            Self::Select(prefix, _) => prefix.head(),
+        }
+    }
+
     pub fn prefixed_with(&self, prefix: Identifier) -> Self {
-        fn prefigure(id: Identifier, prefix: Identifier) -> Identifier {
+        fn splice_prefix(id: Identifier, prefix: Identifier) -> Identifier {
             match id {
                 Identifier::Atom(suffix) => Identifier::Select(prefix.into(), suffix),
                 Identifier::Select(base, x) => {
-                    Identifier::Select(prefigure(*base, prefix).into(), x)
+                    Identifier::Select(splice_prefix(*base, prefix).into(), x)
                 }
             }
         }
 
-        prefigure(self.clone(), prefix)
+        splice_prefix(self.clone(), prefix)
     }
 
     pub fn suffix_with(&self, suffix: &str) -> Self {
         Self::Select(self.clone().into(), suffix.to_owned())
+    }
+
+    pub fn try_from_components(path: &[&str]) -> Option<Self> {
+        if let [head, tail @ ..] = path {
+            Some(
+                tail.iter()
+                    .fold(Self::Atom((*head).to_owned()), |prefix, &x| {
+                        Self::Select(prefix.into(), x.to_owned())
+                    }),
+            )
+        } else {
+            None
+        }
+    }
+
+    pub fn components(&self) -> Vec<&str> {
+        match self {
+            Self::Atom(name) => vec![name],
+            Self::Select(parent, name) => {
+                let mut path = parent.components();
+                path.push(name);
+                path
+            }
+        }
     }
 }
 
@@ -228,13 +230,24 @@ pub struct ValueDeclaration<A> {
 
 impl<A> ValueDeclaration<A>
 where
-    A: Clone + Parsed + fmt::Debug + fmt::Display,
+    A: Copy + Parsed + fmt::Debug + fmt::Display,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> ValueDeclaration<B> {
         ValueDeclaration {
             binder: self.binder,
             type_signature: self.type_signature.map(|signature| signature.map(f)),
             declarator: self.declarator.map(f),
+        }
+    }
+
+    pub fn map_expression<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            binder: self.binder,
+            type_signature: self.type_signature,
+            declarator: self.declarator.map_expression(f),
         }
     }
 
@@ -340,7 +353,7 @@ impl Declaration<ParsingInfo> {
 
 impl<A> Declaration<A>
 where
-    A: fmt::Display + fmt::Debug + Clone + Parsed,
+    A: fmt::Display + fmt::Debug + Copy + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Declaration<B> {
         match self {
@@ -482,7 +495,7 @@ pub struct Coproduct<A> {
 
 impl<A> Coproduct<A>
 where
-    A: Clone + Parsed + fmt::Debug + fmt::Display,
+    A: Copy + Parsed + fmt::Debug + fmt::Display,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Coproduct<B> {
         let Self {
@@ -592,7 +605,7 @@ pub struct Struct<A> {
 
 impl<A> Struct<A>
 where
-    A: fmt::Debug + fmt::Display + Clone + Parsed,
+    A: fmt::Debug + fmt::Display + Copy + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Struct<B> {
         let Self {
@@ -661,7 +674,7 @@ pub enum TypeDeclarator<A> {
 
 impl<A> TypeDeclarator<A>
 where
-    A: Clone + Parsed + fmt::Debug + fmt::Display,
+    A: Copy + Parsed + fmt::Debug + fmt::Display,
 {
     fn map<B>(self, f: fn(A) -> B) -> TypeDeclarator<B> {
         match self {
@@ -923,7 +936,7 @@ where
     }
 
     // Why isn't this ever called? No initializatio order issues?
-    fn dependencies(&self) -> HashSet<&Identifier> {
+    fn _dependencies(&self) -> HashSet<&Identifier> {
         fn collect<'a, A>(node: &'a TypeExpression<A>, deps: &mut HashSet<&'a Identifier>) {
             match node {
                 TypeExpression::Constructor(_, name) => {
@@ -1027,7 +1040,7 @@ pub struct ValueDeclarator<A> {
 
 impl<A> ValueDeclarator<A>
 where
-    A: Clone,
+    A: Copy,
 {
     pub fn dependencies(&self) -> HashSet<&Identifier> {
         self.expression.free_identifiers()
@@ -1036,6 +1049,15 @@ where
     fn map<B>(self, f: fn(A) -> B) -> ValueDeclarator<B> {
         ValueDeclarator {
             expression: self.expression.map(f),
+        }
+    }
+
+    pub fn map_expression<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            expression: f(self.expression),
         }
     }
 }
@@ -1867,7 +1889,7 @@ impl<A> Sequence<A> {
 
 impl Expression<ParsingInfo> {
     pub fn position(&self) -> &lexer::SourceLocation {
-        &self.parsing_info().position
+        &self.parsing_info().location()
     }
 
     pub fn parsing_info(&self) -> &ParsingInfo {
@@ -1916,8 +1938,6 @@ impl<A> Expression<A> {
                 free.insert(id);
             }
             Self::Lambda(_, Lambda { parameter, body }) => {
-                // This is probably not correct
-                // I have to remove this after looking in "body
                 bound.insert(&parameter.name);
                 body.find_unbound(bound, free);
             }

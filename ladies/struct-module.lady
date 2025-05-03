@@ -3,7 +3,7 @@ Rectangle ::=
     Height : Int
     Spoon  : Text
   }
-  with
+  where
     hi = lambda x. 10
 
 area :: Rectangle -> Int = lambda self.

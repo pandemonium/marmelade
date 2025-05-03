@@ -129,14 +129,12 @@ impl typer::Parsed for () {
 
 pub fn parse_compilation_unit(input: &[Token]) -> Result<CompilationUnit<ParsingInfo>, ParseError> {
     parse_declarations(input)
-        .map_value(|declarations| {
-            CompilationUnit::Implicit(
-                ParsingInfo::new(*input[0].location()),
-                ModuleDeclarator {
-                    name: Identifier::new("main"),
-                    declarations,
-                },
-            )
+        .map_value(|declarations| CompilationUnit {
+            annotation: ParsingInfo::new(*input[0].location()),
+            main: ModuleDeclarator {
+                name: Identifier::new("main"),
+                declarations,
+            },
         })
         .map(|(fst, _)| fst)
 }
@@ -1160,12 +1158,6 @@ fn parse_operator<'a>(
         Ok((lhs, input))
     }
 }
-
-//enum Selector<A> {
-//    Name(Identifier),
-//    Member(ModuleName, Identifier),
-//    Project(Project<A>),
-//}
 
 fn parse_select_operator(
     lhs: Expression<ParsingInfo>,

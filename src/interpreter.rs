@@ -1,3 +1,4 @@
+use std::collections::{hash_map, HashSet};
 use std::{any::Any, cell::RefCell, collections::HashMap, fmt, rc::Rc};
 use thiserror::Error;
 
@@ -6,7 +7,8 @@ use crate::{
         Apply, Binding, CompilationUnit, Constant, ControlFlow, Coproduct, Declaration,
         DeconstructInto, Expression, Identifier, ImportModule, Inject, Lambda, MatchClause,
         ModuleDeclarator, Pattern, Product, ProductIndex, Project, SelfReferential, Sequence,
-        Struct, StructPattern, TypeDeclaration, TypeDeclarator, TypeName,
+        Struct, StructPattern, TypeDeclaration, TypeDeclarator, TypeName, ValueDeclaration,
+        ValueDeclarator,
     },
     bridge::Bridge,
     interpreter::module::ModuleResolver,
@@ -48,6 +50,35 @@ pub enum ResolutionError {
     },
 }
 
+pub struct ModuleMap<'a, A>(HashMap<Identifier, &'a ModuleDeclarator<A>>);
+
+impl<'a, A> ModuleMap<'a, A> {
+    pub fn contains(&self, id: &Identifier) -> bool {
+        let Self(map) = self;
+        map.contains_key(id)
+    }
+
+    pub fn names(&self) -> HashSet<Identifier> {
+        let Self(map) = self;
+        map.keys().cloned().collect()
+    }
+}
+
+impl<'a, A> IntoIterator for &'a ModuleMap<'a, A> {
+    type Item = (&'a Identifier, &'a &'a ModuleDeclarator<A>);
+    type IntoIter = hash_map::Iter<'a, Identifier, &'a ModuleDeclarator<A>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a, A> From<Vec<(Identifier, &'a ModuleDeclarator<A>)>> for ModuleMap<'a, A> {
+    fn from(value: Vec<(Identifier, &'a ModuleDeclarator<A>)>) -> Self {
+        Self(value.into_iter().collect())
+    }
+}
+
 pub struct Interpreter {
     prelude: Environment,
 }
@@ -63,67 +94,187 @@ impl Interpreter {
         program: CompilationUnit<A>,
     ) -> Resolved<Value>
     where
-        A: Clone + Parsed + fmt::Debug + fmt::Display,
+        A: Copy + Parsed + fmt::Debug + fmt::Display,
     {
-        match program {
-            CompilationUnit::Implicit(annotation, module) => {
-                let env = self.load_module(&annotation, typing_context, module)?;
+        let environment = self.load_compilation_unit(program, typing_context)?;
 
-                match env.lookup(&Identifier::new("main"))? {
-                    Value::Closure { .. } => todo!(),
-                    Value::Bridge { .. } => todo!(),
-                    scalar => Ok(scalar.clone()),
-                }
-            }
-            _otherwise => todo!(),
+        match environment.lookup(&Identifier::new("main"))? {
+            Value::Closure { .. } => todo!(),
+            Value::Bridge { .. } => todo!(),
+            scalar => Ok(scalar.clone()),
         }
     }
 
-    fn load_module<A>(
+    fn load_compilation_unit<A>(
         self,
-        annotation: &A,
+        CompilationUnit {
+            annotation,
+            mut main,
+        }: CompilationUnit<A>,
         mut typing_context: TypingContext,
-        mut module: ModuleDeclarator<A>,
     ) -> Resolved<Environment>
     where
-        A: Clone + Parsed + fmt::Debug + fmt::Display,
+        A: Copy + Parsed + fmt::Debug + fmt::Display,
     {
-        self.inject_prelude(annotation, &mut module);
-        self.inject_types_and_synthetics(annotation, &mut module, &mut typing_context)?;
+        self.inject_prelude(&annotation, &mut main);
+        self.inject_modules(&annotation, &mut main, &mut typing_context)?;
+        self.resolve_names(&mut main)?;
 
         let type_checker = TypeChecker::new(typing_context);
-
-        ModuleResolver::initialize(&module, self.prelude)?
+        ModuleResolver::initialize(&main, self.prelude)?
             .type_check(type_checker)?
             .into_environment()
     }
 
-    fn inject_prelude<A>(&self, annotation: &A, module: &mut ModuleDeclarator<A>)
+    fn resolve_names<A>(&self, main: &mut ModuleDeclarator<A>) -> Resolved<()>
     where
-        A: Clone,
+        A: Copy + Parsed + fmt::Debug + fmt::Display,
+    {
+        let module_map = Self::discover_modules(&main).names();
+
+        main.declarations = main.declarations.drain(..).fold(vec![], |mut acc, decl| {
+            let value_decl = if let Declaration::Value(annotation, declaration) = decl {
+                Declaration::Value(
+                    annotation,
+                    declaration.map_expression(|expr| expr.resolve_names(&module_map)),
+                )
+            } else {
+                decl
+            };
+
+            acc.push(value_decl);
+            acc
+        });
+
+        Ok(())
+    }
+
+    fn inject_modules<'a, A>(
+        &self,
+        annotation: &A,
+        main: &'a mut ModuleDeclarator<A>,
+        typing_context: &mut TypingContext,
+    ) -> Resolved<()>
+    where
+        A: Copy + Parsed + fmt::Debug + fmt::Display,
+    {
+        let module_map = Self::discover_modules(&main);
+
+        let mut injections = vec![];
+        for (name, module) in &module_map {
+            println!("inject_modules: {name} -> {module}");
+
+            let initializer =
+                self.inject_module_structures(annotation, name.clone(), &module, typing_context);
+
+            println!("inject_modules: {initializer}");
+
+            let declarations =
+                self.inject_module_types_and_synthetics(annotation, main, typing_context)?;
+
+            injections.push(initializer);
+            injections.extend(declarations);
+        }
+
+        main.declarations.extend(injections);
+
+        Ok(())
+    }
+
+    fn inject_module_structures<'a, A>(
+        &self,
+        parsing_info: &A,
+        module_binder: Identifier,
+        module: &'a ModuleDeclarator<A>,
+        _typing_context: &mut TypingContext,
+    ) -> Declaration<A>
+    where
+        A: Copy + Parsed + fmt::Debug + fmt::Display,
+    {
+        let module_declarations = module
+            .declarations
+            .iter()
+            .filter_map(|decl| match decl {
+                Declaration::Value(_, decl) => {
+                    Some((decl.binder.clone(), decl.declarator.expression.clone()))
+                }
+                _otherwise => None,
+            })
+            .collect();
+
+        Declaration::Value(
+            *parsing_info,
+            ValueDeclaration {
+                binder: module_binder,
+                type_signature: None,
+                declarator: ValueDeclarator {
+                    expression: Expression::Product(
+                        *parsing_info,
+                        Product::Struct(module_declarations),
+                    ),
+                },
+            },
+        )
+    }
+
+    fn discover_modules<'a, A>(module: &'a ModuleDeclarator<A>) -> ModuleMap<'a, A> {
+        let mut modules = vec![(module.name.clone(), module)];
+
+        for decl in &module.declarations {
+            if let Declaration::Module(_, module) = decl {
+                modules.push((module.name.suffix_with(&module.name.as_str()), module));
+            }
+
+            if let Declaration::Type(_, tpe) = decl {
+                match &tpe.declarator {
+                    TypeDeclarator::Coproduct(
+                        _,
+                        Coproduct {
+                            associated_module: Some(m),
+                            ..
+                        },
+                    ) => modules.push((m.name.clone(), m)),
+                    TypeDeclarator::Struct(
+                        _,
+                        Struct {
+                            associated_module: Some(m),
+                            ..
+                        },
+                    ) => modules.push((m.name.clone(), m)),
+                    _otherwise => (),
+                }
+            }
+        }
+
+        ModuleMap::from(modules)
+    }
+
+    fn inject_prelude<A>(&self, parsing_info: &A, module: &mut ModuleDeclarator<A>)
+    where
+        A: Copy,
     {
         println!("Loading prelude...");
         module.declarations.push(Declaration::ImportModule(
-            annotation.clone(),
+            *parsing_info,
             ImportModule {
                 exported_symbols: self
                     .prelude
                     .symbols()
-                    .drain(..)
+                    .into_iter()
                     .cloned()
                     .collect::<Vec<_>>(),
             },
         ));
     }
 
-    fn inject_types_and_synthetics<A>(
+    fn inject_module_types_and_synthetics<A>(
         &self,
-        annotation: &A,
-        module: &mut ModuleDeclarator<A>,
+        parsing_info: &A,
+        module: &ModuleDeclarator<A>,
         typing_context: &mut TypingContext,
-    ) -> Typing<()>
+    ) -> Typing<Vec<Declaration<A>>>
     where
-        A: fmt::Display + fmt::Debug + Clone + Parsed,
+        A: fmt::Display + fmt::Debug + Copy + Parsed,
     {
         println!("Loading types and synthesizing constructors ...");
         let mut injections = vec![];
@@ -139,19 +290,19 @@ impl Interpreter {
             {
                 match declarator {
                     TypeDeclarator::Coproduct(_, coproduct) => self.inject_coproduct(
-                        annotation,
-                        typing_context,
-                        &mut injections,
+                        parsing_info,
                         coproduct,
                         binding,
+                        &mut injections,
+                        typing_context,
                     )?,
 
                     TypeDeclarator::Struct(_, record) => self.inject_struct(
-                        annotation,
-                        typing_context,
-                        &mut injections,
-                        record,
+                        parsing_info,
                         binding,
+                        record,
+                        &mut injections,
+                        typing_context,
                     )?,
 
                     _otherwise => todo!(),
@@ -159,30 +310,22 @@ impl Interpreter {
             }
         }
 
-        module.declarations.extend(injections);
-
-        Ok(())
+        Ok(injections)
     }
 
     fn inject_coproduct<A>(
         &self,
-        annotation: &A,
-        typing_context: &mut TypingContext,
-        injections: &mut Vec<Declaration<A>>,
+        parsing_info: &A,
         coproduct: &Coproduct<A>,
         binding: &Identifier,
+        injections: &mut Vec<Declaration<A>>,
+        typing_context: &mut TypingContext,
     ) -> Typing<()>
     where
-        A: fmt::Display + fmt::Debug + Clone + Parsed,
+        A: fmt::Display + fmt::Debug + Copy + Parsed,
     {
-        if let Some(module) = coproduct.associated_module.as_ref() {
-            let mut module = module.clone().with_scoped_names();
-            self.inject_types_and_synthetics(annotation, &mut module, typing_context)?;
-            injections.extend(module.declarations);
-        }
-
         let coproduct = coproduct.make_implementation_module(
-            annotation,
+            parsing_info,
             TypeName::new(&binding.as_str()),
             typing_context,
         )?;
@@ -195,7 +338,7 @@ impl Interpreter {
         typing_context.bind(coproduct.name.into(), coproduct.declared_type);
 
         for constructor in coproduct.constructors {
-            injections.push(Declaration::Value(annotation.clone(), constructor));
+            injections.push(Declaration::Value(parsing_info.clone(), constructor));
         }
 
         Ok(())
@@ -203,24 +346,18 @@ impl Interpreter {
 
     fn inject_struct<A>(
         &self,
-        annotation: &A,
-        typing_context: &mut TypingContext,
-        injections: &mut Vec<Declaration<A>>,
-        record: &Struct<A>,
+        _parsing_info: &A,
         binding: &Identifier,
+        record: &Struct<A>,
+        _injections: &mut Vec<Declaration<A>>,
+        typing_context: &mut TypingContext,
     ) -> Typing<()>
     where
-        A: fmt::Display + fmt::Debug + Clone + Parsed,
+        A: fmt::Display + fmt::Debug + Copy + Parsed,
     {
         let scheme = record.synthesize_type(typing_context)?;
         println!("inject_types_and_synthetics: `{binding}` `{scheme}`");
         typing_context.bind(TypeName::new(&binding.as_str()).into(), scheme);
-
-        if let Some(associated) = record.associated_module.as_ref() {
-            let mut module = associated.clone().with_scoped_names();
-            self.inject_types_and_synthetics(annotation, &mut module, typing_context)?;
-            injections.extend(module.declarations);
-        }
 
         Ok(())
     }
@@ -665,17 +802,15 @@ where
     A: fmt::Debug + Clone,
 {
     match node {
-        Product::Tuple(mut elements) => Ok(Value::Tuple(
-            // flatten here?
-            // could mean more than one flattenings.
+        Product::Tuple(elements) => Ok(Value::Tuple(
             elements
-                .drain(..)
+                .into_iter()
                 .map(|e| e.reduce(env))
                 .collect::<Interpretation<_>>()?,
         )),
-        Product::Struct(mut bindings) => Ok(Value::Struct(
+        Product::Struct(bindings) => Ok(Value::Struct(
             bindings
-                .drain(..)
+                .into_iter()
                 .map(|(field, expr)| expr.reduce(env).map(|v| (field, v)))
                 .collect::<Interpretation<_>>()?,
         )),

@@ -6,8 +6,7 @@ use std::{
 use super::{Environment, ResolutionError, Resolved};
 use crate::{
     ast::{
-        CompilationUnit, Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration,
-        ValueDeclarator,
+        Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration, ValueDeclarator,
     },
     typer::{Parsed, TypeChecker},
 };
@@ -23,7 +22,7 @@ pub struct ModuleResolver<'a, A> {
 
 impl<'a, A> ModuleResolver<'a, A>
 where
-    A: fmt::Debug + fmt::Display + Clone + Parsed,
+    A: fmt::Debug + fmt::Display + Copy + Parsed,
 {
     pub fn initialize(module: &'a ModuleDeclarator<A>, prelude: Environment) -> Resolved<Self> {
         let dependency_graph = module.dependency_graph();
@@ -92,29 +91,9 @@ pub struct DependencyGraph<'a> {
 }
 
 impl<'a> DependencyGraph<'a> {
-    pub fn from_compilation_unit<A>(unit: &'a CompilationUnit<A>) -> Self
-    where
-        A: fmt::Debug + fmt::Display + Clone + Parsed,
-    {
-        match unit {
-            CompilationUnit::Implicit(_, module) => Self::from_declarations(&module.declarations),
-            CompilationUnit::Library(_, library) => {
-                let mut main = Self::from_declarations(&library.main.declarations);
-
-                for module in &library.modules {
-                    let module = Self::from_declarations(&module.declarations);
-
-                    main.dependencies.extend(module.dependencies);
-                }
-
-                main
-            }
-        }
-    }
-
     pub fn from_declarations<A>(decls: &'a [Declaration<A>]) -> Self
     where
-        A: fmt::Display + fmt::Debug + Clone + Parsed,
+        A: fmt::Display + fmt::Debug + Copy + Parsed,
     {
         let mut outbound = Vec::with_capacity(decls.len());
 
