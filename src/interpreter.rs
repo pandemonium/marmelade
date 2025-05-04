@@ -162,12 +162,8 @@ impl Interpreter {
 
         let mut injections = vec![];
         for (name, module) in &module_map {
-            println!("inject_modules: {name} -> {module}");
-
             let initializer =
                 self.inject_module_structures(annotation, name.clone(), &module, typing_context);
-
-            println!("inject_modules: {initializer}");
 
             let declarations =
                 self.inject_module_types_and_synthetics(annotation, main, typing_context)?;

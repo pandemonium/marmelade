@@ -41,6 +41,8 @@ where
     }
 
     pub fn type_check(self, mut type_checker: TypeChecker) -> Resolved<Self> {
+        //        What does the DependencyGraph look like?
+
         for id in self.dependency_graph.compute_resolution_order() {
             if let Some(declaration) = self.module.find_value_declaration(id).cloned() {
                 println!("type_check: `{id}` ...");
@@ -270,5 +272,25 @@ impl<'a> DependencyGraph<'a> {
         self.dependencies
             .iter()
             .find_map(|(key, deps)| (*key == d).then_some(deps.as_slice()))
+    }
+}
+
+impl<'a> fmt::Display for DependencyGraph<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (dep, deps) in &self.dependencies {
+            write!(f, "{dep}")?;
+
+            if !deps.is_empty() {
+                write!(f, ": \t\t[{}", &deps[0])?;
+                for dep in &deps[1..] {
+                    write!(f, ", {dep}")?;
+                }
+                writeln!(f, "]")?;
+            } else {
+                writeln!(f, "\t\t (nothing)")?;
+            }
+        }
+
+        Ok(())
     }
 }

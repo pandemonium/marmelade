@@ -132,7 +132,7 @@ pub fn parse_compilation_unit(input: &[Token]) -> Result<CompilationUnit<Parsing
         .map_value(|declarations| CompilationUnit {
             annotation: ParsingInfo::new(*input[0].location()),
             main: ModuleDeclarator {
-                name: Identifier::new("main"),
+                name: Identifier::new("$main"),
                 declarations,
             },
         })
@@ -159,8 +159,6 @@ pub fn parse_declarations(input: &[Token]) -> ParseResult<Vec<Declaration<Parsin
 
             if block.is_same_block(&current_block) {
                 let (decl, remains1) = parse_declaration(remains1)?;
-                //                println!("parse_decls(2): {:?}", remains1);
-                //                println!();
 
                 declarations.push(decl);
                 remains = remains1;
@@ -280,9 +278,7 @@ fn parse_associated_module<'a>(
     struct_declarator: Struct<ParsingInfo>,
     remains: &'a [Token],
 ) -> ParseResult<'a, TypeDeclarator<ParsingInfo>> {
-    println!("parse_associated_module: {:?}", &remains[..6]);
     parse_declarations(remains).map_value(|declarations| {
-        println!("parse_associated_module: {declarations:?}");
         let module = ModuleDeclarator {
             name: binder,
             declarations,
