@@ -215,16 +215,13 @@ impl Type {
     fn apply_constructor(self, arguments: &mut Vec<Type>, ctx: &TypingContext) -> Typing<Type> {
         match self {
             Type::Named(name) => {
-                let TypeScheme {
-                    mut quantifiers,
-                    body,
-                } = ctx
+                let TypeScheme { quantifiers, body } = ctx
                     .lookup_scheme(&name.clone().into())
                     .cloned()
                     .ok_or(TypeError::UndefinedType(name))?;
 
                 let mut subs = Substitutions::default();
-                for (param, arg) in quantifiers.drain(..).zip(arguments.drain(..)) {
+                for (param, arg) in quantifiers.into_iter().zip(arguments.drain(..)) {
                     subs.add(param, arg);
                 }
 

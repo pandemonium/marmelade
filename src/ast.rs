@@ -1196,8 +1196,7 @@ impl PatternMatrix {
     }
 
     pub fn is_exhaustive(&self) -> bool {
-        let eliminate = self.domain.eliminate(&self.matched_space);
-        eliminate == DomainExpression::Nothing
+        self.residual() == DomainExpression::Nothing
     }
 
     pub fn residual(&self) -> DomainExpression {

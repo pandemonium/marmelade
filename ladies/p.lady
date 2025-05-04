@@ -8,5 +8,5 @@ length :: forall a. List a -> Int =
       Cons x xs -> 1 + length xs
     | Nil -> 0
 
-main :: List Int =
-  Cons 1 Nil
+main :: Int =
+  length (Cons 1 Nil)

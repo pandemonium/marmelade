@@ -159,16 +159,15 @@ impl TypingContext {
         let substitutions = substitutions.compose(consequent.substitutions);
         let inferred_type = consequent.inferred_type.apply(&substitutions);
 
-        // I would like for this to unify and apply substitutions from the patterns
-        // Did it used to do this before?
         let mut matrix = PatternMatrix::from_scrutinee(
             scrutinee_type
                 .inferred_type
-                .expand_type(&ctx)?
-                .apply(&substitutions),
+                .apply(&substitutions)
+                .expand_type(&ctx)?,
             &ctx,
         )?;
 
+        // I think I need to unify scrutinee_type with the pattern type.
         for clause in match_clauses {
             let pattern = DomainExpression::from_pattern(&clause.pattern, &ctx)?;
             if matrix.is_useful(&pattern) {
@@ -609,6 +608,7 @@ impl Pattern<ParsingInfo> {
             Self::Literally(_, pattern) => pattern.synthesize_type(),
 
             Self::Otherwise(..) => Ok(TypeInference::fresh()),
+            
         }
     }
 
