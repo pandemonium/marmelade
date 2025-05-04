@@ -45,7 +45,7 @@ ss = append (Cons 1 (Cons 2 (Cons 3 (Cons 4 (Cons 5 Nil))))) (Cons 1 (Cons 2 (Co
 
 x =
     id (id deconstruct id (Cons (id 1) (id Nil)) into
-      Cons x xs -> id xs
-    | Nil -> id Nil)
+      Nil -> id Nil
+    | Cons x xs -> id xs)
 
-main = map2 id ss
+main = map2 (lambda x. show (x + 10)) ss

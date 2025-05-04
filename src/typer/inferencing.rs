@@ -155,7 +155,7 @@ impl TypingContext {
             &mut substitutions,
         )?;
 
-        let consequent = ctx.unify_consequents(parsing_info, &consequents)?;
+        let consequent = ctx.unify_consequents(parsing_info, consequents)?;
         let substitutions = substitutions.compose(consequent.substitutions);
         let inferred_type = consequent.inferred_type.apply(&substitutions);
 
@@ -238,16 +238,19 @@ impl TypingContext {
     fn unify_consequents(
         &self,
         parsing_info: &ParsingInfo,
-        consequents: &[TypeInference],
+        consequents: Vec<TypeInference>,
     ) -> Typing {
         let mut substitutions = consequents[0].substitutions.clone();
-        let mut inferred_type = consequents[0].inferred_type.clone();
+        let mut inferred_type = consequents[0].inferred_type.clone().expand_type(self)?;
 
         for consequent in &consequents[1..] {
-            substitutions = substitutions.compose(inferred_type.unify(
-                &consequent.inferred_type.clone().apply(&substitutions),
-                parsing_info,
-            )?);
+            let rhs = consequent
+                .inferred_type
+                .clone()
+                .apply(&substitutions)
+                .expand_type(self)?;
+
+            substitutions = substitutions.compose(inferred_type.unify(&rhs, parsing_info)?);
             inferred_type = inferred_type.apply(&substitutions);
         }
 
@@ -608,7 +611,6 @@ impl Pattern<ParsingInfo> {
             Self::Literally(_, pattern) => pattern.synthesize_type(),
 
             Self::Otherwise(..) => Ok(TypeInference::fresh()),
-            
         }
     }
 
