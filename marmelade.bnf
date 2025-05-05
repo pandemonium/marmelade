@@ -1,0 +1,48 @@
+Program ::= { Declaration }
+    Declaration ::= Value_Declaration | Type_Declaration
+
+    Universal_Quantification ::= ( "forall" | "∀" ) Type_Parameter { Type_Parameter }
+
+    Value_Declaration ::= Identifier [ "::" [ Universal_Quantification "." ] Type_Expression ] "=" Expression
+
+    Type_Expression = Type_Parameter | Type_Apply | Type_Constant | Arrow
+        Type_Parameter ::= lower-case Identifier
+        Type_Apply ::= Type_Constructor Type_Parameter { Type_Parameter }
+        Type_Constant ::= capital-case Identifier
+        Type_Constructor ::= capital-case Identifier
+        Arrow ::= Arrow_Prefix Arrow_Infix | "(" Arrow ")"
+            Arrow_Prefix ::= Type_Expression
+            Arrow_Infix ::= "->" Type_Expression
+
+    Type_Declaration ::= Identifier "::=" [ Universal_Quantification "." ] Type_Declarator
+        Type_Declarator ::= Co_product | Struct
+
+    Co_product ::= Constructor { "|" Constructor }
+        Constructor ::= Identifier Constructor_Signature
+        Constructor_Signature ::= { Type_Expression }
+
+    Struct ::= "{" Field_Declarations "}"
+        Field_Declarations ::= Field { ";" Field }
+        Field ::= Identifier ":" Type_Expression
+
+    Expression ::= Expression_Prefix { Infix_Expression }
+
+    Expression_Prefix ::=
+            Literal | Variable | Lambda | Apply | Product | Project |
+            Bind | Sequence | If | Deconstruct | "(" Expression ")"
+
+        Infix_Expression ::= Operator Expression
+            Operator ::= + | - | / | * | %
+
+        Literal ::= "text" | 1 | 2.3 | True | False
+        Variable ::= [ Module_Path "." ] Identifier
+            Module_Path ::= Identifier { "." Identifier }
+
+        Lambda ::= ( "lambda" | "λ" ) Parameter_List "." Expression
+            Parameter_List ::= Identifier { Identifier }
+
+        Apply ::= Expression Expression { Expression }
+        Product ::= Tuple | Struct
+            Tuple ::= Expression { "," Expression }
+            Struct ::= "{" Field_Literal { ";" Field_Literal } "}"
+                Field_Literal ::= Identifier ":" Expression
