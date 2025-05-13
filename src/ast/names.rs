@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt};
 
 use crate::{
     ast::{
@@ -38,14 +38,18 @@ use super::ProductIndex;
 
 impl<A> Expression<A>
 where
-    A: Copy,
+    A: Copy + fmt::Debug,
 {
     fn into_projection_tree(annotation: &A, name: Identifier) -> Expression<A> {
-        Self::make_projection_tree(
+        let tree = Self::make_projection_tree(
             annotation,
             Expression::Variable(*annotation, name.head().clone()),
             &name.components()[1..],
-        )
+        );
+
+        println!("into_projection_tree: made {tree:?}");
+
+        tree
     }
 
     fn make_projection_tree(annotation: &A, head: Expression<A>, tail: &[&str]) -> Expression<A> {
@@ -83,14 +87,17 @@ where
         }
     }
 
-    fn rewrite_references<'a>(
+    fn rewrite_identifiers<'a>(
         self,
         bound: &mut HashSet<Identifier>,
         module_map: &HashSet<Identifier>,
     ) -> Expression<A> {
         match self {
             Expression::Variable(annotation, name) => {
-                if bound.contains(name.head()) {
+                println!("rewrite_identifiers: {name}");
+                let head = name.head();
+                if bound.contains(head) {
+                    println!("rewrite_identifiers: {head}");
                     Self::into_projection_tree(&annotation, name)
                 } else {
                     Self::into_module_path(&annotation, name, module_map)
@@ -98,7 +105,7 @@ where
             }
             Expression::Lambda(annotation, Lambda { parameter, body }) => {
                 bound.insert(parameter.name.clone());
-                let body = body.rewrite_references(bound, module_map);
+                let body = body.rewrite_identifiers(bound, module_map);
                 Expression::Lambda(
                     annotation,
                     Lambda {
@@ -117,7 +124,7 @@ where
             ) => {
                 bound.insert(parameter.name.clone());
                 bound.insert(name.clone());
-                let body = body.rewrite_references(bound, module_map);
+                let body = body.rewrite_identifiers(bound, module_map);
                 Expression::SelfReferential(
                     annotation,
                     SelfReferential {
@@ -128,8 +135,8 @@ where
                 )
             }
             Expression::Apply(annotation, Apply { function, argument }) => {
-                let function = function.rewrite_references(bound, module_map);
-                let argument = argument.rewrite_references(bound, module_map);
+                let function = function.rewrite_identifiers(bound, module_map);
+                let argument = argument.rewrite_identifiers(bound, module_map);
                 Expression::Apply(
                     annotation,
                     Apply {
@@ -146,7 +153,7 @@ where
                     argument,
                 },
             ) => {
-                let argument = argument.rewrite_references(bound, module_map);
+                let argument = argument.rewrite_identifiers(bound, module_map);
                 Expression::Inject(
                     annotation,
                     Inject {
@@ -161,7 +168,7 @@ where
                 Product::Tuple(
                     expressions
                         .into_iter()
-                        .map(|expr| expr.rewrite_references(bound, module_map))
+                        .map(|expr| expr.rewrite_identifiers(bound, module_map))
                         .collect(),
                 ),
             ),
@@ -171,13 +178,13 @@ where
                     bindings
                         .into_iter()
                         .map(|(identifier, expr)| {
-                            (identifier, expr.rewrite_references(bound, module_map))
+                            (identifier, expr.rewrite_identifiers(bound, module_map))
                         })
                         .collect(),
                 ),
             ),
             Expression::Project(annotation, Project { base, index }) => {
-                let base = base.rewrite_references(bound, module_map);
+                let base = base.rewrite_identifiers(bound, module_map);
                 Expression::Project(
                     annotation,
                     Project {
@@ -194,9 +201,9 @@ where
                     body,
                 },
             ) => {
-                let bound_expr = bound_expr.rewrite_references(bound, module_map);
+                let bound_expr = bound_expr.rewrite_identifiers(bound, module_map);
                 bound.insert(binder.clone());
-                let body = body.rewrite_references(bound, module_map);
+                let body = body.rewrite_identifiers(bound, module_map);
 
                 Expression::Binding(
                     annotation,
@@ -208,8 +215,8 @@ where
                 )
             }
             Expression::Sequence(annotation, Sequence { this, and_then }) => {
-                let this = this.rewrite_references(bound, module_map);
-                let and_then = and_then.rewrite_references(bound, module_map);
+                let this = this.rewrite_identifiers(bound, module_map);
+                let and_then = and_then.rewrite_identifiers(bound, module_map);
                 Expression::Sequence(
                     annotation,
                     Sequence {
@@ -226,9 +233,9 @@ where
                     alternate,
                 },
             ) => {
-                let predicate = predicate.rewrite_references(bound, module_map);
-                let consequent = consequent.rewrite_references(bound, module_map);
-                let alternate = alternate.rewrite_references(bound, module_map);
+                let predicate = predicate.rewrite_identifiers(bound, module_map);
+                let consequent = consequent.rewrite_identifiers(bound, module_map);
+                let alternate = alternate.rewrite_identifiers(bound, module_map);
 
                 Expression::ControlFlow(
                     annotation,
@@ -246,7 +253,7 @@ where
                     match_clauses,
                 },
             ) => {
-                let scrutinee = scrutinee.rewrite_references(bound, module_map);
+                let scrutinee = scrutinee.rewrite_identifiers(bound, module_map);
                 Expression::DeconstructInto(
                     annotation,
                     DeconstructInto {
@@ -263,7 +270,7 @@ where
                                         .collect::<Vec<_>>(),
                                 );
                                 let consequent =
-                                    clause.consequent.rewrite_references(bound, module_map);
+                                    clause.consequent.rewrite_identifiers(bound, module_map);
 
                                 MatchClause {
                                     pattern: clause.pattern,
@@ -279,6 +286,6 @@ where
     }
 
     pub fn resolve_names<'a>(self, module_map: &HashSet<Identifier>) -> Self {
-        self.rewrite_references(&mut HashSet::default(), module_map)
+        self.rewrite_identifiers(&mut HashSet::default(), module_map)
     }
 }

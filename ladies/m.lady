@@ -1,6 +1,6 @@
 Perhaps ::= ∀a. This a | Nope
 
-List ::= ∀a. Cons a (List a) | Nil
+List ::= forall a. Cons a (List a) | Nil
 
 map = λf xs.
   let step = λxs x. Cons (f x) xs
@@ -25,7 +25,7 @@ fold_right = λacc f xs.
 
 length = fold_left 0 λacc x. 1 + acc
 
-output = λy. 1 + y
+output = lambda y. 1 + y
 
 append = λxs. fold_right xs (flip Cons)
 
@@ -38,6 +38,8 @@ ys =
     deconstruct xs into
       Cons x xs -> xs
     | Nil       -> xs
+
+foo = "hej, mor"
 
 id = lambda x. x
 

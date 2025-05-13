@@ -1,12 +1,32 @@
+use std::fmt;
+
 use crate::{
     ast::{Expression, Identifier, Lambda, Parameter},
     context::Linkage,
     interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
-    typer::{BaseType, ProductType, TupleType, Type, TypeParameter, TypeScheme},
+    lexer::SourceLocation,
+    parser::ParsingInfo,
+    typer::{BaseType, Parsed, ProductType, TupleType, Type, TypeParameter, TypeScheme},
 };
 
 #[derive(Debug, Copy, Clone)]
 pub struct BridgeInfo;
+
+impl fmt::Display for BridgeInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "BridgeInfo")
+    }
+}
+
+static BRIDGE_PARSING_INFO: ParsingInfo = ParsingInfo {
+    position: SourceLocation { row: 0, column: 0 },
+};
+
+impl Parsed for BridgeInfo {
+    fn info(&self) -> &ParsingInfo {
+        &BRIDGE_PARSING_INFO
+    }
+}
 
 pub trait Bridge {
     fn arity(&self) -> usize;

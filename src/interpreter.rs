@@ -2,6 +2,8 @@ use std::collections::{hash_map, HashSet};
 use std::{any::Any, cell::RefCell, collections::HashMap, fmt, rc::Rc};
 use thiserror::Error;
 
+use crate::ast::TypeAscription;
+use crate::typer::EmptyAnnotation;
 use crate::{
     ast::{
         Apply, Binding, CompilationUnit, Constant, ControlFlow, Coproduct, Declaration,
@@ -116,9 +118,20 @@ impl Interpreter {
     where
         A: Copy + Parsed + fmt::Debug + fmt::Display,
     {
+        // The problem, I think, is that typing happens twice and that the
+        // second time does not have type signatures.
+        //
+        // Why doesn't it have type signatures?
+        //
+        // Because they are members of the module struct
+
         self.inject_prelude(&annotation, &mut main);
         self.inject_modules(&annotation, &mut main, &mut typing_context)?;
         self.resolve_names(&mut main)?;
+
+        //        There is an select(x, Width) where there should be a Project
+
+        println!("load_compilation_unit: {main}");
 
         let type_checker = TypeChecker::new(typing_context);
         ModuleResolver::initialize(&main, self.prelude)?
@@ -132,6 +145,7 @@ impl Interpreter {
     {
         let module_map = Self::discover_modules(&main).names();
 
+        // Am I not re-writing everything?
         main.declarations = main.declarations.drain(..).fold(vec![], |mut acc, decl| {
             let value_decl = if let Declaration::Value(annotation, declaration) = decl {
                 Declaration::Value(
@@ -187,16 +201,49 @@ impl Interpreter {
     where
         A: Copy + Parsed + fmt::Debug + fmt::Display,
     {
-        let module_declarations = module
-            .declarations
-            .iter()
-            .filter_map(|decl| match decl {
+        let mut member_declarations = vec![];
+        //        let member_types = vec![];
+
+        for decl in &module.declarations {
+            match decl {
                 Declaration::Value(_, decl) => {
-                    Some((decl.binder.clone(), decl.declarator.expression.clone()))
+                    member_declarations.push((
+                        decl.binder.clone(),
+                        decl.type_signature.clone().map_or(
+                            decl.declarator.expression.clone(),
+                            |type_signature| {
+                                Expression::TypeAscription(
+                                    *parsing_info,
+                                    TypeAscription {
+                                        type_signature,
+                                        underlying: decl.declarator.expression.clone().into(),
+                                    },
+                                )
+                            },
+                        ),
+                    ));
+                    //                    member_types.push((decl.binder.clone(), decl.type_signature));
                 }
-                _otherwise => None,
-            })
-            .collect();
+                _otherwise => (),
+            }
+        }
+
+        // If I don't have a type signature, then wtf do i do?
+        // do I attempt to infer the type?
+        // To be able to do that, I would need a computed dependency graph. So ... do I
+        // make one of those?
+        //
+        // I think the types will have to come from a second pass
+        //
+        // What if I wrap all decl.declarator.expression in Expression::TypeAscription?
+        //   I have to do this. Then I could just ignore synthesizing a type for the
+        //   module struct.
+        //        let module_structure: Type = Type::Product(ProductType::Struct(member_types));
+        //        let module_structure_type_name = TypeName::new(&module_binder.as_str());
+        //        typing_context.bind(
+        //            module_structure_type_name.into(),
+        //            TypeScheme::from_constant(module_structure),
+        //        );
 
         Declaration::Value(
             *parsing_info,
@@ -206,7 +253,7 @@ impl Interpreter {
                 declarator: ValueDeclarator {
                     expression: Expression::Product(
                         *parsing_info,
-                        Product::Struct(module_declarations),
+                        Product::Struct(member_declarations),
                     ),
                 },
             },
@@ -447,7 +494,7 @@ impl fmt::Display for RecursiveClosure {
 pub struct Closure {
     pub parameter: Identifier,
     pub capture: Environment,
-    pub body: Expression<()>,
+    pub body: Expression<EmptyAnnotation>,
 }
 
 impl fmt::Debug for Closure {
@@ -625,15 +672,18 @@ pub enum RuntimeError {
 
 pub type Interpretation<A = Value> = Result<A, RuntimeError>;
 
+// Surely this should run a TypedExpression?
+// What happens with Expression<BridgingInfo>?
 impl<A> Expression<A>
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     // I would like to remove mut here. This means that reduce_binding has to stop
     // in place-mutating this environment, to instead clone. But I want a smart clone
     // here. Environment::with_binding(<<closure>>)?
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
+            Self::TypeAscription(_, inner) => Ok(inner.underlying.reduce(env)?),
             Self::Variable(_, id) => env.lookup(&id).cloned(),
             Self::InvokeBridge(_, id) => invoke_bridge(id, env),
             Self::Literal(_, constant) => Ok(reduce_immediate(constant)),
@@ -678,7 +728,7 @@ fn reduce_projection<A>(
     env: &mut Environment,
 ) -> Interpretation
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     let base = base.reduce(env)?;
     match (base, index) {
@@ -703,7 +753,7 @@ fn reduce_deconstruction<A>(
     env: &mut Environment,
 ) -> Interpretation
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     let scrutinee = scrutinee.reduce(env)?;
 
@@ -716,7 +766,7 @@ where
 
 fn reduce_consequent<A>(matched: Match<A>, env: &mut Environment) -> Interpretation
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     let mut env = env.clone();
     for (binding, value) in matched.bindings {
@@ -795,7 +845,7 @@ impl<A> Pattern<A> {}
 
 fn reduce_product<A>(node: Product<A>, env: &mut Environment) -> Interpretation
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     match node {
         Product::Tuple(elements) => Ok(Value::Tuple(
@@ -815,7 +865,7 @@ where
 
 fn reduce_inject_coproduct<A>(node: Inject<A>, env: &mut Environment) -> Interpretation
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     Ok(Value::Coproduct {
         constructor: node.constructor,
@@ -827,7 +877,7 @@ where
 fn make_recursive_closure(
     name: Identifier,
     parameter: Identifier,
-    body: Expression<()>,
+    body: Expression<EmptyAnnotation>,
     capture: Environment,
 ) -> Interpretation {
     let closure = Rc::new(RefCell::new(Closure {
@@ -858,7 +908,7 @@ fn reduce_sequence<A>(
     env: &mut Environment,
 ) -> Interpretation
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     this.reduce(env)?;
     and_then.reduce(env)
@@ -878,7 +928,7 @@ fn invoke_bridge(id: Identifier, env: &mut Environment) -> Interpretation {
 
 fn reduce_control_flow<A>(control: ControlFlow<A>, env: &mut Environment) -> Interpretation
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     match control {
         ControlFlow::If {
@@ -906,7 +956,7 @@ fn reduce_binding<A>(
     env: &mut Environment,
 ) -> Interpretation
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     // This ought to clone it, though?
     let bound = bound.reduce(env)?;
@@ -922,7 +972,7 @@ fn apply_function<A>(
     env: &mut Environment,
 ) -> Interpretation
 where
-    A: fmt::Debug + Clone,
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     match function.reduce(env)? {
         Value::Closure(Closure {
@@ -954,7 +1004,10 @@ where
     }
 }
 
-fn make_closure<A>(param: Identifier, body: Expression<A>, env: Environment) -> Interpretation {
+fn make_closure<A>(param: Identifier, body: Expression<A>, env: Environment) -> Interpretation
+where
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
+{
     Ok(Value::Closure(Closure {
         parameter: param,
         capture: env,
@@ -969,6 +1022,7 @@ mod tests {
         context::Linkage,
         interpreter::{Base, Environment, RuntimeError, Value},
         stdlib,
+        typer::EmptyAnnotation,
     };
 
     use super::Closure;
@@ -980,7 +1034,7 @@ mod tests {
 
         assert_eq!(
             Base::Int(1),
-            Expression::Literal((), Constant::Int(1))
+            Expression::Literal(EmptyAnnotation, Constant::Int(1))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_base_type()
@@ -999,7 +1053,7 @@ mod tests {
 
         assert_eq!(
             Base::Int(1),
-            Expression::Variable((), Identifier::new("x"))
+            Expression::Variable(EmptyAnnotation, Identifier::new("x"))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_base_type()
@@ -1008,7 +1062,7 @@ mod tests {
 
         assert_eq!(
             RuntimeError::UndefinedSymbol(Identifier::new("y")),
-            Expression::Variable((), Identifier::new("y"))
+            Expression::Variable(EmptyAnnotation, Identifier::new("y"))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap_err()
         )
@@ -1053,32 +1107,32 @@ mod tests {
             parameter: Identifier::new("f"),
             capture: env.clone(),
             body: Expression::Apply(
-                (),
+                EmptyAnnotation,
                 Apply {
                     function: Box::new(Expression::Lambda(
-                        (),
+                        EmptyAnnotation,
                         Lambda {
                             parameter: Parameter::new(Identifier::new("x")),
                             body: Box::new(Expression::Apply(
-                                (),
+                                EmptyAnnotation,
                                 Apply {
                                     function: Box::new(Expression::Variable(
-                                        (),
+                                        EmptyAnnotation,
                                         Identifier::new("f"),
                                     )),
                                     argument: Box::new(Expression::Lambda(
-                                        (),
+                                        EmptyAnnotation,
                                         Lambda {
                                             parameter: Parameter::new(Identifier::new("y")),
                                             body: Box::new(Expression::Apply(
-                                                (),
+                                                EmptyAnnotation,
                                                 Apply {
                                                     function: Box::new(Expression::Variable(
-                                                        (),
+                                                        EmptyAnnotation,
                                                         Identifier::new("x"),
                                                     )),
                                                     argument: Box::new(Expression::Variable(
-                                                        (),
+                                                        EmptyAnnotation,
                                                         Identifier::new("x"),
                                                     )),
                                                 },
@@ -1090,29 +1144,29 @@ mod tests {
                         },
                     )),
                     argument: Box::new(Expression::Lambda(
-                        (),
+                        EmptyAnnotation,
                         Lambda {
                             parameter: Parameter::new(Identifier::new("x")),
                             body: Box::new(Expression::Apply(
-                                (),
+                                EmptyAnnotation,
                                 Apply {
                                     function: Box::new(Expression::Variable(
-                                        (),
+                                        EmptyAnnotation,
                                         Identifier::new("f"),
                                     )),
                                     argument: Box::new(Expression::Lambda(
-                                        (),
+                                        EmptyAnnotation,
                                         Lambda {
                                             parameter: Parameter::new(Identifier::new("y")),
                                             body: Box::new(Expression::Apply(
-                                                (),
+                                                EmptyAnnotation,
                                                 Apply {
                                                     function: Box::new(Expression::Variable(
-                                                        (),
+                                                        EmptyAnnotation,
                                                         Identifier::new("x"),
                                                     )),
                                                     argument: Box::new(Expression::Variable(
-                                                        (),
+                                                        EmptyAnnotation,
                                                         Identifier::new("x"),
                                                     )),
                                                 },
@@ -1224,63 +1278,69 @@ mod tests {
     //    #[test]
     fn _fixed_factorial() {
         let factorial = Expression::Apply(
-            (),
+            EmptyAnnotation,
             Apply {
-                function: Expression::Variable((), Identifier::new("fix")).into(),
+                function: Expression::Variable(EmptyAnnotation, Identifier::new("fix")).into(),
                 argument: Expression::Lambda(
-                    (),
+                    EmptyAnnotation,
                     Lambda {
                         parameter: Parameter::new(Identifier::new("fact")),
                         body: Expression::Lambda(
-                            (),
+                            EmptyAnnotation,
                             Lambda {
                                 parameter: Parameter::new(Identifier::new("x")),
                                 body: Expression::ControlFlow(
-                                    (),
+                                    EmptyAnnotation,
                                     ControlFlow::If {
                                         predicate: Expression::Apply(
-                                            (),
+                                            EmptyAnnotation,
                                             Apply {
                                                 function: Expression::Apply(
-                                                    (),
+                                                    EmptyAnnotation,
                                                     Apply {
                                                         function: Expression::Variable(
-                                                            (),
+                                                            EmptyAnnotation,
                                                             Identifier::new("=="),
                                                         )
                                                         .into(),
                                                         argument: Expression::Variable(
-                                                            (),
+                                                            EmptyAnnotation,
                                                             Identifier::new("x"),
                                                         )
                                                         .into(),
                                                     },
                                                 )
                                                 .into(),
-                                                argument: Expression::Literal((), Constant::Int(0))
-                                                    .into(),
+                                                argument: Expression::Literal(
+                                                    EmptyAnnotation,
+                                                    Constant::Int(0),
+                                                )
+                                                .into(),
                                             },
                                         )
                                         .into(),
-                                        consequent: Expression::Literal((), Constant::Int(1))
-                                            .into(),
+                                        consequent: Expression::Literal(
+                                            EmptyAnnotation,
+                                            Constant::Int(1),
+                                        )
+                                        .into(),
                                         alternate: Expression::Binding(
-                                            (),
+                                            EmptyAnnotation,
                                             Binding {
                                                 binder: Identifier::new("xx"),
                                                 bound: Expression::Apply(
-                                                    (),
+                                                    EmptyAnnotation,
                                                     Apply {
                                                         function: Expression::Apply(
-                                                            (),
+                                                            EmptyAnnotation,
                                                             Apply {
                                                                 function: Expression::Variable(
-                                                                    (),
+                                                                    EmptyAnnotation,
                                                                     Identifier::new("-"),
                                                                 )
                                                                 .into(),
                                                                 argument: Expression::Variable(
-                                                                    (),
+                                                                    EmptyAnnotation,
                                                                     Identifier::new("x"),
                                                                 )
                                                                 .into(),
@@ -1288,7 +1348,7 @@ mod tests {
                                                         )
                                                         .into(),
                                                         argument: Expression::Literal(
-                                                            (),
+                                                            EmptyAnnotation,
                                                             Constant::Int(1),
                                                         )
                                                         .into(),
@@ -1296,18 +1356,18 @@ mod tests {
                                                 )
                                                 .into(),
                                                 body: Expression::Apply(
-                                                    (),
+                                                    EmptyAnnotation,
                                                     Apply {
                                                         function: Expression::Apply(
-                                                            (),
+                                                            EmptyAnnotation,
                                                             Apply {
                                                                 function: Expression::Variable(
-                                                                    (),
+                                                                    EmptyAnnotation,
                                                                     Identifier::new("*"),
                                                                 )
                                                                 .into(),
                                                                 argument: Expression::Variable(
-                                                                    (),
+                                                                    EmptyAnnotation,
                                                                     Identifier::new("x"),
                                                                 )
                                                                 .into(),
@@ -1315,15 +1375,15 @@ mod tests {
                                                         )
                                                         .into(),
                                                         argument: Expression::Apply(
-                                                            (),
+                                                            EmptyAnnotation,
                                                             Apply {
                                                                 function: Expression::Variable(
-                                                                    (),
+                                                                    EmptyAnnotation,
                                                                     Identifier::new("fact"),
                                                                 )
                                                                 .into(),
                                                                 argument: Expression::Variable(
-                                                                    (),
+                                                                    EmptyAnnotation,
                                                                     Identifier::new("xx"),
                                                                 )
                                                                 .into(),
@@ -1364,10 +1424,11 @@ mod tests {
             .insert_binding(Identifier::new("factorial"), reduced_fact);
 
         let e = Expression::Apply(
-            (),
+            EmptyAnnotation,
             Apply {
-                function: Expression::Variable((), Identifier::new("factorial")).into(),
-                argument: Expression::Literal((), Constant::Int(1)).into(),
+                function: Expression::Variable(EmptyAnnotation, Identifier::new("factorial"))
+                    .into(),
+                argument: Expression::Literal(EmptyAnnotation, Constant::Int(1)).into(),
             },
         );
 

@@ -117,7 +117,7 @@ impl typer::Parsed for ParsingInfo {
     }
 }
 
-static DEFAULT_PARSING_INFO: ParsingInfo = ParsingInfo {
+pub static DEFAULT_PARSING_INFO: ParsingInfo = ParsingInfo {
     position: SourceLocation { row: 0, column: 0 },
 };
 

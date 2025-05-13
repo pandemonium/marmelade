@@ -31,6 +31,8 @@ Program ::= { Declaration }
             Literal | Variable | Lambda | Apply | Product | Project |
             Bind | Sequence | If | Deconstruct | "(" Expression ")"
 
+        Sequence ::= Expression ";" Sequence | Expression
+
         Infix_Expression ::= Operator Expression
             Operator ::= + | - | / | * | %
 

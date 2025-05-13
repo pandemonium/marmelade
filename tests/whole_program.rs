@@ -4,6 +4,7 @@ use marmelade::{
     interpreter::{Base, Closure, Environment, Interpreter, Value},
     lexer::LexicalAnalyzer,
     parser, stdlib,
+    typer::EmptyAnnotation,
 };
 
 fn into_input(source: &str) -> Vec<char> {
@@ -49,29 +50,32 @@ fn _make_fix_value(env: Environment) -> Value {
         parameter: Identifier::new("f"),
         capture: env.clone(),
         body: Expression::Apply(
-            (),
+            EmptyAnnotation,
             Apply {
                 function: Box::new(Expression::Lambda(
-                    (),
+                    EmptyAnnotation,
                     Lambda {
                         parameter: Parameter::new(Identifier::new("x")),
                         body: Box::new(Expression::Apply(
-                            (),
+                            EmptyAnnotation,
                             Apply {
-                                function: Box::new(Expression::Variable((), Identifier::new("f"))),
+                                function: Box::new(Expression::Variable(
+                                    EmptyAnnotation,
+                                    Identifier::new("f"),
+                                )),
                                 argument: Box::new(Expression::Lambda(
-                                    (),
+                                    EmptyAnnotation,
                                     Lambda {
                                         parameter: Parameter::new(Identifier::new("y")),
                                         body: Box::new(Expression::Apply(
-                                            (),
+                                            EmptyAnnotation,
                                             Apply {
                                                 function: Box::new(Expression::Variable(
-                                                    (),
+                                                    EmptyAnnotation,
                                                     Identifier::new("x"),
                                                 )),
                                                 argument: Box::new(Expression::Variable(
-                                                    (),
+                                                    EmptyAnnotation,
                                                     Identifier::new("x"),
                                                 )),
                                             },
@@ -83,26 +87,29 @@ fn _make_fix_value(env: Environment) -> Value {
                     },
                 )),
                 argument: Box::new(Expression::Lambda(
-                    (),
+                    EmptyAnnotation,
                     Lambda {
                         parameter: Parameter::new(Identifier::new("x")),
                         body: Box::new(Expression::Apply(
-                            (),
+                            EmptyAnnotation,
                             Apply {
-                                function: Box::new(Expression::Variable((), Identifier::new("f"))),
+                                function: Box::new(Expression::Variable(
+                                    EmptyAnnotation,
+                                    Identifier::new("f"),
+                                )),
                                 argument: Box::new(Expression::Lambda(
-                                    (),
+                                    EmptyAnnotation,
                                     Lambda {
                                         parameter: Parameter::new(Identifier::new("y")),
                                         body: Box::new(Expression::Apply(
-                                            (),
+                                            EmptyAnnotation,
                                             Apply {
                                                 function: Box::new(Expression::Variable(
-                                                    (),
+                                                    EmptyAnnotation,
                                                     Identifier::new("x"),
                                                 )),
                                                 argument: Box::new(Expression::Variable(
-                                                    (),
+                                                    EmptyAnnotation,
                                                     Identifier::new("x"),
                                                 )),
                                             },

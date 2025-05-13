@@ -91,6 +91,7 @@ mod tests {
         context::Linkage,
         interpreter::{Base, RuntimeError, Value},
         stdlib,
+        typer::EmptyAnnotation,
     };
 
     #[test]
@@ -99,17 +100,17 @@ mod tests {
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
-            (),
+            EmptyAnnotation,
             Apply {
                 function: E::Apply(
-                    (),
+                    EmptyAnnotation,
                     Apply {
-                        function: E::Variable((), Identifier::new("+")).into(),
-                        argument: E::Literal((), Constant::Int(1)).into(),
+                        function: E::Variable(EmptyAnnotation, Identifier::new("+")).into(),
+                        argument: E::Literal(EmptyAnnotation, Constant::Int(1)).into(),
                     },
                 )
                 .into(),
-                argument: E::Literal((), Constant::Int(2)).into(),
+                argument: E::Literal(EmptyAnnotation, Constant::Int(2)).into(),
             },
         );
 
@@ -128,17 +129,17 @@ mod tests {
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
-            (),
+            EmptyAnnotation,
             Apply {
                 function: E::Apply(
-                    (),
+                    EmptyAnnotation,
                     Apply {
-                        function: E::Variable((), Identifier::new("+")).into(),
-                        argument: E::Literal((), Constant::Float(1.5)).into(),
+                        function: E::Variable(EmptyAnnotation, Identifier::new("+")).into(),
+                        argument: E::Literal(EmptyAnnotation, Constant::Float(1.5)).into(),
                     },
                 )
                 .into(),
-                argument: E::Literal((), Constant::Float(2.3)).into(),
+                argument: E::Literal(EmptyAnnotation, Constant::Float(2.3)).into(),
             },
         );
 
@@ -157,17 +158,17 @@ mod tests {
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
-            (),
+            EmptyAnnotation,
             Apply {
                 function: E::Apply(
-                    (),
+                    EmptyAnnotation,
                     Apply {
-                        function: E::Variable((), Identifier::new("+")).into(),
-                        argument: E::Literal((), Constant::Float(1.5)).into(),
+                        function: E::Variable(EmptyAnnotation, Identifier::new("+")).into(),
+                        argument: E::Literal(EmptyAnnotation, Constant::Float(1.5)).into(),
                     },
                 )
                 .into(),
-                argument: E::Literal((), Constant::Int(2)).into(),
+                argument: E::Literal(EmptyAnnotation, Constant::Int(2)).into(),
             },
         );
 
@@ -186,17 +187,17 @@ mod tests {
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
-            (),
+            EmptyAnnotation,
             Apply {
                 function: E::Apply(
-                    (),
+                    EmptyAnnotation,
                     Apply {
-                        function: E::Variable((), Identifier::new("-")).into(),
-                        argument: E::Literal((), Constant::Int(1)).into(),
+                        function: E::Variable(EmptyAnnotation, Identifier::new("-")).into(),
+                        argument: E::Literal(EmptyAnnotation, Constant::Int(1)).into(),
                     },
                 )
                 .into(),
-                argument: E::Literal((), Constant::Int(2)).into(),
+                argument: E::Literal(EmptyAnnotation, Constant::Int(2)).into(),
             },
         );
 
@@ -215,17 +216,17 @@ mod tests {
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
-            (),
+            EmptyAnnotation,
             Apply {
                 function: E::Apply(
-                    (),
+                    EmptyAnnotation,
                     Apply {
-                        function: E::Variable((), Identifier::new("*")).into(),
-                        argument: E::Literal((), Constant::Int(1)).into(),
+                        function: E::Variable(EmptyAnnotation, Identifier::new("*")).into(),
+                        argument: E::Literal(EmptyAnnotation, Constant::Int(1)).into(),
                     },
                 )
                 .into(),
-                argument: E::Literal((), Constant::Int(2)).into(),
+                argument: E::Literal(EmptyAnnotation, Constant::Int(2)).into(),
             },
         );
 
@@ -244,17 +245,17 @@ mod tests {
         stdlib::import(&mut context).unwrap();
 
         let e = E::Apply(
-            (),
+            EmptyAnnotation,
             Apply {
                 function: E::Apply(
-                    (),
+                    EmptyAnnotation,
                     Apply {
-                        function: E::Variable((), Identifier::new("/")).into(),
-                        argument: E::Literal((), Constant::Int(1)).into(),
+                        function: E::Variable(EmptyAnnotation, Identifier::new("/")).into(),
+                        argument: E::Literal(EmptyAnnotation, Constant::Int(1)).into(),
                     },
                 )
                 .into(),
-                argument: E::Literal((), Constant::Int(2)).into(),
+                argument: E::Literal(EmptyAnnotation, Constant::Int(2)).into(),
             },
         );
 

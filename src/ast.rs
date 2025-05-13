@@ -10,8 +10,8 @@ use crate::{
     lexer::{self, SourceLocation},
     parser::ParsingInfo,
     typer::{
-        CoproductType, Parsed, ProductType, TupleType, Type, TypeError, TypeParameter, TypeScheme,
-        Typing, TypingContext,
+        CoproductType, EmptyAnnotation, Parsed, ProductType, TupleType, Type, TypeError,
+        TypeParameter, TypeScheme, Typing, TypingContext,
     },
 };
 
@@ -277,8 +277,15 @@ pub struct TypeSignature<A> {
 
 impl<A> TypeSignature<A>
 where
-    A: Clone + Parsed + fmt::Debug + fmt::Display,
+    A: Clone + fmt::Debug + fmt::Display + Parsed,
 {
+    pub fn new(body: TypeExpression<A>) -> Self {
+        Self {
+            quantifiers: None,
+            body,
+        }
+    }
+
     pub fn map<B>(self, f: fn(A) -> B) -> TypeSignature<B> {
         TypeSignature {
             quantifiers: self.quantifiers,
@@ -303,6 +310,21 @@ where
     fn dependencies(&self) -> HashSet<&Identifier> {
         //        self.body.dependencies()
         HashSet::default()
+    }
+}
+
+impl<A> fmt::Display for TypeSignature<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { quantifiers, body } = self;
+
+        if let Some(quantifiers) = quantifiers {
+            write!(f, "{quantifiers}")?;
+        }
+
+        write!(f, "{body}")
     }
 }
 
@@ -495,7 +517,7 @@ pub struct Coproduct<A> {
 
 impl<A> Coproduct<A>
 where
-    A: Copy + Parsed + fmt::Debug + fmt::Display,
+    A: Copy + fmt::Debug + fmt::Display + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Coproduct<B> {
         let Self {
@@ -731,7 +753,7 @@ pub struct StructField<A> {
 
 impl<A> StructField<A>
 where
-    A: fmt::Display + Clone + Parsed,
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> StructField<B> {
         StructField {
@@ -749,7 +771,7 @@ pub struct Constructor<A> {
 
 impl<A> Constructor<A>
 where
-    A: fmt::Display + Clone + Parsed,
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
     fn make_function(
         &self,
@@ -875,7 +897,7 @@ pub enum TypeExpression<A> {
 
 impl<A> TypeExpression<A>
 where
-    A: fmt::Display + Clone + Parsed,
+    A: Clone + Parsed + fmt::Debug + fmt::Display,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeExpression<B> {
         match self {
@@ -934,30 +956,6 @@ where
             )),
         }
     }
-
-    // Why isn't this ever called? No initializatio order issues?
-    fn _dependencies(&self) -> HashSet<&Identifier> {
-        fn collect<'a, A>(node: &'a TypeExpression<A>, deps: &mut HashSet<&'a Identifier>) {
-            match node {
-                TypeExpression::Constructor(_, name) => {
-                    let _ = deps.insert(name);
-                }
-                TypeExpression::Apply(_, apply) => {
-                    collect(&*apply.argument, deps);
-                    collect(&apply.constructor, deps);
-                }
-                TypeExpression::Arrow(_, arrow) => {
-                    collect(&*arrow.domain, deps);
-                    collect(&arrow.codomain, deps);
-                }
-                _otherwise => (),
-            }
-        }
-
-        let mut boofer = HashSet::default();
-        collect(self, &mut boofer);
-        boofer
-    }
 }
 
 impl<A> fmt::Display for TypeExpression<A>
@@ -982,7 +980,7 @@ pub struct TypeApply<A> {
 
 impl<A> TypeApply<A>
 where
-    A: fmt::Display + Clone + Parsed,
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> TypeApply<B> {
         TypeApply {
@@ -1013,7 +1011,7 @@ pub struct Arrow<A> {
 
 impl<A> Arrow<A>
 where
-    A: fmt::Display + Clone + Parsed,
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
     pub fn map<B>(self, f: fn(A) -> B) -> Arrow<B> {
         Arrow {
@@ -1040,7 +1038,7 @@ pub struct ValueDeclarator<A> {
 
 impl<A> ValueDeclarator<A>
 where
-    A: Copy,
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
     pub fn dependencies(&self) -> HashSet<&Identifier> {
         self.expression.free_identifiers()
@@ -1112,6 +1110,7 @@ impl fmt::Display for Parameter {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression<A> {
+    TypeAscription(A, TypeAscription<A>),
     Variable(A, Identifier),
     InvokeBridge(A, Identifier),
     Literal(A, Constant),
@@ -1128,18 +1127,40 @@ pub enum Expression<A> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct TypeAscription<A> {
+    // Should this be a TypeSignature instead?
+    pub type_signature: TypeSignature<A>,
+    pub underlying: Box<Expression<A>>,
+}
+
+impl<A> TypeAscription<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
+    pub fn map<B>(self, f: fn(A) -> B) -> TypeAscription<B> {
+        TypeAscription {
+            type_signature: self.type_signature.map(f),
+            underlying: self.underlying.map(f).into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeconstructInto<A> {
     pub scrutinee: Box<Expression<A>>,
     pub match_clauses: Vec<MatchClause<A>>,
 }
 
-impl<A> DeconstructInto<A> {
-    pub fn map<B>(mut self, f: fn(A) -> B) -> DeconstructInto<B> {
+impl<A> DeconstructInto<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
+    pub fn map<B>(self, f: fn(A) -> B) -> DeconstructInto<B> {
         DeconstructInto {
             scrutinee: self.scrutinee.map(f).into(),
             match_clauses: self
                 .match_clauses
-                .drain(..)
+                .into_iter()
                 .map(|clause| clause.map(f))
                 .collect(),
         }
@@ -1152,7 +1173,10 @@ pub struct MatchClause<A> {
     pub consequent: Box<Expression<A>>,
 }
 
-impl<A> MatchClause<A> {
+impl<A> MatchClause<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> MatchClause<B> {
         MatchClause {
             pattern: self.pattern.map(f),
@@ -1787,7 +1811,11 @@ pub struct SelfReferential<A> {
     pub parameter: Parameter,
     pub body: Box<Expression<A>>,
 }
-impl<A> SelfReferential<A> {
+
+impl<A> SelfReferential<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     fn map<B>(self, f: fn(A) -> B) -> SelfReferential<B> {
         SelfReferential {
             name: self.name,
@@ -1802,7 +1830,11 @@ pub struct Lambda<A> {
     pub parameter: Parameter,
     pub body: Box<Expression<A>>,
 }
-impl<A> Lambda<A> {
+
+impl<A> Lambda<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     fn map<B>(self, f: fn(A) -> B) -> Lambda<B> {
         Lambda {
             parameter: self.parameter,
@@ -1816,7 +1848,11 @@ pub struct Apply<A> {
     pub function: Box<Expression<A>>,
     pub argument: Box<Expression<A>>,
 }
-impl<A> Apply<A> {
+
+impl<A> Apply<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> Apply<B> {
         Apply {
             function: self.function.map(f).into(),
@@ -1831,7 +1867,11 @@ pub struct Inject<A> {
     pub constructor: Identifier,
     pub argument: Box<Expression<A>>,
 }
-impl<A> Inject<A> {
+
+impl<A> Inject<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     fn map<B>(self, f: fn(A) -> B) -> Inject<B> {
         Inject {
             name: self.name,
@@ -1847,7 +1887,10 @@ pub struct Project<A> {
     pub index: ProductIndex,
 }
 
-impl<A> Project<A> {
+impl<A> Project<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     fn map<B>(self, f: fn(A) -> B) -> Project<B> {
         Project {
             base: self.base.map(f).into(),
@@ -1862,7 +1905,11 @@ pub struct Binding<A> {
     pub bound: Box<Expression<A>>,
     pub body: Box<Expression<A>>,
 }
-impl<A> Binding<A> {
+
+impl<A> Binding<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     fn map<B>(self, f: fn(A) -> B) -> Binding<B> {
         Binding {
             binder: self.binder,
@@ -1877,7 +1924,11 @@ pub struct Sequence<A> {
     pub this: Box<Expression<A>>,
     pub and_then: Box<Expression<A>>,
 }
-impl<A> Sequence<A> {
+
+impl<A> Sequence<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     fn map<B>(self, f: fn(A) -> B) -> Sequence<B> {
         Sequence {
             this: self.this.map(f).into(),
@@ -1896,10 +1947,14 @@ impl Expression<ParsingInfo> {
     }
 }
 
-impl<A> Expression<A> {
+impl<A> Expression<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     pub fn annotation(&self) -> &A {
         match self {
-            Self::Variable(annotation, ..)
+            Self::TypeAscription(annotation, ..)
+            | Self::Variable(annotation, ..)
             | Self::InvokeBridge(annotation, ..)
             | Self::Literal(annotation, ..)
             | Self::SelfReferential(annotation, ..)
@@ -2011,6 +2066,7 @@ impl<A> Expression<A> {
 
     pub fn map<B>(self, f: fn(A) -> B) -> Expression<B> {
         match self {
+            Self::TypeAscription(x, info) => Expression::<B>::TypeAscription(f(x), info.map(f)),
             Self::Variable(x, info) => Expression::<B>::Variable(f(x), info),
             Self::InvokeBridge(x, info) => Expression::<B>::InvokeBridge(f(x), info),
             Self::Literal(x, info) => Expression::<B>::Literal(f(x), info),
@@ -2027,10 +2083,12 @@ impl<A> Expression<A> {
         }
     }
 
-    pub fn erase_annotation(self) -> Expression<()> {
-        self.map(|_| ())
+    pub fn erase_annotation(self) -> Expression<EmptyAnnotation> {
+        self.map(|_| EmptyAnnotation)
     }
 }
+
+impl<A> Expression<A> where A: Clone {}
 
 impl<A> fmt::Display for Expression<A>
 where
@@ -2038,6 +2096,9 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Expression::TypeAscription(_, ta) => {
+                write!(f, "{}::{}", ta.underlying, ta.type_signature)
+            }
             Expression::Variable(_, id) => write!(f, "{id}"),
             Expression::InvokeBridge(_, id) => write!(f, "call {id}"),
             Expression::Literal(_, c) => write!(f, "{c}"),
@@ -2086,7 +2147,11 @@ pub enum ControlFlow<A> {
         alternate: Box<Expression<A>>,
     },
 }
-impl<A> ControlFlow<A> {
+
+impl<A> ControlFlow<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     fn map<B>(self, f: fn(A) -> B) -> ControlFlow<B> {
         match self {
             Self::If {
@@ -2175,7 +2240,11 @@ pub enum Product<A> {
     Tuple(Vec<Expression<A>>),
     Struct(Vec<(Identifier, Expression<A>)>),
 }
-impl<A> Product<A> {
+
+impl<A> Product<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
     fn map<B>(self, f: fn(A) -> B) -> Product<B> {
         match self {
             Self::Tuple(expressions) => {

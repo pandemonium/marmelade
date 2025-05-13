@@ -12,7 +12,7 @@ use crate::{
         ValueDeclaration,
     },
     lexer::SourceLocation,
-    parser::ParsingInfo,
+    parser::{ParsingInfo, DEFAULT_PARSING_INFO},
 };
 use unification::Substitutions;
 
@@ -33,6 +33,21 @@ pub trait Parsed {
     fn info(&self) -> &ParsingInfo;
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmptyAnnotation;
+
+impl fmt::Display for EmptyAnnotation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Empty annotation")
+    }
+}
+
+impl Parsed for EmptyAnnotation {
+    fn info(&self) -> &ParsingInfo {
+        &DEFAULT_PARSING_INFO
+    }
+}
+
 type UntypedExpression = Expression<ParsingInfo>;
 type UntypedValueDeclaration = ValueDeclaration<ParsingInfo>;
 
@@ -47,11 +62,15 @@ impl TypeChecker {
     // I would like to assign a type to every AST node
     pub fn check_declaration(&mut self, declaration: &UntypedValueDeclaration) -> Typing<()> {
         let typing_context = self.typing_context();
+
         if let Some(signature) = &declaration.type_signature {
             let type_scheme = signature.synthesize_type(typing_context)?;
             let expected_type = type_scheme.clone().instantiate(typing_context)?;
+
+            println!("check_declaration: {}::{expected_type}", declaration.binder);
+
             // Expand the type?
-            self.check(expected_type, &declaration.declarator.expression)?;
+            self.check(&expected_type, &declaration.declarator.expression)?;
             let id = declaration.clone().binder;
             println!("type_check: `{id}` is `{type_scheme}`");
             self.bind_type(id, type_scheme);
@@ -76,7 +95,7 @@ impl TypeChecker {
         typing_context.bind(id.into(), type_scheme);
     }
 
-    fn check(&self, expected_type: Type, expression: &UntypedExpression) -> Typing<()> {
+    fn check(&self, expected_type: &Type, expression: &UntypedExpression) -> Typing<()> {
         checking::check(expression, expected_type, self.typing_context()).map(|_| ())
     }
 
@@ -682,6 +701,7 @@ pub struct TypingContext {
 
 impl TypingContext {
     pub fn bind(&mut self, binding: Binding, scheme: TypeScheme) {
+        println!("bind: {binding} to {scheme}");
         self.bindings.insert(binding, scheme);
     }
 
@@ -772,16 +792,18 @@ pub mod internal {
 mod tests {
     use std::fmt;
 
-    use super::{Binding, CoproductType, TypingContext};
     use crate::{
         ast::{self, Apply, Inject, Lambda, Project},
         parser::ParsingInfo,
-        typer::{BaseType, ProductType, TupleType, Type, TypeParameter, TypeScheme},
+        typer::{
+            BaseType, Binding, CoproductType, Parsed, ProductType, TupleType, Type, TypeParameter,
+            TypeScheme, TypingContext,
+        },
     };
 
     fn mk_apply<A>(f: ast::Expression<A>, arg: ast::Expression<A>) -> ast::Expression<A>
     where
-        A: fmt::Display + Clone,
+        A: fmt::Debug + fmt::Display + Clone + Parsed,
     {
         ast::Expression::Apply(
             f.annotation().clone(),

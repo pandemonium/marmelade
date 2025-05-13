@@ -1,0 +1,8 @@
+Perhaps ::= ∀a. This a | Nope
+  where
+    map = lambda f xs.
+      deconstruct xs into
+        This a -> This (f a)
+      | Nope -> Nope
+
+main = This 1

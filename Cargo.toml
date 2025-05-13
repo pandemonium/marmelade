@@ -4,6 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-log = "0.4.26"
 thiserror = "2.0.11"
-uuid = { version = "1.12.0", features = ["v4"] }

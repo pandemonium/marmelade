@@ -13,10 +13,13 @@ use crate::{
 
 pub fn check(
     expression: &UntypedExpression,
-    expected_type: Type,
+    expected_type: &Type,
     ctx: &TypingContext,
 ) -> Typing<Substitutions> {
     let annotation = *expression.annotation();
+
+    println!("check: {expected_type} -- {expression:?}");
+
     match (expected_type, expression) {
         (expected, Expression::Variable(_, id) | Expression::InvokeBridge(_, id)) => {
             let actual_type = ctx
@@ -29,7 +32,7 @@ pub fn check(
             expected.unify(&constant.synthesize_type()?.inferred_type, pi)
         }
         (
-            expected,
+            expected @ Type::Arrow(ref parameter_type, ref body_type),
             Expression::SelfReferential(
                 _,
                 SelfReferential {
@@ -37,25 +40,30 @@ pub fn check(
                     parameter:
                         Parameter {
                             name: parameter_name,
-                            type_annotation: Some(parameter_type),
+                            .. //type_annotation: Some(parameter_type),
                         },
                     body,
                 },
             ),
         ) => {
+            println!("check_self_referential: {expected}");
+
             let mut ctx = ctx.clone();
             ctx.bind(
                 name.clone().into(),
-                TypeScheme::from_constant(Type::Arrow(
-                    Type::fresh().into(),
-                    expected.clone().into(),
-                )),
+                TypeScheme::from_constant(expected.clone()),
+                //                TypeScheme::from_constant(Type::Arrow(
+                //                    Type::fresh().into(),
+                //                    expected.clone().into(),
+                //                )),
             );
+
+            println!("check: binding {parameter_type} to {parameter_name}");
             ctx.bind(
                 parameter_name.clone().into(),
-                TypeScheme::from_constant(parameter_type.clone()),
+                TypeScheme::from_constant(*parameter_type.clone()),
             );
-            check(body, expected, &ctx)
+            check(body, body_type, &ctx)
         }
         (
             expected,
@@ -93,10 +101,12 @@ pub fn check(
         //
         //        (expected, Expression::)
         (expected, expression) => {
+            println!("check(1): -------------- {expression} :: {expected}");
+
             let pi = expression.annotation();
             let expression = ctx.infer_type(expression)?;
             unify(
-                &expected.apply(&expression.substitutions),
+                &expected.clone().apply(&expression.substitutions),
                 &expression.inferred_type,
                 pi,
             )
@@ -105,11 +115,11 @@ pub fn check(
 }
 
 fn check_sequence(
-    expected: Type,
+    expected: &Type,
     sequence: &Sequence<ParsingInfo>,
     ctx: &TypingContext,
 ) -> Result<Substitutions, TypeError> {
-    let unification = check(&sequence.this, Type::Constant(BaseType::Unit), ctx)?;
+    let unification = check(&sequence.this, &Type::Constant(BaseType::Unit), ctx)?;
     check(
         &sequence.and_then,
         expected,
@@ -119,30 +129,32 @@ fn check_sequence(
 
 fn check_product(
     pi: &ParsingInfo,
-    expected_type: ProductType,
+    expected_type: &ProductType,
     product: &Product<ParsingInfo>,
     ctx: &TypingContext,
 ) -> Typing<Substitutions> {
     let product = product.clone();
-    match (expected_type, product) {
+    match (expected_type.clone(), product) {
         (ProductType::Tuple(types), Product::Tuple(expressions)) => {
             let TupleType(types) = types.unspine();
 
             let mut s = Substitutions::default();
-            for (ty, expr) in types.into_iter().zip(expressions.into_iter()) {
-                s = s.compose(check(&expr, ty, &ctx.apply_substitutions(&s))?);
+            for (ty, expr) in types.iter().zip(expressions.into_iter()) {
+                s = s.compose(check(&expr, &ty, &ctx.apply_substitutions(&s))?);
             }
             Ok(s)
         }
 
         (ProductType::Struct(mut lhs), Product::Struct(mut rhs)) if lhs.len() == rhs.len() => {
+            println!("check_product: {lhs:?} -- {rhs:?}");
+
             lhs.sort_by(|(p, _), (q, _)| p.cmp(q));
             rhs.sort_by(|(p, _), (q, _)| p.cmp(q));
 
             let mut s = Substitutions::default();
             for ((lhs_label, expected), (rhs_label, expr)) in lhs.into_iter().zip(rhs.into_iter()) {
                 if lhs_label == rhs_label {
-                    s = s.compose(check(&expr, expected, &ctx.apply_substitutions(&s))?);
+                    s = s.compose(check(&expr, &expected, &ctx.apply_substitutions(&s))?);
                 } else {
                     Err(TypeError::UndefinedField {
                         position: *pi.info().location(),
@@ -155,7 +167,7 @@ fn check_product(
         }
 
         (expected_type, product) => Err(TypeError::ExpectedType {
-            expected_type: Type::Product(expected_type),
+            expected_type: Type::Product(expected_type.clone()),
             literal: Expression::Product(*pi, product.clone()),
         }),
     }
@@ -163,7 +175,7 @@ fn check_product(
 
 fn check_binding(
     _pi: &ParsingInfo,
-    expected_type: Type,
+    expected_type: &Type,
     binding: &Binding<ParsingInfo>,
     ctx: &TypingContext,
 ) -> Typing<Substitutions> {
@@ -177,19 +189,21 @@ fn check_binding(
     let mut ctx = ctx.clone();
     ctx.bind(binder.clone().into(), bound.inferred_type.generalize(&ctx));
 
-    let unification = check(body, expected_type, &ctx)?;
+    let unification = check(body, &expected_type, &ctx)?;
 
     Ok(unification.compose(bound.substitutions))
 }
 
 fn check_lambda(
     pi: &ParsingInfo,
-    expected_type: Type,
+    expected_type: &Type,
     parameter_name: &Identifier,
     parameter_type: &Type,
     body: &UntypedExpression,
     ctx: &TypingContext,
 ) -> Typing<Substitutions> {
+    println!("check_lambda: {parameter_name} :: {parameter_type}");
+
     let mut ctx = ctx.clone();
     ctx.bind(
         parameter_name.clone().into(),
@@ -207,15 +221,17 @@ fn check_lambda(
 
 fn check_apply(
     _pi: &ParsingInfo,
-    expected: Type,
+    expected: &Type,
     function: &UntypedExpression,
     argument: &UntypedExpression,
     ctx: &TypingContext,
 ) -> Typing<Substitutions> {
+    println!("check_apply: expected {expected}; function: {function} argument: {argument}");
+
     let argument = ctx.infer_type(argument)?;
     let unification = check(
         function,
-        Type::Arrow(argument.inferred_type.into(), expected.clone().into()),
+        &Type::Arrow(argument.inferred_type.into(), expected.clone().into()),
         ctx,
     )?;
     Ok(unification.compose(argument.substitutions))
@@ -223,7 +239,7 @@ fn check_apply(
 
 fn check_control_flow(
     _pi: &ParsingInfo,
-    expected: Type,
+    expected: &Type,
     control_flow: &ControlFlow<ParsingInfo>,
     ctx: &TypingContext,
 ) -> Typing<Substitutions> {
@@ -233,10 +249,10 @@ fn check_control_flow(
             consequent,
             alternate,
         } => {
-            let s1 = check(predicate, Type::Constant(BaseType::Bool), ctx)?;
-            let s2 = check(consequent, expected.clone(), ctx)?;
+            let s1 = check(predicate, &Type::Constant(BaseType::Bool), ctx)?;
+            let s2 = check(consequent, &expected, ctx)?;
             // Should I apply substitutions?
-            let s3 = check(alternate, expected, ctx)?;
+            let s3 = check(alternate, &expected, ctx)?;
             Ok(s1.compose(s2.compose(s3)))
         }
     }
@@ -252,13 +268,13 @@ mod tests {
         let parsing_info = ParsingInfo::default();
         check(
             &Expression::Literal(parsing_info, Constant::Int(1)),
-            Type::Constant(BaseType::Int),
+            &Type::Constant(BaseType::Int),
             &typing_context,
         )
         .unwrap();
         check(
             &Expression::Literal(parsing_info, Constant::Bool(true)),
-            Type::Constant(BaseType::Bool),
+            &Type::Constant(BaseType::Bool),
             &typing_context,
         )
         .unwrap();
@@ -281,7 +297,7 @@ mod tests {
 
         check(
             &f,
-            Type::Arrow(
+            &Type::Arrow(
                 Type::Constant(BaseType::Int).into(),
                 Type::Constant(BaseType::Int).into(),
             ),
@@ -314,6 +330,6 @@ mod tests {
             },
         );
 
-        check(&e, Type::Constant(BaseType::Text), &ctx).unwrap();
+        check(&e, &Type::Constant(BaseType::Text), &ctx).unwrap();
     }
 }
