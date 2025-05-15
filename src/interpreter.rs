@@ -100,7 +100,8 @@ impl Interpreter {
     {
         let environment = self.load_compilation_unit(program, typing_context)?;
 
-        match environment.lookup(&Identifier::new("main"))? {
+        // How does it call $main.main?
+        match environment.lookup(&Identifier::new("$main"))? {
             Value::Closure { .. } => todo!(),
             Value::Bridge { .. } => todo!(),
             scalar => Ok(scalar.clone()),
@@ -131,7 +132,10 @@ impl Interpreter {
 
         //        There is an select(x, Width) where there should be a Project
 
-        println!("load_compilation_unit: {main}");
+        for decl in &main.declarations {
+            println!("load_compilation_unit: {}", decl);
+        }
+        //        println!("load_compilation_unit: {main:?}");
 
         let type_checker = TypeChecker::new(typing_context);
         ModuleResolver::initialize(&main, self.prelude)?
@@ -145,18 +149,31 @@ impl Interpreter {
     {
         let module_map = Self::discover_modules(&main).names();
 
-        // Am I not re-writing everything?
         main.declarations = main.declarations.drain(..).fold(vec![], |mut acc, decl| {
-            let value_decl = if let Declaration::Value(annotation, declaration) = decl {
+            let value_decl = if let Declaration::Value(annotation, declaration) = decl.clone() {
                 Declaration::Value(
                     annotation,
                     declaration.map_expression(|expr| expr.resolve_names(&module_map)),
                 )
             } else {
-                decl
+                decl.clone()
             };
-
             acc.push(value_decl);
+
+            if let Declaration::Module(_, module) = decl {
+                for decl in module.declarations {
+                    let value_decl = if let Declaration::Value(annotation, declaration) = decl {
+                        Declaration::Value(
+                            annotation,
+                            declaration.map_expression(|expr| expr.resolve_names(&module_map)),
+                        )
+                    } else {
+                        decl
+                    };
+                    acc.push(value_decl);
+                }
+            }
+
             acc
         });
 
@@ -180,7 +197,7 @@ impl Interpreter {
                 self.inject_module_structures(annotation, name.clone(), &module, typing_context);
 
             let declarations =
-                self.inject_module_types_and_synthetics(annotation, main, typing_context)?;
+                self.inject_module_types_and_synthetics(annotation, module, typing_context)?;
 
             injections.push(initializer);
             injections.extend(declarations);

@@ -3,13 +3,14 @@ Rectangle ::=
     Height : Int
     Spoon  : Text
   }
+  where
+    bar :: Int -> Int = lambda x. x * x
 
 foo :: Rectangle -> Int =
   lambda x.
     x.Width
 
-main =
+main :: Int =
   let r =
-    { Width: 10; Height: 10; Spoon: "hi" }
-  in
-     1
+    { Width: 10; Height: 20; Spoon: "Hi, mom" }
+  in foo r

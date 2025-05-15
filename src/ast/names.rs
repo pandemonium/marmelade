@@ -8,7 +8,7 @@ use crate::{
     interpreter::ModuleMap,
 };
 
-use super::ProductIndex;
+use super::{ProductIndex, TypeAscription};
 
 // bound variables on the form a.b.c are projections
 // unbound variables are module selections, which are implemented as projections
@@ -87,7 +87,7 @@ where
         }
     }
 
-    fn rewrite_identifiers<'a>(
+    fn rewrite_identifiers(
         self,
         bound: &mut HashSet<Identifier>,
         module_map: &HashSet<Identifier>,
@@ -281,6 +281,19 @@ where
                     },
                 )
             }
+            Expression::TypeAscription(
+                annotation,
+                TypeAscription {
+                    type_signature,
+                    underlying,
+                },
+            ) => Expression::TypeAscription(
+                annotation,
+                TypeAscription {
+                    type_signature,
+                    underlying: underlying.rewrite_identifiers(bound, module_map).into(),
+                },
+            ),
             otherwise => otherwise,
         }
     }
