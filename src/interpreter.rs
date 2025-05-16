@@ -119,23 +119,13 @@ impl Interpreter {
     where
         A: Copy + Parsed + fmt::Debug + fmt::Display,
     {
-        // The problem, I think, is that typing happens twice and that the
-        // second time does not have type signatures.
-        //
-        // Why doesn't it have type signatures?
-        //
-        // Because they are members of the module struct
-
         self.inject_prelude(&annotation, &mut main);
         self.inject_modules(&annotation, &mut main, &mut typing_context)?;
         self.resolve_names(&mut main)?;
 
-        //        There is an select(x, Width) where there should be a Project
-
         for decl in &main.declarations {
             println!("load_compilation_unit: {}", decl);
         }
-        //        println!("load_compilation_unit: {main:?}");
 
         let type_checker = TypeChecker::new(typing_context);
         ModuleResolver::initialize(&main, self.prelude)?
@@ -150,29 +140,33 @@ impl Interpreter {
         let module_map = Self::discover_modules(&main).names();
 
         main.declarations = main.declarations.drain(..).fold(vec![], |mut acc, decl| {
-            let value_decl = if let Declaration::Value(annotation, declaration) = decl.clone() {
-                Declaration::Value(
-                    annotation,
-                    declaration.map_expression(|expr| expr.resolve_names(&module_map)),
-                )
-            } else {
-                decl.clone()
-            };
-            acc.push(value_decl);
+            match decl {
+                Declaration::Value(annotation, declaration) => {
+                    let decl = Declaration::Value(
+                        annotation,
+                        declaration
+                            .clone()
+                            .map_expression(|expr| expr.resolve_names(&module_map)),
+                    );
 
-            if let Declaration::Module(_, module) = decl {
-                for decl in module.declarations {
-                    let value_decl = if let Declaration::Value(annotation, declaration) = decl {
-                        Declaration::Value(
-                            annotation,
-                            declaration.map_expression(|expr| expr.resolve_names(&module_map)),
-                        )
-                    } else {
-                        decl
-                    };
-                    acc.push(value_decl);
+                    acc.push(decl);
                 }
-            }
+                Declaration::Module(_, module) => {
+                    for decl in module.declarations {
+                        let value_decl = if let Declaration::Value(annotation, declaration) = decl {
+                            Declaration::Value(
+                                annotation,
+                                declaration.map_expression(|expr| expr.resolve_names(&module_map)),
+                            )
+                        } else {
+                            decl
+                        };
+
+                        acc.push(value_decl);
+                    }
+                }
+                otherwise => acc.push(otherwise),
+            };
 
             acc
         });
@@ -203,6 +197,9 @@ impl Interpreter {
             injections.extend(declarations);
         }
 
+        main.declarations
+            .retain(|decl| !matches!(decl, Declaration::Value(..)));
+
         main.declarations.extend(injections);
 
         Ok(())
@@ -219,7 +216,6 @@ impl Interpreter {
         A: Copy + Parsed + fmt::Debug + fmt::Display,
     {
         let mut member_declarations = vec![];
-        //        let member_types = vec![];
 
         for decl in &module.declarations {
             match decl {
@@ -239,28 +235,10 @@ impl Interpreter {
                             },
                         ),
                     ));
-                    //                    member_types.push((decl.binder.clone(), decl.type_signature));
                 }
                 _otherwise => (),
             }
         }
-
-        // If I don't have a type signature, then wtf do i do?
-        // do I attempt to infer the type?
-        // To be able to do that, I would need a computed dependency graph. So ... do I
-        // make one of those?
-        //
-        // I think the types will have to come from a second pass
-        //
-        // What if I wrap all decl.declarator.expression in Expression::TypeAscription?
-        //   I have to do this. Then I could just ignore synthesizing a type for the
-        //   module struct.
-        //        let module_structure: Type = Type::Product(ProductType::Struct(member_types));
-        //        let module_structure_type_name = TypeName::new(&module_binder.as_str());
-        //        typing_context.bind(
-        //            module_structure_type_name.into(),
-        //            TypeScheme::from_constant(module_structure),
-        //        );
 
         Declaration::Value(
             *parsing_info,
@@ -285,8 +263,8 @@ impl Interpreter {
                 modules.push((module.name.suffix_with(&module.name.as_str()), module));
             }
 
-            if let Declaration::Type(_, tpe) = decl {
-                match &tpe.declarator {
+            if let Declaration::Type(_, decl) = decl {
+                match &decl.declarator {
                     TypeDeclarator::Coproduct(
                         _,
                         Coproduct {
@@ -343,7 +321,7 @@ impl Interpreter {
             if let Declaration::Type(
                 _,
                 TypeDeclaration {
-                    binding,
+                    binder: binding,
                     declarator,
                 },
             ) = decl

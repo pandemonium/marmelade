@@ -171,7 +171,7 @@ fn coproduct_perhaps() {
         Declaration::Type(
             ParsingInfo::default(),
             TypeDeclaration {
-                binding: ident("Perhaps"),
+                binder: ident("Perhaps"),
                 declarator: coproduct(
                     UniversalQuantifiers::default().add(TypeName::new("a")),
                     vec![
@@ -192,7 +192,7 @@ fn coproduct_list() {
         Declaration::Type(
             ParsingInfo::default(),
             TypeDeclaration {
-                binding: ident("List"),
+                binder: ident("List"),
                 declarator: coproduct(
                     UniversalQuantifiers::default().add(TypeName::new("a")),
                     vec![
@@ -250,7 +250,7 @@ fn coproduct_binary_tree() {
         Declaration::Type(
             ParsingInfo::default(),
             TypeDeclaration {
-                binding: ident("BinaryTree"),
+                binder: ident("BinaryTree"),
                 declarator: coproduct(
                     UniversalQuantifiers::default().add(TypeName::new("a")),
                     vec![
@@ -433,7 +433,7 @@ fn coproduct_eval() {
     let rhs = Declaration::Type(
         ParsingInfo::default(),
         TypeDeclaration {
-            binding: ident("Eval"),
+            binder: ident("Eval"),
             declarator: coproduct(
                 UniversalQuantifiers::default()
                     .add(TypeName::new("a"))

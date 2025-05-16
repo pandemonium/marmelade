@@ -1,11 +1,8 @@
 use std::{collections::HashSet, fmt};
 
-use crate::{
-    ast::{
-        Apply, Binding, ControlFlow, DeconstructInto, Expression, Identifier, Inject, Lambda,
-        MatchClause, Product, Project, SelfReferential, Sequence,
-    },
-    interpreter::ModuleMap,
+use crate::ast::{
+    Apply, Binding, ControlFlow, DeconstructInto, Expression, Identifier, Inject, Lambda,
+    MatchClause, Product, Project, SelfReferential, Sequence,
 };
 
 use super::{ProductIndex, TypeAscription};
@@ -47,8 +44,6 @@ where
             &name.components()[1..],
         );
 
-        println!("into_projection_tree: made {tree:?}");
-
         tree
     }
 
@@ -87,6 +82,7 @@ where
         }
     }
 
+    // Needs to take into account _where_ the identifier is.
     fn rewrite_identifiers(
         self,
         bound: &mut HashSet<Identifier>,
@@ -94,10 +90,7 @@ where
     ) -> Expression<A> {
         match self {
             Expression::Variable(annotation, name) => {
-                println!("rewrite_identifiers: {name}");
-                let head = name.head();
-                if bound.contains(head) {
-                    println!("rewrite_identifiers: {head}");
+                if bound.contains(name.head()) {
                     Self::into_projection_tree(&annotation, name)
                 } else {
                     Self::into_module_path(&annotation, name, module_map)

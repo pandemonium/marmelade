@@ -13,4 +13,4 @@ foo :: Rectangle -> Int =
 main :: Int =
   let r =
     { Width: 10; Height: 20; Spoon: "Hi, mom" }
-  in foo r
+  in Rectangle.bar 10

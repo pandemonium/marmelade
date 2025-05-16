@@ -18,8 +18,6 @@ pub fn check(
 ) -> Typing<Substitutions> {
     let annotation = *expression.annotation();
 
-    println!("check: {expected_type} -- {expression:?}");
-
     match (expected_type, expression) {
         (expected, Expression::Variable(_, id) | Expression::InvokeBridge(_, id)) => {
             let actual_type = ctx
@@ -46,8 +44,6 @@ pub fn check(
                 },
             ),
         ) => {
-            println!("check_self_referential: {expected}");
-
             let mut ctx = ctx.clone();
             ctx.bind(
                 name.clone().into(),
@@ -58,7 +54,6 @@ pub fn check(
                 //                )),
             );
 
-            println!("check: binding {parameter_type} to {parameter_name}");
             ctx.bind(
                 parameter_name.clone().into(),
                 TypeScheme::from_constant(*parameter_type.clone()),
@@ -101,8 +96,6 @@ pub fn check(
         //
         //        (expected, Expression::)
         (expected, expression) => {
-            println!("check(1): -------------- {expression} :: {expected}");
-
             let pi = expression.annotation();
             let expression = ctx.infer_type(expression)?;
             unify(
@@ -146,8 +139,6 @@ fn check_product(
         }
 
         (ProductType::Struct(mut lhs), Product::Struct(mut rhs)) if lhs.len() == rhs.len() => {
-            println!("check_product: {lhs:?} -- {rhs:?}");
-
             lhs.sort_by(|(p, _), (q, _)| p.cmp(q));
             rhs.sort_by(|(p, _), (q, _)| p.cmp(q));
 
@@ -202,8 +193,6 @@ fn check_lambda(
     body: &UntypedExpression,
     ctx: &TypingContext,
 ) -> Typing<Substitutions> {
-    println!("check_lambda: {parameter_name} :: {parameter_type}");
-
     let mut ctx = ctx.clone();
     ctx.bind(
         parameter_name.clone().into(),
@@ -226,8 +215,6 @@ fn check_apply(
     argument: &UntypedExpression,
     ctx: &TypingContext,
 ) -> Typing<Substitutions> {
-    println!("check_apply: expected {expected}; function: {function} argument: {argument}");
-
     let argument = ctx.infer_type(argument)?;
     let unification = check(
         function,

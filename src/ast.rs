@@ -330,14 +330,14 @@ where
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypeDeclaration<A> {
-    pub binding: Identifier,
+    pub binder: Identifier,
     pub declarator: TypeDeclarator<A>,
 }
 
 impl<A> TypeDeclaration<A> {
     pub fn prefixed_with(self, name: Identifier) -> Self {
         Self {
-            binding: self.binding.prefixed_with(name),
+            binder: self.binder.prefixed_with(name),
             declarator: self.declarator,
         }
     }
@@ -397,13 +397,13 @@ where
             Self::Type(
                 a,
                 TypeDeclaration {
-                    binding,
+                    binder: binding,
                     declarator,
                 },
             ) => Declaration::Type(
                 f(a),
                 TypeDeclaration {
-                    binding,
+                    binder: binding,
                     declarator: declarator.map(f),
                 },
             ),
@@ -420,6 +420,15 @@ where
             Self::Type(a, decl) => Self::Type(a, decl.prefixed_with(name)),
             Self::Module(a, module) => Self::Module(a, module.prefixed_with(name)),
             otherwise => otherwise,
+        }
+    }
+
+    pub fn binder(&self) -> Option<&Identifier> {
+        match self {
+            Self::Value(_, decl) => Some(&decl.binder),
+            Self::Type(_, decl) => Some(&decl.binder),
+            Self::Module(_, decl) => Some(&decl.name),
+            Self::ImportModule(..) => None,
         }
     }
 }
@@ -439,7 +448,7 @@ where
             Self::Type(
                 _,
                 TypeDeclaration {
-                    binding,
+                    binder: binding,
                     declarator,
                     ..
                 },
@@ -2060,6 +2069,11 @@ where
                     clause.find_unbound(bound, free);
                 }
             }
+
+            Self::TypeAscription(_, ascription) => {
+                ascription.underlying.find_unbound(bound, free);
+            }
+
             _otherwise => (),
         }
     }

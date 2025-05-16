@@ -67,8 +67,6 @@ impl TypeChecker {
             let type_scheme = signature.synthesize_type(typing_context)?;
             let expected_type = type_scheme.clone().instantiate(typing_context)?;
 
-            println!("check_declaration: {}::{expected_type}", declaration.binder);
-
             // Expand the type?
             self.check(&expected_type, &declaration.declarator.expression)?;
             let id = declaration.clone().binder;
@@ -701,7 +699,6 @@ pub struct TypingContext {
 
 impl TypingContext {
     pub fn bind(&mut self, binding: Binding, scheme: TypeScheme) {
-        println!("bind: {binding} to {scheme}");
         self.bindings.insert(binding, scheme);
     }
 

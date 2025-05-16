@@ -238,7 +238,7 @@ fn parse_type_binding<'a>(
         Declaration::Type(
             ParsingInfo::new(*position),
             TypeDeclaration {
-                binding: Identifier::new(binder),
+                binder: Identifier::new(binder),
                 declarator,
             },
         )

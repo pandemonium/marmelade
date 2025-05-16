@@ -116,8 +116,6 @@ impl TypingContext {
         ascribed_type: &ast::TypeSignature<ParsingInfo>,
         underlying: &Box<ast::Expression<ParsingInfo>>,
     ) -> Typing {
-        println!("infer_ascription: hi mom");
-
         let ascribed_type = ascribed_type.synthesize_type(&self)?;
         let checker = TypeChecker::new(self.clone());
 
@@ -290,12 +288,7 @@ impl TypingContext {
         base: &ast::Expression<ParsingInfo>,
         index: &ast::ProductIndex,
     ) -> Typing {
-        println!("infer_projection: {base} {index}");
-
         let base = self.infer_type(base)?;
-
-        println!("infer_projection(2): {base}");
-
         match (&base.inferred_type, index) {
             // elements is a right-biased 2-tree so #3 is .1.1
             (Type::Product(ProductType::Tuple(tuple)), ix @ ast::ProductIndex::Tuple(index)) => {
@@ -308,7 +301,6 @@ impl TypingContext {
                         elements[*index].clone(),
                     ))
                 } else {
-                    println!("infer_projection(1): {} {}", *index, elements.len());
                     Err(TypeError::BadProjection {
                         base: base.inferred_type,
                         index: ix.clone(),
@@ -316,29 +308,22 @@ impl TypingContext {
                 }
             }
             (Type::Product(ProductType::Struct(elements)), ast::ProductIndex::Struct(id)) => {
-                println!("infer_projection(5): {elements:?} / {id}");
-
                 if let Some((_, inferred_type)) = elements.iter().find(|(field, _)| field == id) {
                     Ok(TypeInference::new(
                         base.substitutions,
                         inferred_type.clone(),
                     ))
                 } else {
-                    println!("infer_projection(3): asd");
                     Err(TypeError::BadProjection {
                         base: base.inferred_type,
                         index: index.clone(),
                     })
                 }
             }
-            _otherwise => {
-                println!("infer_projection(4)");
-
-                Err(TypeError::BadProjection {
-                    base: base.inferred_type,
-                    index: index.clone(),
-                })
-            }
+            _otherwise => Err(TypeError::BadProjection {
+                base: base.inferred_type,
+                index: index.clone(),
+            }),
         }
     }
 
@@ -530,8 +515,7 @@ impl TypingContext {
         let predicate_type = self.infer_type(predicate)?;
         let predicate = predicate_type
             .inferred_type
-            .unify(&Type::Constant(BaseType::Bool), annotation)
-            .inspect_err(|e| println!("infer_if_expression: predicate unify error: {e}"))?;
+            .unify(&Type::Constant(BaseType::Bool), annotation)?;
 
         let engine = self.with_applied_substitutions(&predicate_type.substitutions.clone());
         let consequent = engine.infer_type(consequent)?;
@@ -540,8 +524,7 @@ impl TypingContext {
         let branch = consequent
             .inferred_type
             .clone() //wtf
-            .unify(&alternate.inferred_type, annotation)
-            .inspect_err(|e| println!("infer_if_expression: branch unify error: {e}"))?;
+            .unify(&alternate.inferred_type, annotation)?;
 
         let substitutions = predicate
             .compose(predicate_type.substitutions)
