@@ -89,7 +89,7 @@ fn pattern_match_eval_basic_piped_down() {
            |       | otherwise -> 3
            |       | (x, z)    -> z
           "#,
-        Value::Base(Base::Int(2)),
+        Value::Struct(vec![(Identifier::new("main"), Value::Base(Base::Int(2)))]),
     );
 }
 
@@ -100,7 +100,7 @@ fn pattern_match_eval_basic_inline() {
            |  deconstruct 1, 2
            |    into (a, b) -> b | otherwise -> 3 | (x, z) -> z
           "#,
-        Value::Base(Base::Int(2)),
+        Value::Struct(vec![(Identifier::new("main"), Value::Base(Base::Int(2)))]),
     );
 }
 
@@ -211,19 +211,22 @@ fn eval_coproduct_list() {
         r#"|List ::= forall a. Cons a (List a) | Nil
            |main = Cons 1 Nil
            "#,
-        Value::Coproduct {
-            name: TypeName::new("List"),
-            constructor: Identifier::new("Cons"),
-            value: Value::Tuple(vec![
-                Value::Base(Base::Int(1)),
-                Value::Coproduct {
-                    name: TypeName::new("List"),
-                    constructor: Identifier::new("Nil"),
-                    value: Value::Tuple(vec![]).into(),
-                },
-            ])
-            .into(),
-        },
+        Value::Struct(vec![(
+            Identifier::new("main"),
+            Value::Coproduct {
+                name: TypeName::new("List"),
+                constructor: Identifier::new("Cons"),
+                value: Value::Tuple(vec![
+                    Value::Base(Base::Int(1)),
+                    Value::Coproduct {
+                        name: TypeName::new("List"),
+                        constructor: Identifier::new("Nil"),
+                        value: Value::Tuple(vec![]).into(),
+                    },
+                ])
+                .into(),
+            },
+        )]),
     );
 }
 
@@ -234,11 +237,24 @@ fn eval_coproduct_eval() {
            |fail = Fault "hej"
            |main = Return 1
            "#,
-        Value::Coproduct {
-            name: TypeName::new("Eval"),
-            constructor: Identifier::new("Return"),
-            value: Value::Tuple(vec![Value::Base(Base::Int(1))]).into(),
-        },
+        Value::Struct(vec![
+            (
+                Identifier::new("fail"),
+                Value::Coproduct {
+                    name: TypeName::new("Eval"),
+                    constructor: Identifier::new("Fault"),
+                    value: Value::Tuple(vec![Value::Base(Base::Text("hej".to_owned()))]).into(),
+                },
+            ),
+            (
+                Identifier::new("main"),
+                Value::Coproduct {
+                    name: TypeName::new("Eval"),
+                    constructor: Identifier::new("Return"),
+                    value: Value::Tuple(vec![Value::Base(Base::Int(1))]).into(),
+                },
+            ),
+        ]),
     );
 }
 
@@ -461,6 +477,19 @@ fn coproduct_eval() {
     );
 }
 
+#[test]
+fn select_pperator() {
+    // This parses right associative
+    //expr_fixture(
+    //    "Rectangle.bar r.Height r.Width",
+    //    Expression::Literal(ParsingInfo::default(), Constant::Int(1)),
+    //);
+    expr_fixture(
+        "f 1 2",
+        Expression::Literal(ParsingInfo::default(), Constant::Int(1)),
+    );
+}
+
 // Introduce type annotations for top-level types
 // and do checks from there?
 //
@@ -516,6 +545,7 @@ fn listy_mclistface() {
 
 #[test]
 fn multiple_arguments() {
+    // map is $main.map
     eval_fixture(
         r#"|List ::= forall a. Cons a (List a) | Nil
            |
@@ -526,6 +556,6 @@ fn multiple_arguments() {
            |  Cons a (Cons b (Cons c Nil))
            |
            |main = let xs = Cons 1 (map show 2 3 4) in print_endline (show xs)"#,
-        Value::Base(Base::Unit),
+        Value::Struct(vec![(Identifier::new("main"), Value::Base(Base::Unit))]),
     );
 }

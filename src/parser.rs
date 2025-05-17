@@ -644,6 +644,14 @@ fn parse_expression_prefix(tokens: &[Token]) -> ParseResult<Expression<ParsingIn
             Expression::Literal(ParsingInfo::new(*position), literal.clone().into()),
             remains,
         )),
+        // This is satisfied too early in the case of
+        // struct selectors
+        // How about: if lookahead is ., then parse_expression instead
+        // ... but how does that not get caught here again?
+        [T(TT::Identifier(id), position), T(TT::Period, ..), ..] => {
+            let lhs = Expression::Variable(ParsingInfo::new(*position), Identifier::new(id));
+            parse_expression_infix(lhs, &tokens[1..], 0)
+        }
         [T(TT::Identifier(id), position), remains @ ..] => Ok((
             Expression::Variable(ParsingInfo::new(*position), Identifier::new(id)),
             remains,
@@ -1052,11 +1060,16 @@ fn is_expression_terminator(t: &Token) -> bool {
 fn parse_expression_infix(
     lhs: Expression<ParsingInfo>,
     input: &[Token],
-    precedence: usize,
+    context_precedence: usize,
 ) -> ParseResult<Expression<ParsingInfo>> {
     // Operators can be prefigured by Layout::Newline
     // Juxtapositions though? I would have to be able to ask the Expression
     // about where it started
+    println!(
+        "parse_expression_infix: {:?}",
+        if input.len() > 5 { &input[..6] } else { input }
+    );
+
     match input {
         [t, ..] if is_expression_terminator(t) => Ok((lhs, input)),
 
@@ -1079,7 +1092,7 @@ fn parse_expression_infix(
         // <op> <expr>
         [T(op, pos), remains @ ..] if Operator::is_defined(op) => {
             let op = Operator::try_from(op).expect("Failed to decode operator");
-            parse_operator(lhs, input, precedence, &op, remains, *pos)
+            parse_operator(lhs, input, context_precedence, &op, remains, *pos)
         }
 
         // ( <Newline> | <Indent> ) <op> <expr>
@@ -1088,23 +1101,26 @@ fn parse_expression_infix(
             if Operator::is_defined(op) =>
         {
             let op = Operator::try_from(op).expect("Failed to decode operator");
-            parse_operator(lhs, input, precedence, &op, remains, *pos)
+            parse_operator(lhs, input, context_precedence, &op, remains, *pos)
         }
 
         // <expr>
         //     <expr>
         // -- Function application, argument indented
-        [T(TT::Layout(Layout::Indent), ..), remains @ ..] => {
-            parse_juxtaposed(lhs, remains, precedence)
+        [T(TT::Layout(Layout::Indent), ..), remains @ ..]
+            if Operator::Juxtaposition.precedence() > context_precedence =>
+        {
+            parse_juxtaposed(lhs, remains, context_precedence)
         }
 
         // <expr> <expr>
         // -- Function application
         [T(token, ..), lookahead, ..]
             if is_expression_prefix(token)
-                && !matches!(lookahead, T(TT::TypeAscribe | TT::Equals, ..)) =>
+                && !matches!(lookahead, T(TT::TypeAscribe | TT::Equals, ..))
+                && Operator::Juxtaposition.precedence() > context_precedence =>
         {
-            parse_juxtaposed(lhs, input, precedence)
+            parse_juxtaposed(lhs, input, context_precedence)
         }
 
         _otherwise => Ok((lhs, input)),
@@ -1143,18 +1159,20 @@ fn parse_operator<'a>(
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let operator_precedence = operator.precedence();
     if operator_precedence > context_precedence {
-        let (lhs, remains) = if operator == &Operator::Select {
-            parse_select_operator(lhs, remains)?
+        if operator == &Operator::Select {
+            parse_select_operator(lhs, remains)
         } else {
-            parse_operator_default(lhs, operator, remains, position, operator_precedence)?
-        };
+            let (rhs, remains) =
+                parse_operator_default(lhs, operator, remains, position, operator_precedence)?;
 
-        parse_expression_infix(lhs, remains, context_precedence)
+            parse_expression_infix(rhs, remains, context_precedence)
+        }
     } else {
         Ok((lhs, input))
     }
 }
 
+// This needs to get the whole path
 fn parse_select_operator(
     lhs: Expression<ParsingInfo>,
     remains: &[Token],
@@ -1169,6 +1187,8 @@ fn parse_select_operator(
     // A.b.c is: reduce(project(reduce(project(reduce(Var(A)), b), c)))
     //
     // Hmm, so they should all be Projections? But rename Projection into Select with Selector
+
+    //    println!("parse_select_operator: {lhs:?} {:?}", remains);
 
     match lhs {
         Expression::Variable(parsing_info, identifier) => {
@@ -1257,7 +1277,7 @@ fn parse_juxtaposed(
 ) -> ParseResult<Expression<ParsingInfo>> {
     // I wonder if this shouldn't be just parse_expession
     let (rhs, remains) = parse_expression_prefix(tokens)?;
-
+    //
     // parse continuing arguments
     parse_expression_infix(
         Expression::Apply(
@@ -1270,6 +1290,17 @@ fn parse_juxtaposed(
         remains,
         precedence,
     )
+    //    let (rhs, remains) = parse_expression(tokens, precedence).map_value(|rhs| {
+    //        Expression::Apply(
+    //            ParsingInfo::new(*lhs.position()),
+    //            Apply {
+    //                function: lhs.into(),
+    //                argument: rhs.into(),
+    //            },
+    //        )
+    //    })?;
+    //
+    //    parse_expression_infix(rhs, remains, precedence)
 }
 
 fn parse_sequence(

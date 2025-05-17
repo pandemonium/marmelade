@@ -419,6 +419,8 @@ pub enum Operator {
     Xor,
 
     Not,
+
+    Juxtaposition,
 }
 
 impl Operator {
@@ -454,7 +456,9 @@ impl Operator {
 
     pub fn precedence(&self) -> usize {
         match self {
-            Self::Select => 17,
+            Self::Select => 26,
+            Self::Juxtaposition => 25,
+
             Self::Times | Self::Division | Self::Modulo => 16,
             Self::Plus | Self::Minus => 15,
 
@@ -494,6 +498,8 @@ impl Operator {
             Self::Or => "or",
             Self::Xor => "xor",
             Self::Not => "not",
+
+            Self::Juxtaposition => "ap",
         }
     }
 }
@@ -521,6 +527,8 @@ impl fmt::Display for Operator {
             Self::Or => write!(f, "or"),
             Self::Xor => write!(f, "xor"),
             Self::Not => write!(f, "not"),
+
+            Self::Juxtaposition => write!(f, "ap"),
         }
     }
 }

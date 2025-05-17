@@ -123,9 +123,9 @@ impl Interpreter {
         self.inject_modules(&annotation, &mut main, &mut typing_context)?;
         self.resolve_names(&mut main)?;
 
-        for decl in &main.declarations {
-            println!("load_compilation_unit: {}", decl);
-        }
+        //        for decl in &main.declarations {
+        //            println!("load_compilation_unit: {}", decl);
+        //        }
 
         let type_checker = TypeChecker::new(typing_context);
         ModuleResolver::initialize(&main, self.prelude)?
