@@ -41,8 +41,6 @@ where
     }
 
     pub fn type_check(self, mut type_checker: TypeChecker) -> Resolved<Self> {
-        //        What does the DependencyGraph look like?
-
         for id in self.dependency_graph.compute_resolution_order() {
             if let Some(declaration) = self.module.find_value_declaration(id).cloned() {
                 println!("type_check: `{id}` ...");
@@ -55,7 +53,6 @@ where
     }
 
     pub fn into_environment(mut self) -> Resolved<Environment> {
-        // How does this deal with modules?
         for id in self.dependency_graph.compute_resolution_order() {
             self.resolve_declaration(id)?
         }
@@ -78,7 +75,6 @@ where
         declarator: &ValueDeclarator<A>,
     ) -> Resolved<()> {
         // That this has to clone the Expressions is not ideal
-
         let env = &mut self.resolved;
         let value = declarator.expression.clone().reduce(env)?;
         env.insert_binding(id.clone(), value);

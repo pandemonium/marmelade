@@ -4,10 +4,15 @@ Rectangle ::=
     Spoon  : Text
   }
   where
-    bar :: Int -> Int -> Int = lambda x. lambda y. x * y
+    bar :: Int -> Int -> Int = lambda x y. x * y
 
-main :: Int =
+Option ::= forall a. Some a | None
+
+foo :: Rectangle -> Int =
+  lambda r. r.Width
+
+main :: Option Int =
   let r =
     { Width: 10; Height: 20; Spoon: "Hi, mom" }
   in
-    Rectangle.bar r.Height r.Width
+    Some (Rectangle.bar r.Width r.Height)

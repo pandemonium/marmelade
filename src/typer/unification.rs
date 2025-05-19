@@ -106,15 +106,11 @@ where
                 Ok(constructor.compose(at))
             }
             (lhs, rhs) if lhs == rhs => Ok(Substitutions::default()),
-            (lhs, rhs) => {
-                panic!("{lhs} != {rhs}");
-
-                Err(TypeError::UnifyImpossible {
-                    lhs: lhs.clone(),
-                    rhs: rhs.clone(),
-                    position: { *self.annotation.info().location() },
-                })
-            }
+            (lhs, rhs) => Err(TypeError::UnifyImpossible {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                position: { *self.annotation.info().location() },
+            }),
         }
     }
 

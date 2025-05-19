@@ -7,9 +7,14 @@
 [ ] modules
   [ ] associated modules
     [X] for structs
-    [ ] for coproducts
+    [X] for coproducts
     [ ] for type aliases
   [ ] plain old
 
 # Parser
 [ ] Struct make_implementation_module for smart constructors and smart projectors
+
+# Namer
+[X] Delete the module struct stuff
+[X] Prepend declarations with the module path of its declaring module
+[X] Prepend free variables with name of module declaring the declaration

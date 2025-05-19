@@ -1065,10 +1065,6 @@ fn parse_expression_infix(
     // Operators can be prefigured by Layout::Newline
     // Juxtapositions though? I would have to be able to ask the Expression
     // about where it started
-    println!(
-        "parse_expression_infix: {:?}",
-        if input.len() > 5 { &input[..6] } else { input }
-    );
 
     match input {
         [t, ..] if is_expression_terminator(t) => Ok((lhs, input)),
@@ -1290,17 +1286,6 @@ fn parse_juxtaposed(
         remains,
         precedence,
     )
-    //    let (rhs, remains) = parse_expression(tokens, precedence).map_value(|rhs| {
-    //        Expression::Apply(
-    //            ParsingInfo::new(*lhs.position()),
-    //            Apply {
-    //                function: lhs.into(),
-    //                argument: rhs.into(),
-    //            },
-    //        )
-    //    })?;
-    //
-    //    parse_expression_infix(rhs, remains, precedence)
 }
 
 fn parse_sequence(

@@ -1,8 +1,11 @@
 use std::{collections::HashSet, fmt};
 
-use crate::ast::{
-    Apply, Binding, ControlFlow, DeconstructInto, Expression, Identifier, Inject, Lambda,
-    MatchClause, Product, Project, SelfReferential, Sequence,
+use crate::{
+    ast::{
+        Apply, Binding, ControlFlow, DeconstructInto, Expression, Identifier, Inject, Lambda,
+        MatchClause, Product, Project, SelfReferential, Sequence,
+    },
+    interpreter::ModuleNames,
 };
 
 use super::{ProductIndex, TypeAscription};
@@ -38,13 +41,11 @@ where
     A: Copy + fmt::Debug,
 {
     fn into_projection_tree(annotation: &A, name: Identifier) -> Expression<A> {
-        let tree = Self::make_projection_tree(
+        Self::make_projection_tree(
             annotation,
             Expression::Variable(*annotation, name.head().clone()),
             &name.components()[1..],
-        );
-
-        tree
+        )
     }
 
     fn make_projection_tree(annotation: &A, head: Expression<A>, tail: &[&str]) -> Expression<A> {
@@ -59,55 +60,27 @@ where
         })
     }
 
-    fn into_module_path(
-        annotation: &A,
-        name: Identifier,
-        module_map: &HashSet<Identifier>,
-    ) -> Expression<A> {
-        let path = name.components();
-        let module_base_expr = (1..path.len())
-            // This is not super efficient -- fix at some point
-            .find_map(|prefix_length| {
-                Identifier::try_from_components(&path[0..prefix_length]).and_then(|prefix| {
-                    module_map
-                        .contains(&prefix)
-                        .then_some((prefix, &path[prefix_length..]))
-                })
-            });
-
-        if let Some((base, index)) = module_base_expr {
-            Self::make_projection_tree(annotation, Expression::Variable(*annotation, base), index)
-        } else {
-            Expression::Variable(*annotation, name)
-        }
-    }
-
-    // Needs to take into account _where_ the identifier is.
-    fn rewrite_identifiers(
-        self,
-        bound: &mut HashSet<Identifier>,
-        module_map: &HashSet<Identifier>,
-    ) -> Expression<A> {
+    // This and the other rewrite-function, surely a common traverser can be extracted out of it
+    pub fn rewrite_identifier_paths(self, bound: &mut HashSet<Identifier>) -> Self {
         match self {
-            Expression::Variable(annotation, name) => {
+            Self::Variable(annotation, name) => {
                 if bound.contains(name.head()) {
-                    Self::into_projection_tree(&annotation, name)
+                    Self::into_projection_tree(&annotation, name.clone())
                 } else {
-                    Self::into_module_path(&annotation, name, module_map)
+                    Self::Variable(annotation, name)
                 }
             }
-            Expression::Lambda(annotation, Lambda { parameter, body }) => {
+            Self::Lambda(annotation, Lambda { parameter, body }) => {
                 bound.insert(parameter.name.clone());
-                let body = body.rewrite_identifiers(bound, module_map);
-                Expression::Lambda(
+                Self::Lambda(
                     annotation,
                     Lambda {
                         parameter,
-                        body: body.into(),
+                        body: body.rewrite_identifier_paths(bound).into(),
                     },
                 )
             }
-            Expression::SelfReferential(
+            Self::SelfReferential(
                 annotation,
                 SelfReferential {
                     name,
@@ -117,76 +90,65 @@ where
             ) => {
                 bound.insert(parameter.name.clone());
                 bound.insert(name.clone());
-                let body = body.rewrite_identifiers(bound, module_map);
-                Expression::SelfReferential(
+                Self::SelfReferential(
                     annotation,
                     SelfReferential {
                         name,
                         parameter,
-                        body: body.into(),
+                        body: body.rewrite_identifier_paths(bound).into(),
                     },
                 )
             }
-            Expression::Apply(annotation, Apply { function, argument }) => {
-                let function = function.rewrite_identifiers(bound, module_map);
-                let argument = argument.rewrite_identifiers(bound, module_map);
-                Expression::Apply(
-                    annotation,
-                    Apply {
-                        function: function.into(),
-                        argument: argument.into(),
-                    },
-                )
-            }
-            Expression::Inject(
+            Self::Apply(annotation, Apply { function, argument }) => Self::Apply(
+                annotation,
+                Apply {
+                    function: function.rewrite_identifier_paths(bound).into(),
+                    argument: argument.rewrite_identifier_paths(bound).into(),
+                },
+            ),
+            Self::Inject(
                 annotation,
                 Inject {
                     name,
                     constructor,
                     argument,
                 },
-            ) => {
-                let argument = argument.rewrite_identifiers(bound, module_map);
-                Expression::Inject(
-                    annotation,
-                    Inject {
-                        name,
-                        constructor,
-                        argument: argument.into(),
-                    },
-                )
-            }
-            Expression::Product(annotation, Product::Tuple(expressions)) => Expression::Product(
+            ) => Self::Inject(
+                annotation,
+                Inject {
+                    name,
+                    constructor,
+                    argument: argument.rewrite_identifier_paths(bound).into(),
+                },
+            ),
+            Self::Product(annotation, Product::Tuple(expressions)) => Self::Product(
                 annotation,
                 Product::Tuple(
                     expressions
                         .into_iter()
-                        .map(|expr| expr.rewrite_identifiers(bound, module_map))
+                        .map(|expr| expr.rewrite_identifier_paths(bound))
                         .collect(),
                 ),
             ),
-            Expression::Product(annotation, Product::Struct(bindings)) => Expression::Product(
+            Self::Product(annotation, Product::Struct(bindings)) => Self::Product(
                 annotation,
                 Product::Struct(
                     bindings
                         .into_iter()
                         .map(|(identifier, expr)| {
-                            (identifier, expr.rewrite_identifiers(bound, module_map))
+                            (identifier, expr.rewrite_identifier_paths(bound))
                         })
                         .collect(),
                 ),
             ),
-            Expression::Project(annotation, Project { base, index }) => {
-                let base = base.rewrite_identifiers(bound, module_map);
-                Expression::Project(
-                    annotation,
-                    Project {
-                        base: base.into(),
-                        index,
-                    },
-                )
-            }
-            Expression::Binding(
+            Self::Project(annotation, Project { base, index }) => Self::Project(
+                annotation,
+                Project {
+                    base: base.rewrite_identifier_paths(bound).into(),
+                    index,
+                },
+            ),
+            Self::Binding(
                 annotation,
                 Binding {
                     binder,
@@ -194,104 +156,274 @@ where
                     body,
                 },
             ) => {
-                let bound_expr = bound_expr.rewrite_identifiers(bound, module_map);
                 bound.insert(binder.clone());
-                let body = body.rewrite_identifiers(bound, module_map);
-
-                Expression::Binding(
+                Self::Binding(
                     annotation,
                     Binding {
                         binder,
-                        bound: bound_expr.into(),
-                        body: body.into(),
+                        bound: bound_expr.rewrite_identifier_paths(bound).into(),
+                        body: body.rewrite_identifier_paths(bound).into(),
                     },
                 )
             }
-            Expression::Sequence(annotation, Sequence { this, and_then }) => {
-                let this = this.rewrite_identifiers(bound, module_map);
-                let and_then = and_then.rewrite_identifiers(bound, module_map);
-                Expression::Sequence(
-                    annotation,
-                    Sequence {
-                        this: this.into(),
-                        and_then: and_then.into(),
-                    },
-                )
-            }
-            Expression::ControlFlow(
+            Self::Sequence(annotation, Sequence { this, and_then }) => Self::Sequence(
+                annotation,
+                Sequence {
+                    this: this.rewrite_identifier_paths(bound).into(),
+                    and_then: and_then.rewrite_identifier_paths(bound).into(),
+                },
+            ),
+            Self::ControlFlow(
                 annotation,
                 ControlFlow::If {
                     predicate,
                     consequent,
                     alternate,
                 },
-            ) => {
-                let predicate = predicate.rewrite_identifiers(bound, module_map);
-                let consequent = consequent.rewrite_identifiers(bound, module_map);
-                let alternate = alternate.rewrite_identifiers(bound, module_map);
-
-                Expression::ControlFlow(
-                    annotation,
-                    ControlFlow::If {
-                        predicate: predicate.into(),
-                        consequent: consequent.into(),
-                        alternate: alternate.into(),
-                    },
-                )
-            }
-            Expression::DeconstructInto(
+            ) => Self::ControlFlow(
+                annotation,
+                ControlFlow::If {
+                    predicate: predicate.rewrite_identifier_paths(bound).into(),
+                    consequent: consequent.rewrite_identifier_paths(bound).into(),
+                    alternate: alternate.rewrite_identifier_paths(bound).into(),
+                },
+            ),
+            Self::DeconstructInto(
                 annotation,
                 DeconstructInto {
                     scrutinee,
                     match_clauses,
                 },
-            ) => {
-                let scrutinee = scrutinee.rewrite_identifiers(bound, module_map);
-                Expression::DeconstructInto(
-                    annotation,
-                    DeconstructInto {
-                        scrutinee: scrutinee.into(),
-                        match_clauses: match_clauses
-                            .into_iter()
-                            .map(|clause| {
-                                bound.extend(
-                                    clause
-                                        .pattern
-                                        .bindings()
-                                        .into_iter()
-                                        .cloned()
-                                        .collect::<Vec<_>>(),
-                                );
-                                let consequent =
-                                    clause.consequent.rewrite_identifiers(bound, module_map);
-
-                                MatchClause {
-                                    pattern: clause.pattern,
-                                    consequent: consequent.into(),
-                                }
-                            })
-                            .collect(),
-                    },
-                )
-            }
-            Expression::TypeAscription(
+            ) => Self::DeconstructInto(
+                annotation,
+                DeconstructInto {
+                    scrutinee: scrutinee.rewrite_identifier_paths(bound).into(),
+                    match_clauses: match_clauses
+                        .into_iter()
+                        .map(|clause| {
+                            bound.extend(
+                                clause
+                                    .pattern
+                                    .bindings()
+                                    .into_iter()
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
+                            );
+                            MatchClause {
+                                pattern: clause.pattern,
+                                consequent: clause
+                                    .consequent
+                                    .rewrite_identifier_paths(bound)
+                                    .into(),
+                            }
+                        })
+                        .collect(),
+                },
+            ),
+            Self::TypeAscription(
                 annotation,
                 TypeAscription {
                     type_signature,
                     underlying,
                 },
-            ) => Expression::TypeAscription(
+            ) => Self::TypeAscription(
                 annotation,
                 TypeAscription {
                     type_signature,
-                    underlying: underlying.rewrite_identifiers(bound, module_map).into(),
+                    underlying: underlying.rewrite_identifier_paths(bound).into(),
                 },
             ),
             otherwise => otherwise,
         }
     }
 
-    pub fn resolve_names<'a>(self, module_map: &HashSet<Identifier>) -> Self {
-        self.rewrite_identifiers(&mut HashSet::default(), module_map)
+    pub fn rewrite_local_access<'a>(
+        self,
+        bound: &mut HashSet<Identifier>,
+        module: &ModuleNames,
+    ) -> Expression<A> {
+        match self {
+            Self::Variable(annotation, name) => {
+                if !bound.contains(&name) && module.defines(&name) {
+                    Self::Variable(annotation, name.prefixed_with(module.name().clone()))
+                } else {
+                    Self::Variable(annotation, name)
+                }
+            }
+            Self::Lambda(annotation, Lambda { parameter, body }) => {
+                bound.insert(parameter.name.clone());
+                Self::Lambda(
+                    annotation,
+                    Lambda {
+                        parameter,
+                        body: body.rewrite_local_access(bound, module).into(),
+                    },
+                )
+            }
+            Self::SelfReferential(
+                annotation,
+                SelfReferential {
+                    name,
+                    parameter,
+                    body,
+                },
+            ) => {
+                bound.insert(parameter.name.clone());
+                bound.insert(name.clone());
+                Self::SelfReferential(
+                    annotation,
+                    SelfReferential {
+                        name,
+                        parameter,
+                        body: body.rewrite_local_access(bound, module).into(),
+                    },
+                )
+            }
+            Self::Apply(annotation, Apply { function, argument }) => Self::Apply(
+                annotation,
+                Apply {
+                    function: function.rewrite_local_access(bound, module).into(),
+                    argument: argument.rewrite_local_access(bound, module).into(),
+                },
+            ),
+            Self::Inject(
+                annotation,
+                Inject {
+                    name,
+                    constructor,
+                    argument,
+                },
+            ) => Self::Inject(
+                annotation,
+                Inject {
+                    name,
+                    constructor,
+                    argument: argument.rewrite_local_access(bound, module).into(),
+                },
+            ),
+            Self::Product(annotation, Product::Tuple(expressions)) => Self::Product(
+                annotation,
+                Product::Tuple(
+                    expressions
+                        .into_iter()
+                        .map(|expr| expr.rewrite_local_access(bound, module))
+                        .collect(),
+                ),
+            ),
+            Self::Product(annotation, Product::Struct(bindings)) => Self::Product(
+                annotation,
+                Product::Struct(
+                    bindings
+                        .into_iter()
+                        .map(|(identifier, expr)| {
+                            (identifier, expr.rewrite_local_access(bound, module))
+                        })
+                        .collect(),
+                ),
+            ),
+            Self::Project(annotation, Project { base, index }) => Self::Project(
+                annotation,
+                Project {
+                    base: base.rewrite_local_access(bound, module).into(),
+                    index,
+                },
+            ),
+            Self::Binding(
+                annotation,
+                Binding {
+                    binder,
+                    bound: bound_expr,
+                    body,
+                },
+            ) => {
+                bound.insert(binder.clone());
+                Self::Binding(
+                    annotation,
+                    Binding {
+                        binder,
+                        bound: bound_expr.rewrite_local_access(bound, module).into(),
+                        body: body.rewrite_local_access(bound, module).into(),
+                    },
+                )
+            }
+            Self::Sequence(annotation, Sequence { this, and_then }) => Self::Sequence(
+                annotation,
+                Sequence {
+                    this: this.rewrite_local_access(bound, module).into(),
+                    and_then: and_then.rewrite_local_access(bound, module).into(),
+                },
+            ),
+            Self::ControlFlow(
+                annotation,
+                ControlFlow::If {
+                    predicate,
+                    consequent,
+                    alternate,
+                },
+            ) => Self::ControlFlow(
+                annotation,
+                ControlFlow::If {
+                    predicate: predicate.rewrite_local_access(bound, module).into(),
+                    consequent: consequent.rewrite_local_access(bound, module).into(),
+                    alternate: alternate.rewrite_local_access(bound, module).into(),
+                },
+            ),
+            Self::DeconstructInto(
+                annotation,
+                DeconstructInto {
+                    scrutinee,
+                    match_clauses,
+                },
+            ) => Self::DeconstructInto(
+                annotation,
+                DeconstructInto {
+                    scrutinee: scrutinee.rewrite_local_access(bound, module).into(),
+                    match_clauses: match_clauses
+                        .into_iter()
+                        .map(|clause| {
+                            bound.extend(
+                                clause
+                                    .pattern
+                                    .bindings()
+                                    .into_iter()
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
+                            );
+                            MatchClause {
+                                pattern: clause.pattern,
+                                consequent: clause
+                                    .consequent
+                                    .rewrite_local_access(bound, module)
+                                    .into(),
+                            }
+                        })
+                        .collect(),
+                },
+            ),
+            Self::TypeAscription(
+                annotation,
+                TypeAscription {
+                    type_signature,
+                    underlying,
+                },
+            ) => Self::TypeAscription(
+                annotation,
+                TypeAscription {
+                    type_signature,
+                    underlying: underlying.rewrite_local_access(bound, module).into(),
+                },
+            ),
+            otherwise => otherwise,
+        }
+    }
+
+    pub fn resolve_names<'a>(self) -> Self {
+        self.rewrite_identifier_paths(&mut HashSet::default())
+    }
+
+    pub fn resolve_module_local_names<'a>(self, module: &ModuleNames) -> Self {
+        // What should this product? Identifier::Select because the next rewrite-step
+        // sorts it?
+        self.rewrite_local_access(&mut HashSet::default(), module)
     }
 }

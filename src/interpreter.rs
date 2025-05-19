@@ -2,15 +2,13 @@ use std::collections::{hash_map, HashSet};
 use std::{any::Any, cell::RefCell, collections::HashMap, fmt, rc::Rc};
 use thiserror::Error;
 
-use crate::ast::TypeAscription;
 use crate::typer::EmptyAnnotation;
 use crate::{
     ast::{
         Apply, Binding, CompilationUnit, Constant, ControlFlow, Coproduct, Declaration,
         DeconstructInto, Expression, Identifier, ImportModule, Inject, Lambda, MatchClause,
         ModuleDeclarator, Pattern, Product, ProductIndex, Project, SelfReferential, Sequence,
-        Struct, StructPattern, TypeDeclaration, TypeDeclarator, TypeName, ValueDeclaration,
-        ValueDeclarator,
+        Struct, StructPattern, TypeDeclaration, TypeDeclarator, TypeName,
     },
     bridge::Bridge,
     interpreter::module::ModuleResolver,
@@ -33,7 +31,7 @@ pub enum ResolutionError {
     #[error("Unsatisfied dependencies")]
     UnsatisfiedDependencies,
 
-    #[error("Runtime error initialzing the module {0}")]
+    #[error("Runtime error initializing the module {0}")]
     InitializationError(#[from] RuntimeError),
 
     #[error("Dependency resolution failed")]
@@ -63,6 +61,21 @@ impl<'a, A> ModuleMap<'a, A> {
     pub fn names(&self) -> HashSet<Identifier> {
         let Self(map) = self;
         map.keys().cloned().collect()
+    }
+}
+
+pub struct ModuleNames {
+    pub binder: Identifier,
+    pub definitions: HashSet<Identifier>,
+}
+
+impl ModuleNames {
+    pub fn name(&self) -> &Identifier {
+        &self.binder
+    }
+
+    pub fn defines(&self, name: &Identifier) -> bool {
+        self.definitions.contains(name)
     }
 }
 
@@ -101,7 +114,9 @@ impl Interpreter {
         let environment = self.load_compilation_unit(program, typing_context)?;
 
         // How does it call $main.main?
-        match environment.lookup(&Identifier::new("$main"))? {
+        match environment
+            .lookup(&Identifier::new("main").prefixed_with(Identifier::new("$main")))?
+        {
             Value::Closure { .. } => todo!(),
             Value::Bridge { .. } => todo!(),
             scalar => Ok(scalar.clone()),
@@ -121,7 +136,6 @@ impl Interpreter {
     {
         self.inject_prelude(&annotation, &mut main);
         self.inject_modules(&annotation, &mut main, &mut typing_context)?;
-        self.resolve_names(&mut main)?;
 
         //        for decl in &main.declarations {
         //            println!("load_compilation_unit: {}", decl);
@@ -133,47 +147,7 @@ impl Interpreter {
             .into_environment()
     }
 
-    fn resolve_names<A>(&self, main: &mut ModuleDeclarator<A>) -> Resolved<()>
-    where
-        A: Copy + Parsed + fmt::Debug + fmt::Display,
-    {
-        let module_map = Self::discover_modules(&main).names();
-
-        main.declarations = main.declarations.drain(..).fold(vec![], |mut acc, decl| {
-            match decl {
-                Declaration::Value(annotation, declaration) => {
-                    let decl = Declaration::Value(
-                        annotation,
-                        declaration
-                            .clone()
-                            .map_expression(|expr| expr.resolve_names(&module_map)),
-                    );
-
-                    acc.push(decl);
-                }
-                Declaration::Module(_, module) => {
-                    for decl in module.declarations {
-                        let value_decl = if let Declaration::Value(annotation, declaration) = decl {
-                            Declaration::Value(
-                                annotation,
-                                declaration.map_expression(|expr| expr.resolve_names(&module_map)),
-                            )
-                        } else {
-                            decl
-                        };
-
-                        acc.push(value_decl);
-                    }
-                }
-                otherwise => acc.push(otherwise),
-            };
-
-            acc
-        });
-
-        Ok(())
-    }
-
+    // If this owns the main module instead, it could probably be made more efficient?
     fn inject_modules<'a, A>(
         &self,
         annotation: &A,
@@ -183,20 +157,49 @@ impl Interpreter {
     where
         A: Copy + Parsed + fmt::Debug + fmt::Display,
     {
-        let module_map = Self::discover_modules(&main);
-
         let mut injections = vec![];
+
+        let module_map = Self::get_module_map(&main);
+
         for (name, module) in &module_map {
-            let initializer =
-                self.inject_module_structures(annotation, name.clone(), &module, typing_context);
+            // Could I re-write ModuleMap in terms of this thing instead?
+            let module_names = ModuleNames {
+                binder: name.clone(),
+                definitions: module
+                    .declarations
+                    .iter()
+                    .filter_map(|decl| match decl {
+                        Declaration::Value(_, decl) => Some(decl.binder.clone()),
+                        _otherwise => None,
+                    })
+                    .collect(),
+            };
+
+            injections.extend(
+                module
+                    .declarations
+                    .clone()
+                    .drain(..)
+                    .map(|decl| match decl {
+                        Declaration::Value(annotation, decl) => Declaration::Value(
+                            annotation,
+                            decl.prefixed_with(name.clone()).map_expression(|expr| {
+                                expr.resolve_module_local_names(&module_names)
+                                    .resolve_names()
+                            }),
+                        ),
+                        otherwise => otherwise,
+                    })
+                    .collect::<Vec<_>>(),
+            );
 
             let declarations =
                 self.inject_module_types_and_synthetics(annotation, module, typing_context)?;
 
-            injections.push(initializer);
             injections.extend(declarations);
         }
 
+        // Annoying that these two cannot be combined
         main.declarations
             .retain(|decl| !matches!(decl, Declaration::Value(..)));
 
@@ -205,57 +208,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn inject_module_structures<'a, A>(
-        &self,
-        parsing_info: &A,
-        module_binder: Identifier,
-        module: &'a ModuleDeclarator<A>,
-        _typing_context: &mut TypingContext,
-    ) -> Declaration<A>
-    where
-        A: Copy + Parsed + fmt::Debug + fmt::Display,
-    {
-        let mut member_declarations = vec![];
-
-        for decl in &module.declarations {
-            match decl {
-                Declaration::Value(_, decl) => {
-                    member_declarations.push((
-                        decl.binder.clone(),
-                        decl.type_signature.clone().map_or(
-                            decl.declarator.expression.clone(),
-                            |type_signature| {
-                                Expression::TypeAscription(
-                                    *parsing_info,
-                                    TypeAscription {
-                                        type_signature,
-                                        underlying: decl.declarator.expression.clone().into(),
-                                    },
-                                )
-                            },
-                        ),
-                    ));
-                }
-                _otherwise => (),
-            }
-        }
-
-        Declaration::Value(
-            *parsing_info,
-            ValueDeclaration {
-                binder: module_binder,
-                type_signature: None,
-                declarator: ValueDeclarator {
-                    expression: Expression::Product(
-                        *parsing_info,
-                        Product::Struct(member_declarations),
-                    ),
-                },
-            },
-        )
-    }
-
-    fn discover_modules<'a, A>(module: &'a ModuleDeclarator<A>) -> ModuleMap<'a, A> {
+    fn get_module_map<'a, A>(module: &'a ModuleDeclarator<A>) -> ModuleMap<'a, A> {
         let mut modules = vec![(module.name.clone(), module)];
 
         for decl in &module.declarations {
@@ -375,7 +328,9 @@ impl Interpreter {
 
         typing_context.bind(coproduct.name.into(), coproduct.declared_type);
 
+        // the names must be prefigured by the name of the declaring module
         for constructor in coproduct.constructors {
+            //            /constructor.prefixed_with()
             injections.push(Declaration::Value(parsing_info.clone(), constructor));
         }
 
