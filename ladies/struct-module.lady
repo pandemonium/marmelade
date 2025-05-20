@@ -6,13 +6,104 @@ Rectangle ::=
   where
     bar :: Int -> Int -> Int = lambda x y. x * y
 
-Option ::= forall a. Some a | None
+Perhaps ::= ∀a. This a | Nope
 
-foo :: Rectangle -> Int =
-  lambda r. r.Width
+Option ::= ∀a. Some a | None
 
-main :: Option Int =
+List ::= ∀a. Cons a (List a) | Nil
+
+map = λf xs.
+  let step = λxs x. Cons (f x) xs
+  in fold_right Nil step xs
+
+fold_left = λacc f xs.
+  deconstruct xs into
+    Cons x xs -> fold_left (f acc x) f xs
+  | Nil       -> acc
+
+fold_right = λacc f xs.
+  deconstruct xs into
+    Cons x xs -> f (fold_right acc f xs) x
+  | Nil       -> acc
+
+length :: forall a. List a -> Int = fold_left 0 λacc x. 1 + acc
+
+foo :: Rectangle -> Int = lambda r.
+  if r.Width > 0
+    then r.Width * 20
+    else r.Height - 1
+
+print_scentific = lambda x.
+  let the_thing = (x + 68) * 840 / x in
+  let text = show the_thing
+  in print_endline text
+
+compute_and_print :: Int -> Unit = λfactor.
+  print_scentific 1
+
+computation :: Int -> Int =
+  λfactor.
+    let the_thing = (factor + 68) in 840 / factor
+
+core_business_logic :: Int -> Int -> Int = lambda p q.
+  let the_thing = (1 + p)
+  in q / 2
+
+factorial = lambda x.
+  if x = 0
+    then 1
+    else x * factorial (x - 1)
+
+fibonacci :: Int -> Int = λn.
+  if n = 0 then 1
+  else if n = 1 then 1
+  else fibonacci (n - 1) + fibonacci (n - 2)
+
+clamp = lambda from to.
+  fibonacci from, fibonacci to
+
+frobnication =
+  deconstruct clamp 3 5 into
+    (p, q) -> p * q
+
+get_order_number = This 66
+
+Result ::= ∀a e. Return a | Fault e
+
+Artithemtic_Error ::= Division_by_Zero | NaN
+
+divide =
+  lambda dividend divisor.
+    if divisor = 0
+      then Fault Division_by_Zero
+      else Return (dividend - divisor)
+
+
+Dollars ::=
+  { The_Good : Int
+    The_Bad  : Text
+    The_Ugly : Perhaps Int
+  }
+
+make_one = lambda good bad.
+  { The_Good: good; The_Bad: bad; The_Ugly: Nope }
+
+make_the_other = lambda good bad ugly.
+  { The_Good: good; The_Bad: bad; The_Ugly: This ugly }
+
+dollars =
+  deconstruct make_one 1 "Sylvester" into
+    otherwise -> 10
+  | { The_Good: good; The_Bad: bad; The_Ugly: Nope } -> 0
+
+double = map (lambda x. x * 2)
+
+dollars_from_sek = lambda sek. 11 * sek
+
+dollar_map = map dollars_from_sek
+
+main =
   let r =
     { Width: 10; Height: 20; Spoon: "Hi, mom" }
   in
-    Some (Rectangle.bar r.Width r.Height)
+    1

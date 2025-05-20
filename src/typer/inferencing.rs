@@ -206,7 +206,7 @@ impl TypingContext {
             }
         }
 
-        let residual = matrix.residual();
+        let residual = matrix.residual(&ctx)?;
         if !residual.is_nothing() {
             Err(TypeError::IncompleteDeconstruction {
                 at: *parsing_info.info().location(),

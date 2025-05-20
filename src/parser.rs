@@ -890,7 +890,7 @@ fn parse_constructor_pattern<'a>(
 fn parse_pattern_list(mut remains: &[Token]) -> ParseResult<Vec<Pattern<ParsingInfo>>> {
     let mut boofer = vec![];
 
-    while !matches!(remains, [T(TT::Arrow, ..), ..]) {
+    while !matches!(remains, [T(TT::Arrow | TT::RightBrace, ..), ..]) {
         let (pattern, remains1) = parse_pattern(remains)?;
         boofer.push(pattern);
         remains = remains1;

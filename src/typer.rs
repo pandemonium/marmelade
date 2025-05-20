@@ -206,6 +206,10 @@ impl Type {
         matches!(self, Self::Arrow(..))
     }
 
+    pub fn is_abbreviated(&self) -> bool {
+        matches!(self, Self::Named(..) | Self::Apply(..))
+    }
+
     pub fn description(&self) -> String {
         match self {
             Self::Parameter(tp) => format!("Parameter({tp})"),

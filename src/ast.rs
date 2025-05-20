@@ -1228,12 +1228,12 @@ impl PatternMatrix {
         !pattern.is_covered_by(&self.matched_space)
     }
 
-    pub fn is_exhaustive(&self) -> bool {
-        self.residual() == DomainExpression::Nothing
-    }
+    //    pub fn _is_exhaustive(&self) -> bool {
+    //        self.residual() == DomainExpression::Nothing
+    //    }
 
-    pub fn residual(&self) -> DomainExpression {
-        self.domain.eliminate(&self.matched_space)
+    pub fn residual(&self, ctx: &TypingContext) -> Typing<DomainExpression> {
+        self.domain.eliminate(&self.matched_space, ctx)
     }
 }
 
@@ -1471,28 +1471,37 @@ impl DomainExpression {
         };
     }
 
-    fn eliminate(&self, rhs: &Self) -> Self {
+    fn eliminate(&self, rhs: &Self, ctx: &TypingContext) -> Typing<Self> {
         match (self, rhs) {
-            (_lhs, Self::Whole(..)) => Self::Nothing,
+            (_lhs, Self::Whole(..)) => Ok(Self::Nothing),
 
-            (Self::Whole(..), rhs) => Self::Subtraction {
-                lhs: self.clone().into(),
-                rhs: rhs.clone().into(),
-            },
+            (Self::Whole(lhs), rhs) => {
+                if lhs.is_abbreviated() {
+                    let lhs = lhs.clone().expand_type(ctx)?;
+                    Self::from_type(lhs).eliminate(rhs, ctx)
+                } else {
+                    Ok(Self::Subtraction {
+                        lhs: self.clone().into(),
+                        rhs: rhs.clone().into(),
+                    })
+                }
+            }
 
-            (Self::Coproduct(lhs), Self::Coproduct(rhs)) => self.eliminate_constructors(lhs, rhs),
+            (Self::Coproduct(lhs), Self::Coproduct(rhs)) => {
+                self.eliminate_constructors(lhs, rhs, ctx)
+            }
 
             (Self::Tuple(lhs), Self::Tuple(rhs)) => {
                 let elements = lhs
                     .iter()
                     .zip(rhs.iter())
-                    .map(|(lhs, rhs)| lhs.eliminate(rhs))
-                    .collect::<Vec<_>>();
+                    .map(|(lhs, rhs)| lhs.eliminate(rhs, ctx))
+                    .collect::<Typing<Vec<_>>>()?;
 
                 if elements.iter().all(|e| e.is_nothing()) {
-                    Self::Nothing
+                    Ok(Self::Nothing)
                 } else {
-                    Self::Tuple(elements)
+                    Ok(Self::Tuple(elements))
                 }
             }
 
@@ -1502,17 +1511,15 @@ impl DomainExpression {
                 let fields = lhs
                     .iter()
                     .map(|(field, lhs)| {
-                        (
-                            field.clone(),
-                            lhs.eliminate(&rhs.remove(field).expect("bad pattern")),
-                        )
+                        lhs.eliminate(&rhs.remove(field).expect("bad pattern"), ctx)
+                            .map(|expr| (field.clone(), expr))
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Typing<Vec<_>>>()?;
 
                 if fields.iter().all(|(_, e)| e.is_nothing()) {
-                    Self::Nothing
+                    Ok(Self::Nothing)
                 } else {
-                    Self::Struct(fields)
+                    Ok(Self::Struct(fields))
                 }
             }
 
@@ -1525,7 +1532,8 @@ impl DomainExpression {
         &self,
         lhs: &[(Identifier, Vec<DomainExpression>)],
         rhs: &[(Identifier, Vec<DomainExpression>)],
-    ) -> DomainExpression {
+        ctx: &TypingContext,
+    ) -> Typing<DomainExpression> {
         let rhs = rhs.iter().cloned().collect::<HashMap<_, _>>();
         let constructors = lhs
             .iter()
@@ -1534,22 +1542,31 @@ impl DomainExpression {
                     let parameters = lhs
                         .iter()
                         .zip(rhs.iter())
-                        .map(|(lhs, rhs)| lhs.eliminate(rhs))
-                        .collect::<Vec<_>>();
-                    parameters
-                        .iter()
-                        .any(|de| !de.is_nothing())
-                        .then_some((constructor.clone(), parameters))
+                        .map(|(lhs, rhs)| lhs.eliminate(rhs, ctx))
+                        .collect::<Typing<Vec<_>>>();
+
+                    let parameters = parameters.map(|parameters| {
+                        parameters
+                            .iter()
+                            .any(|de| !de.is_nothing())
+                            .then_some((constructor.clone(), parameters))
+                    });
+
+                    match parameters {
+                        Ok(Some(x)) => Some(Ok(x)),
+                        Ok(None) => None,
+                        Err(e) => Some(Err(e)),
+                    }
                 } else {
-                    Some((constructor.clone(), lhs.clone()))
+                    Some(Ok((constructor.clone(), lhs.clone())))
                 }
             })
-            .collect::<Vec<(Identifier, Vec<DomainExpression>)>>();
+            .collect::<Typing<Vec<(Identifier, Vec<DomainExpression>)>>>()?;
 
         if constructors.is_empty() {
-            Self::Nothing
+            Ok(Self::Nothing)
         } else {
-            Self::Coproduct(constructors)
+            Ok(Self::Coproduct(constructors))
         }
     }
 

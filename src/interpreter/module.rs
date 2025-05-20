@@ -54,6 +54,7 @@ where
 
     pub fn into_environment(mut self) -> Resolved<Environment> {
         for id in self.dependency_graph.compute_resolution_order() {
+            println!("into_environment: {id}");
             self.resolve_declaration(id)?
         }
         Ok(self.resolved)
