@@ -4,13 +4,13 @@ use std::fmt;
 use crate::{
     ast::{
         Apply, Arrow, Binding, CompilationUnit, Constant, Constructor, ConstructorPattern,
-        ControlFlow, Coproduct, Declaration, DeconstructInto, Expression, Identifier, Lambda,
-        MatchClause, ModuleDeclarator, Parameter, Pattern, Product, ProductIndex, Project,
+        ControlFlow, Coproduct, Declaration, DeconstructInto, Expression, Identifier, Interpolate,
+        Lambda, MatchClause, ModuleDeclarator, Parameter, Pattern, Product, ProductIndex, Project,
         SelfReferential, Sequence, Struct, StructField, StructPattern, TuplePattern, TypeApply,
         TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, TypeSignature,
         UniversalQuantifiers, ValueDeclaration, ValueDeclarator,
     },
-    lexer::{Keyword, Layout, Literal, Operator, SourceLocation, Token, TokenType},
+    lexer::{Interpolation, Keyword, Layout, Literal, Operator, SourceLocation, Token, TokenType},
     typer,
 };
 
@@ -628,43 +628,95 @@ pub fn parse_declaration_phrase(tokens: &[Token]) -> Result<Declaration<ParsingI
     }
 }
 
+//pub fn parse_type_expr_phrase(tokens: &[Token]) -> Result<TypeEx>
+
 fn parse_expression_prefix(tokens: &[Token]) -> ParseResult<Expression<ParsingInfo>> {
     match tokens {
         [T(TT::Keyword(Let), position), T(TT::Identifier(binder), ..), T(TT::Equals, ..), remains @ ..] => {
             parse_binding(*position, binder, remains)
         }
+
         [T(TT::Keyword(If), position), remains @ ..] => parse_if_expression(*position, remains),
+
         [T(TT::Keyword(Deconstruct), position), remains @ ..] => {
             parse_deconstruct_into(*position, remains)
         }
+
         [T(TT::Keyword(Keyword::Lambda), position), remains @ ..] => {
             parse_lambda(*position, remains)
         }
+
         [T(TT::Literal(literal), position), remains @ ..] => Ok((
             Expression::Literal(ParsingInfo::new(*position), literal.clone().into()),
             remains,
         )),
-        // This is satisfied too early in the case of
-        // struct selectors
-        // How about: if lookahead is ., then parse_expression instead
-        // ... but how does that not get caught here again?
+
+        [T(TT::Interpolate(Interpolation::Interlude(prelude)), position), remains @ ..] => {
+            parse_interpolated_text(*position, prelude, remains)
+        }
+
         [T(TT::Identifier(id), position), T(TT::Period, ..), ..] => {
             let lhs = Expression::Variable(ParsingInfo::new(*position), Identifier::new(id));
             parse_expression_infix(lhs, &tokens[1..], 0)
         }
+
         [T(TT::Identifier(id), position), remains @ ..] => Ok((
             Expression::Variable(ParsingInfo::new(*position), Identifier::new(id)),
             remains,
         )),
+
         [T(TT::LeftParen, ..), remains @ ..] => {
             let (expr, remains) = parse_expression(remains, 0)?;
             Ok((expr, expect(&TT::RightParen, remains)?))
         }
+
         [T(TT::LeftBrace, pos), remains @ ..] => {
             let (struct_literal, remains) = parse_struct_literal(*pos, remains)?;
             Ok((struct_literal, expect(&TT::RightBrace, remains)?))
         }
+
         otherwise => panic!("{otherwise:?}"),
+    }
+}
+
+fn parse_interpolated_text<'a>(
+    position: SourceLocation,
+    prelude: &Literal,
+    mut remains: &'a [Token],
+) -> ParseResult<'a, Expression<ParsingInfo>> {
+    let parsing_info = ParsingInfo::new(position);
+    let mut interpolator = Interpolate::begin(parsing_info, prelude.clone().into());
+
+    //    println!("parse_interpolated_text(0): {:?}", remains);
+
+    loop {
+        // remains ends up being the Epilogue
+        let (quoted, remains1) = parse_expression(remains, 0)?;
+        remains = &remains1[1..];
+        interpolator.splice_expression(quoted);
+
+        let mut splice_literal = |pos, literal: &Literal| {
+            interpolator.splice_literal(ParsingInfo::new(pos), literal.clone().into())
+        };
+
+        match remains {
+            [T(TT::Interpolate(Interpolation::Interlude(literal)), pos), remains1 @ ..] => {
+                splice_literal(*pos, literal);
+                remains = remains1;
+            }
+
+            [T(TT::Interpolate(Interpolation::Epilogue(literal)), pos), remains1 @ ..] => {
+                splice_literal(*pos, literal);
+                remains = remains1;
+
+                break Ok((
+                    Expression::Interpolation(parsing_info, interpolator),
+                    remains,
+                ));
+            }
+
+            unexpected => panic!("{unexpected:?}"),
+        }
     }
 }
 
@@ -1126,7 +1178,10 @@ fn parse_expression_infix(
 fn is_expression_prefix(tt: &TokenType) -> bool {
     !matches!(
         tt,
-        TT::Layout(Layout::Dedent) | TT::End | TT::Keyword(And | Or | Xor | Else | Into | In)
+        TT::Layout(Layout::Dedent)
+            | TT::End
+            | TT::Keyword(And | Or | Xor | Else | Into | In)
+            | TT::Interpolate(Interpolation::Epilogue(..))
     )
 }
 

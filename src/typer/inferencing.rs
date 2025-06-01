@@ -49,6 +49,9 @@ impl TypingContext {
                 }
             }
             UntypedExpression::Literal(_, constant) => constant.synthesize_type(),
+            UntypedExpression::Interpolation(..) => {
+                Ok(TypeInference::trivially(Type::Constant(BaseType::Text)))
+            }
             UntypedExpression::SelfReferential(
                 parsing_info,
                 ast::SelfReferential {

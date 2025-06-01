@@ -2,6 +2,7 @@ use std::collections::{hash_map, HashSet};
 use std::{any::Any, cell::RefCell, collections::HashMap, fmt, rc::Rc};
 use thiserror::Error;
 
+use crate::ast::{Fragment, Interpolate, ModuleNames};
 use crate::typer::EmptyAnnotation;
 use crate::{
     ast::{
@@ -64,21 +65,6 @@ impl<'a, A> ModuleMap<'a, A> {
     }
 }
 
-pub struct ModuleNames {
-    pub binder: Identifier,
-    pub definitions: HashSet<Identifier>,
-}
-
-impl ModuleNames {
-    pub fn name(&self) -> &Identifier {
-        &self.binder
-    }
-
-    pub fn defines(&self, name: &Identifier) -> bool {
-        self.definitions.contains(name)
-    }
-}
-
 impl<'a, A> IntoIterator for &'a ModuleMap<'a, A> {
     type Item = (&'a Identifier, &'a &'a ModuleDeclarator<A>);
     type IntoIter = hash_map::Iter<'a, Identifier, &'a ModuleDeclarator<A>>;
@@ -136,10 +122,6 @@ impl Interpreter {
     {
         self.inject_prelude(&annotation, &mut main);
         self.inject_modules(&annotation, &mut main, &mut typing_context)?;
-
-        //        for decl in &main.declarations {
-        //            println!("load_compilation_unit: {}", decl);
-        //        }
 
         let type_checker = TypeChecker::new(typing_context);
         ModuleResolver::initialize(&main, self.prelude)?
@@ -637,6 +619,7 @@ where
             Self::Variable(_, id) => env.lookup(&id).cloned(),
             Self::InvokeBridge(_, id) => invoke_bridge(id, env),
             Self::Literal(_, constant) => Ok(reduce_immediate(constant)),
+            Self::Interpolation(_, interpolate) => reduce_concatenate(interpolate, env),
             Self::SelfReferential(
                 _,
                 SelfReferential {
@@ -670,6 +653,35 @@ where
             Self::DeconstructInto(_, deconstruct) => reduce_deconstruction(deconstruct, env),
         }
     }
+}
+
+impl<A> Interpolate<A>
+where
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
+{
+    pub fn reduce(self, env: &mut Environment) -> Interpretation {
+        let Self(fragments) = self;
+        let mut concatenation = String::new();
+
+        for fragment in fragments {
+            match fragment {
+                Fragment::Literal(_, constant) => concatenation.push_str(&format!("{constant}")),
+                Fragment::Evaluate(_, expression) => {
+                    let rendering = expression.reduce(env)?;
+                    concatenation.push_str(&format!("{rendering}"))
+                }
+            }
+        }
+
+        Ok(Value::Base(Base::Text(concatenation)))
+    }
+}
+
+fn reduce_concatenate<A>(interpolation: Interpolate<A>, env: &mut Environment) -> Interpretation
+where
+    A: fmt::Display + fmt::Debug + Clone + Parsed,
+{
+    interpolation.reduce(env)
 }
 
 fn reduce_projection<A>(

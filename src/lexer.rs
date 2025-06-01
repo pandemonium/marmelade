@@ -172,20 +172,65 @@ impl LexicalAnalyzer {
             remains,
         )
     }
+    //
 
     fn scan_text_literal<'a>(&mut self, input: &'a [char]) -> &'a [char] {
-        let (prefix, remains) = if let Some(end) = input.iter().position(|&c| c == '"') {
-            (&input[..end], &input[end + 1..])
-        } else {
-            (input, &input[..0])
-        };
+        // This pattern repeats itself a lot.
+        // Can I use split?
+        let (prefix, mut remains) =
+            if let Some(end) = input.iter().position(|&c| c == '"' || c == '`') {
+                input.split_at(end)
+            } else {
+                (input, &input[..0])
+            };
 
-        let image = prefix.iter().collect::<String>();
-        self.emit(
-            image.len() as u32,
-            TokenType::Literal(Literal::Text(image)),
-            remains,
-        )
+        let mut image = prefix.iter().collect::<String>();
+        let mut length = image.len() as u32;
+
+        if matches!(remains, ['"', ..]) {
+            self.emit(
+                length,
+                TokenType::Literal(Literal::Text(image)),
+                &remains[1..],
+            )
+        } else {
+            loop {
+                remains = self.emit(
+                    length,
+                    TokenType::Interpolate(Interpolation::Interlude(Literal::Text(image))),
+                    &remains[1..],
+                );
+
+                let (quoted_expression, remains1) =
+                    if let Some(end) = remains.iter().position(|&c| c == '`') {
+                        (&remains[..end], &remains[end + 1..])
+                    } else {
+                        (remains, &remains[..0])
+                    };
+
+                self.tokenize(quoted_expression);
+
+                let (literal, remains1) =
+                    if let Some(end) = remains1.iter().position(|&c| c == '"' || c == '`') {
+                        remains1.split_at(end)
+                    } else {
+                        (remains1, &remains1[..0])
+                    };
+
+                image = literal.iter().collect::<String>();
+                length = image.len() as u32;
+
+                if matches!(remains1, ['"', ..]) {
+                    break self.emit(
+                        image.len() as u32,
+                        TokenType::Interpolate(Interpolation::Epilogue(Literal::Text(image))),
+                        &remains1[1..],
+                    );
+                } else {
+                    remains = remains1;
+                }
+            }
+        }
     }
 
     fn emit<'a>(&mut self, length: u32, token_type: TokenType, remains: &'a [char]) -> &'a [char] {
@@ -381,6 +426,8 @@ pub enum TokenType {
     Keyword(Keyword),
     Literal(Literal),
 
+    Interpolate(Interpolation),
+
     Layout(Layout),
     End,
 }
@@ -393,6 +440,21 @@ impl TokenType {
                 .parse::<bool>()
                 .map(|x| Self::Literal(Literal::Bool(x)))
                 .unwrap_or_else(|_| Self::Identifier(id)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Interpolation {
+    Interlude(Literal),
+    Epilogue(Literal),
+}
+
+impl fmt::Display for Interpolation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interlude(literal) => write!(f, "|{literal}"),
+            Self::Epilogue(literal) => write!(f, "{literal}|"),
         }
     }
 }
@@ -450,11 +512,11 @@ impl Operator {
         }
     }
 
-    pub fn is_right_associative(&self) -> bool {
+    pub const fn is_right_associative(&self) -> bool {
         matches!(self, Operator::Tuple)
     }
 
-    pub fn precedence(&self) -> usize {
+    pub const fn precedence(&self) -> usize {
         match self {
             Self::Select => 26,
             Self::Juxtaposition => 25,
@@ -476,7 +538,7 @@ impl Operator {
         Identifier::new(self.name())
     }
 
-    pub fn name(&self) -> &str {
+    pub const fn name(&self) -> &str {
         // These mappings are highly dubious
         match self {
             Self::Plus => "+",
@@ -699,6 +761,7 @@ impl fmt::Display for TokenType {
             Self::Identifier(id) => write!(f, "{id}"),
             Self::Keyword(keyword) => write!(f, "{keyword}"),
             Self::Literal(literal) => write!(f, "{literal}"),
+            Self::Interpolate(prefix) => write!(f, "{prefix}`"),
             Self::Layout(layout) => write!(f, "{layout}"),
             Self::End => write!(f, "°"),
         }

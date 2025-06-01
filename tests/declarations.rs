@@ -1,8 +1,9 @@
 use marmelade::{
     ast::{
-        Arrow, Constant, ConstructorPattern, Declaration, DeconstructInto, Expression, Identifier,
-        MatchClause, Pattern, Product, TuplePattern, TypeApply, TypeDeclaration, TypeExpression,
-        TypeName, TypeSignature, UniversalQuantifiers, ValueDeclaration, ValueDeclarator,
+        Arrow, Constant, Constructor, ConstructorPattern, Coproduct, Declaration, DeconstructInto,
+        Expression, Identifier, MatchClause, Pattern, Product, TuplePattern, TypeApply,
+        TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, TypeSignature,
+        UniversalQuantifiers, ValueDeclaration, ValueDeclarator,
     },
     interpreter::{Base, Value},
     parser::ParsingInfo,
@@ -341,6 +342,31 @@ fn type_arrow_expressions() {
     );
 
     decl_fixture(r#"|length :: Int -> Text = 1"#, rhs);
+}
+
+//#[test]
+fn type_constructor() {
+    let pi = ParsingInfo::default();
+    decl_fixture(
+        r#"|Result ::= forall a b c. This"#,
+        Declaration::Type(
+            pi,
+            TypeDeclaration {
+                binder: Identifier::new("Result"),
+                declarator: TypeDeclarator::Coproduct(
+                    pi,
+                    Coproduct {
+                        forall: UniversalQuantifiers(vec![]),
+                        constructors: vec![Constructor {
+                            name: todo!(),
+                            signature: todo!(),
+                        }],
+                        associated_module: None,
+                    },
+                ),
+            },
+        ),
+    );
 }
 
 #[test]

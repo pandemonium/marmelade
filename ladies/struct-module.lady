@@ -70,14 +70,13 @@ get_order_number = This 66
 
 Result ::= ∀a e. Return a | Fault e
 
-Artithemtic_Error ::= Division_by_Zero | NaN
+Arithemtic_Error ::= Division_by_Zero | NaN
 
 divide =
   lambda dividend divisor.
     if divisor = 0
       then Fault Division_by_Zero
       else Return (dividend - divisor)
-
 
 Dollars ::=
   { The_Good : Int
@@ -101,6 +100,8 @@ double = map (lambda x. x * 2)
 dollars_from_sek = lambda sek. 11 * sek
 
 dollar_map = map dollars_from_sek
+
+interpolated = lambda x. "Hi: `show x`"
 
 main =
   let r =

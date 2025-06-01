@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     interpreter::DependencyGraph,
-    lexer::{self, SourceLocation},
+    lexer::{self, Literal, SourceLocation},
     parser::ParsingInfo,
     typer::{
         CoproductType, EmptyAnnotation, Parsed, ProductType, TupleType, Type, TypeError,
@@ -1123,6 +1123,7 @@ pub enum Expression<A> {
     Variable(A, Identifier),
     InvokeBridge(A, Identifier),
     Literal(A, Constant),
+    Interpolation(A, Interpolate<A>),
     SelfReferential(A, SelfReferential<A>),
     Lambda(A, Lambda<A>),
     Apply(A, Apply<A>),
@@ -1133,6 +1134,166 @@ pub enum Expression<A> {
     Sequence(A, Sequence<A>),
     ControlFlow(A, ControlFlow<A>),
     DeconstructInto(A, DeconstructInto<A>),
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Interpolate<A>(pub Vec<Fragment<A>>);
+
+impl<A> Interpolate<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
+    pub fn begin(annotation: A, prelude: Literal) -> Self {
+        Self(vec![Fragment::Literal(annotation, prelude.into())])
+    }
+
+    pub fn map<B>(self, f: fn(A) -> B) -> Interpolate<B> {
+        let Self(fragments) = self;
+        Interpolate(
+            fragments
+                .into_iter()
+                .map(|fragment| fragment.map(f))
+                .collect(),
+        )
+    }
+
+    pub fn splice_literal(&mut self, annotation: A, literal: Literal) {
+        self.push(Fragment::Literal(annotation, literal.into()));
+    }
+
+    pub fn splice_expression(&mut self, expression: Expression<A>) {
+        self.push(Fragment::Evaluate(
+            expression.annotation().clone(),
+            expression.into(),
+        ));
+    }
+
+    fn push(&mut self, f: Fragment<A>) {
+        let Self(fragments) = self;
+        fragments.push(f);
+    }
+
+    pub fn map_expression<F>(&mut self, mut f: F)
+    where
+        F: FnMut(Expression<A>) -> Expression<A>,
+    {
+        let Self(fragments) = self;
+        for fragment in fragments {
+            if let Fragment::Evaluate(_, expression) = fragment {
+                let expr = expression.as_ref().clone();
+                *expression = f(expr).into()
+            }
+        }
+    }
+
+    pub fn rewrite_local_access<'a>(
+        self,
+        bound: &mut HashSet<Identifier>,
+        module: &ModuleNames,
+    ) -> Self {
+        let Self(mut fragments) = self;
+        Self(
+            fragments
+                .drain(..)
+                .map(|f| match f {
+                    Fragment::Evaluate(annotation, expression) => Fragment::Evaluate(
+                        annotation,
+                        expression.rewrite_local_access(bound, module).into(),
+                    ),
+                    literal => literal,
+                })
+                .collect(),
+        )
+    }
+
+    pub fn find_unbound<'a>(
+        &'a self,
+        bound: &mut HashSet<&'a Identifier>,
+        free: &mut HashSet<&'a Identifier>,
+    ) {
+        let Self(fragments) = self;
+        for f in fragments {
+            match f {
+                Fragment::Evaluate(_, expression) => expression.find_unbound(bound, free),
+                _otherwise => (),
+            }
+        }
+    }
+}
+
+impl<A> fmt::Display for Interpolate<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self(fragments) = self;
+        let mut fragments = fragments.iter();
+
+        if let Some(fragment) = fragments.next() {
+            write!(f, "<{fragment}>")?;
+        }
+
+        for fragment in fragments {
+            write!(f, ", <{fragment}>")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Fragment<A> {
+    Literal(A, Constant),
+    Evaluate(A, Box<Expression<A>>),
+}
+
+impl<A> Fragment<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
+    pub fn map<B>(self, f: fn(A) -> B) -> Fragment<B> {
+        match self {
+            Self::Literal(annotation, constant) => Fragment::Literal(f(annotation), constant),
+            Self::Evaluate(annotation, expression) => {
+                Fragment::Evaluate(f(annotation), expression.map(f).into())
+            }
+        }
+    }
+
+    pub fn from_literal(annotation: A, literal: Literal) -> Self {
+        Self::Literal(annotation, literal.into())
+    }
+
+    pub fn from_expression(annotation: A, expression: Expression<A>) -> Self {
+        Self::Evaluate(annotation, expression.into())
+    }
+}
+
+impl<A> fmt::Display for Fragment<A>
+where
+    A: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Literal(_, constant) => write!(f, "{constant}"),
+            Self::Evaluate(_, expression) => write!(f, "{expression}"),
+        }
+    }
+}
+
+pub struct ModuleNames {
+    pub binder: Identifier,
+    pub definitions: HashSet<Identifier>,
+}
+
+impl ModuleNames {
+    pub fn name(&self) -> &Identifier {
+        &self.binder
+    }
+
+    pub fn defines(&self, name: &Identifier) -> bool {
+        self.definitions.contains(name)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1983,6 +2144,7 @@ where
             | Self::Variable(annotation, ..)
             | Self::InvokeBridge(annotation, ..)
             | Self::Literal(annotation, ..)
+            | Self::Interpolation(annotation, ..)
             | Self::SelfReferential(annotation, ..)
             | Self::Lambda(annotation, ..)
             | Self::Apply(annotation, ..)
@@ -2016,6 +2178,9 @@ where
             }
             Self::InvokeBridge(_, id) => {
                 free.insert(id);
+            }
+            Self::Interpolation(_, interpolation) => {
+                interpolation.find_unbound(bound, free);
             }
             Self::Lambda(_, Lambda { parameter, body }) => {
                 bound.insert(&parameter.name);
@@ -2101,6 +2266,7 @@ where
             Self::Variable(x, info) => Expression::<B>::Variable(f(x), info),
             Self::InvokeBridge(x, info) => Expression::<B>::InvokeBridge(f(x), info),
             Self::Literal(x, info) => Expression::<B>::Literal(f(x), info),
+            Self::Interpolation(x, info) => Expression::<B>::Interpolation(f(x), info.map(f)),
             Self::SelfReferential(x, info) => Expression::<B>::SelfReferential(f(x), info.map(f)),
             Self::Lambda(x, info) => Expression::<B>::Lambda(f(x), info.map(f)),
             Self::Apply(x, info) => Expression::<B>::Apply(f(x), info.map(f)),
@@ -2127,22 +2293,23 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expression::TypeAscription(_, ta) => {
+            Self::TypeAscription(_, ta) => {
                 write!(f, "{}::{}", ta.underlying, ta.type_signature)
             }
-            Expression::Variable(_, id) => write!(f, "{id}"),
-            Expression::InvokeBridge(_, id) => write!(f, "call {id}"),
-            Expression::Literal(_, c) => write!(f, "{c}"),
-            Expression::SelfReferential(_, SelfReferential { name, body, .. }) => {
+            Self::Variable(_, id) => write!(f, "{id}"),
+            Self::InvokeBridge(_, id) => write!(f, "call {id}"),
+            Self::Literal(_, c) => write!(f, "{c}"),
+            Self::Interpolation(_, interpolate) => write!(f, "{interpolate}"),
+            Self::SelfReferential(_, SelfReferential { name, body, .. }) => {
                 write!(f, "{name}->[{body}]")
             }
-            Expression::Lambda(_, Lambda { parameter, body }) => {
+            Self::Lambda(_, Lambda { parameter, body }) => {
                 write!(f, "lambda \\{parameter}. {body}")
             }
-            Expression::Apply(_, Apply { function, argument }) => {
+            Self::Apply(_, Apply { function, argument }) => {
                 write!(f, "{function} {argument}")
             }
-            Expression::Inject(
+            Self::Inject(
                 _,
                 Inject {
                     name,
@@ -2150,9 +2317,9 @@ where
                     argument,
                 },
             ) => write!(f, "{name}::{constructor} {argument}"),
-            Expression::Product(_, product) => write!(f, "{product}"),
-            Expression::Project(_, Project { base, index }) => write!(f, "{base}.{index}"),
-            Expression::Binding(
+            Self::Product(_, product) => write!(f, "{product}"),
+            Self::Project(_, Project { base, index }) => write!(f, "{base}.{index}"),
+            Self::Binding(
                 _,
                 Binding {
                     binder,
@@ -2161,11 +2328,11 @@ where
                     ..
                 },
             ) => write!(f, "let {binder} = {bound} in {body}"),
-            Expression::Sequence(_, Sequence { this, and_then }) => {
+            Self::Sequence(_, Sequence { this, and_then }) => {
                 writeln!(f, "{this}\n{and_then}")
             }
-            Expression::ControlFlow(_, control) => writeln!(f, "{control}"),
-            Expression::DeconstructInto(_, deconstruct) => writeln!(f, "{deconstruct}"),
+            Self::ControlFlow(_, control) => writeln!(f, "{control}"),
+            Self::DeconstructInto(_, deconstruct) => writeln!(f, "{deconstruct}"),
         }
     }
 }

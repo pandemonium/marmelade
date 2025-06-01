@@ -1,0 +1,3 @@
+Option ::= forall a. Some a | None
+quux = lambda x y. x * y
+main = "Hi:`Some (10 * 1)`mom`quux 2 2`."

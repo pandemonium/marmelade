@@ -5,10 +5,10 @@ use crate::{
         Apply, Binding, ControlFlow, DeconstructInto, Expression, Identifier, Inject, Lambda,
         MatchClause, Product, Project, SelfReferential, Sequence,
     },
-    interpreter::ModuleNames,
+    typer::Parsed,
 };
 
-use super::{ProductIndex, TypeAscription};
+use super::{ModuleNames, ProductIndex, TypeAscription};
 
 // bound variables on the form a.b.c are projections
 // unbound variables are module selections, which are implemented as projections
@@ -38,12 +38,12 @@ use super::{ProductIndex, TypeAscription};
 
 impl<A> Expression<A>
 where
-    A: Copy + fmt::Debug,
+    A: Clone + fmt::Debug + fmt::Display + Parsed,
 {
     fn into_projection_tree(annotation: &A, name: Identifier) -> Expression<A> {
         Self::make_projection_tree(
             annotation,
-            Expression::Variable(*annotation, name.head().clone()),
+            Expression::Variable(annotation.clone(), name.head().clone()),
             &name.components()[1..],
         )
     }
@@ -51,7 +51,7 @@ where
     fn make_projection_tree(annotation: &A, head: Expression<A>, tail: &[&str]) -> Expression<A> {
         tail.iter().fold(head, |prefix, field| {
             Expression::Project(
-                *annotation,
+                annotation.clone(),
                 Project {
                     base: prefix.into(),
                     index: ProductIndex::Struct(Identifier::new(field)),
@@ -260,6 +260,10 @@ where
                     },
                 )
             }
+            Self::Interpolation(annotation, interpolation) => Self::Interpolation(
+                annotation,
+                interpolation.rewrite_local_access(bound, module).into(),
+            ),
             Self::SelfReferential(
                 annotation,
                 SelfReferential {
