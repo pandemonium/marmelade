@@ -33,7 +33,7 @@ pub trait Parsed {
     fn info(&self) -> &ParsingInfo;
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmptyAnnotation;
 
 impl fmt::Display for EmptyAnnotation {
@@ -55,7 +55,7 @@ type UntypedValueDeclaration = ValueDeclaration<ParsingInfo>;
 pub struct TypeChecker(TypingContext);
 
 impl TypeChecker {
-    pub fn new(ctx: TypingContext) -> Self {
+    pub const fn new(ctx: TypingContext) -> Self {
         Self(ctx)
     }
 
@@ -97,7 +97,7 @@ impl TypeChecker {
         checking::check(expression, expected_type, self.typing_context()).map(|_| ())
     }
 
-    fn typing_context(&self) -> &TypingContext {
+    const fn typing_context(&self) -> &TypingContext {
         let Self(ctx) = self;
         ctx
     }
@@ -117,18 +117,18 @@ impl TypeScheme {
         }
     }
 
-    pub fn from_constant(body: Type) -> Self {
+    pub const fn from_constant(body: Type) -> Self {
         Self {
             quantifiers: vec![],
             body,
         }
     }
 
-    pub fn is_type_constructor(&self) -> bool {
+    pub const fn is_type_constructor(&self) -> bool {
         !self.quantifiers.is_empty()
     }
 
-    fn into_type_apply_tree(self, name: TypeName) -> TypeScheme {
+    fn into_type_apply_tree(self, name: TypeName) -> Self {
         let quantifiers = &self.quantifiers;
         let type_apply_tree = quantifiers.iter().fold(Type::Named(name), |tree, param| {
             Type::Apply(tree.into(), Type::Parameter(*param).into())
@@ -151,12 +151,12 @@ impl TypeScheme {
     // LOTS and LOTS of cloning of this poor Substitutions
     // Will I ever want to _not_ apply subs to the type scheme inside
     // the typing context? So perhaps &mut self.
-    fn apply(self, subs: &Substitutions) -> TypeScheme {
+    fn apply(self, subs: &Substitutions) -> Self {
         let Self { quantifiers, body } = self;
 
         let mut subs = subs.clone();
         for q in &quantifiers {
-            subs.remove(q);
+            subs.remove(*q);
         }
 
         Self {
@@ -182,7 +182,7 @@ impl fmt::Display for TypeScheme {
             "forall {}. {}",
             quantifiers
                 .iter()
-                .map(|p| p.to_string())
+                .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(" "),
             body
@@ -202,11 +202,11 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn is_arrow(&self) -> bool {
+    pub const fn is_arrow(&self) -> bool {
         matches!(self, Self::Arrow(..))
     }
 
-    pub fn is_abbreviated(&self) -> bool {
+    pub const fn is_abbreviated(&self) -> bool {
         matches!(self, Self::Named(..) | Self::Apply(..))
     }
 
@@ -222,20 +222,20 @@ impl Type {
         }
     }
 
-    pub fn expand_type(self, ctx: &TypingContext) -> Typing<Type> {
+    pub fn expand_type(self, ctx: &TypingContext) -> Typing<Self> {
         match self {
-            Type::Named(name) => ctx
+            Self::Named(name) => ctx
                 .lookup(&name.clone().into())
                 .ok_or(TypeError::UndefinedType(name))?
                 .instantiate(ctx),
-            Type::Apply(constuctor, at) => constuctor.apply_constructor(&mut vec![*at], ctx),
+            Self::Apply(constuctor, at) => constuctor.apply_constructor(&mut vec![*at], ctx),
             otherwise => Ok(otherwise),
         }
     }
 
-    fn apply_constructor(self, arguments: &mut Vec<Type>, ctx: &TypingContext) -> Typing<Type> {
+    fn apply_constructor(self, arguments: &mut Vec<Self>, ctx: &TypingContext) -> Typing<Self> {
         match self {
-            Type::Named(name) => {
+            Self::Named(name) => {
                 let TypeScheme { quantifiers, body } = ctx
                     .lookup_scheme(&name.clone().into())
                     .cloned()
@@ -248,11 +248,11 @@ impl Type {
 
                 Ok(body.apply(&subs))
             }
-            Type::Apply(constructor, at) => {
+            Self::Apply(constructor, at) => {
                 arguments.push(*at);
                 constructor.apply_constructor(arguments, ctx)
             }
-            otherwise => Err(TypeError::WrongKind(otherwise)),
+            otherwise => Err(TypeError::WrongKind(otherwise).into()),
         }
     }
 
@@ -262,7 +262,7 @@ impl Type {
         let free = type_variables.difference(&context_variables);
 
         TypeScheme {
-            quantifiers: free.cloned().collect(),
+            quantifiers: free.copied().collect(),
             body: self,
         }
     }
@@ -272,10 +272,9 @@ impl Type {
             // Recurse into apply here to apply the whole chain of
             // substitutions?
             Self::Parameter(param) => subs
-                .lookup(&param)
+                .lookup(param)
                 .cloned()
-                .map(|ty| ty.apply(subs))
-                .unwrap_or_else(|| Self::Parameter(param)),
+                .map_or_else(|| Self::Parameter(param), |ty| ty.apply(subs)),
 
             Self::Arrow(domain, codomain) => {
                 Self::Arrow(domain.apply(subs).into(), codomain.apply(subs).into())
@@ -292,7 +291,7 @@ impl Type {
     pub fn free_variables(&self) -> HashSet<TypeParameter> {
         match self {
             Self::Parameter(param) => HashSet::from([*param]),
-            Self::Arrow(tv0, tv1) => {
+            Self::Arrow(tv0, tv1) | Self::Apply(tv0, tv1) => {
                 let mut vars = tv0.free_variables();
                 vars.extend(tv1.free_variables());
                 vars
@@ -300,27 +299,22 @@ impl Type {
             Self::Coproduct(c) => c.iter().flat_map(|(_, ty)| ty.free_variables()).collect(),
             Self::Product(x) => match x {
                 ProductType::Tuple(TupleType(elements)) => {
-                    elements.iter().flat_map(|ty| ty.free_variables()).collect()
+                    elements.iter().flat_map(Self::free_variables).collect()
                 }
                 ProductType::Struct(elements) => elements
                     .iter()
                     .flat_map(|(_, ty)| ty.free_variables())
                     .collect(),
             },
-            Self::Apply(tv0, tv1) => {
-                let mut vars = tv0.free_variables();
-                vars.extend(tv1.free_variables());
-                vars
-            }
             _trivial => HashSet::default(),
         }
     }
 
-    pub fn fresh() -> Type {
+    pub fn fresh() -> Self {
         Self::Parameter(TypeParameter::fresh())
     }
 
-    pub fn unify<A>(&self, rhs: &Type, annotation: &A) -> Typing<Substitutions>
+    pub fn unify<A>(&self, rhs: &Self, annotation: A) -> Typing<Substitutions>
     where
         A: Parsed,
     {
@@ -391,10 +385,10 @@ pub enum ProductType {
 }
 
 impl ProductType {
-    fn apply(self, subs: &Substitutions) -> ProductType {
+    fn apply(self, subs: &Substitutions) -> Self {
         match self {
-            ProductType::Tuple(tuple) => ProductType::Tuple(tuple.apply(subs)),
-            ProductType::Struct(elements) => ProductType::Struct(
+            Self::Tuple(tuple) => Self::Tuple(tuple.apply(subs)),
+            Self::Struct(elements) => Self::Struct(
                 elements
                     .into_iter()
                     .map(|(label, ty)| (label, ty.apply(subs)))
@@ -413,14 +407,15 @@ impl TupleType {
         Self(elements.into_iter().map(|ty| ty.apply(subs)).collect())
     }
 
-    pub fn arity(&self) -> usize {
+    pub const fn arity(&self) -> usize {
         let Self(elements) = self;
         elements.len()
     }
 
-    // When and where can I do this?
     pub fn unspine(self) -> Self {
-        if !self.0.is_empty() {
+        if self.0.is_empty() {
+            self
+        } else {
             let Self(mut elements) = self;
             let first = elements.remove(0);
 
@@ -439,8 +434,6 @@ impl TupleType {
                 tail.insert(0, first);
                 tail
             })
-        } else {
-            self
         }
     }
 }
@@ -495,7 +488,7 @@ impl CoproductType {
             .find_map(|(constructor, ty)| (&name.as_str() == constructor).then_some(ty))
     }
 
-    fn arity(&self) -> usize {
+    const fn arity(&self) -> usize {
         let Self(constructors) = self;
         constructors.len()
     }
@@ -511,10 +504,10 @@ impl CoproductType {
     }
 
     fn apply(self, subs: &Substitutions) -> Self {
-        let Self(mut constructors) = self;
+        let Self(constructors) = self;
         Self(
             constructors
-                .drain(..)
+                .into_iter()
                 .map(|(constructor, parameter_type)| (constructor, parameter_type.apply(subs)))
                 .collect(),
         )
@@ -534,7 +527,7 @@ impl fmt::Display for CoproductType {
     }
 }
 
-pub type Typing<A = TypeInference> = Result<A, TypeError>;
+pub type Typing<A = TypeInference> = Result<A, Box<TypeError>>;
 
 #[derive(Debug)]
 pub struct TypeInference {
@@ -543,7 +536,7 @@ pub struct TypeInference {
 }
 
 impl TypeInference {
-    pub fn new(substitutions: Substitutions, inferred_type: Type) -> Self {
+    pub const fn new(substitutions: Substitutions, inferred_type: Type) -> Self {
         Self {
             substitutions,
             inferred_type,
@@ -661,7 +654,7 @@ pub enum Binding {
 }
 
 impl Binding {
-    pub fn is_value_binding(&self) -> bool {
+    pub const fn is_value_binding(&self) -> bool {
         matches!(self, Self::ValueTerm(..))
     }
 
@@ -684,13 +677,13 @@ impl fmt::Display for Binding {
 
 impl From<ast::Identifier> for Binding {
     fn from(value: ast::Identifier) -> Self {
-        Binding::ValueTerm(value.as_str().to_owned())
+        Self::ValueTerm(value.as_str())
     }
 }
 
 impl From<ast::TypeName> for Binding {
     fn from(value: ast::TypeName) -> Self {
-        Binding::TypeTerm(value.as_str().to_owned())
+        Self::TypeTerm(value.as_str().to_owned())
     }
 }
 
@@ -730,14 +723,14 @@ impl TypingContext {
             free.extend(body.free_variables());
         }
 
-        free.difference(&bound).cloned().collect()
+        free.difference(&bound).copied().collect()
     }
 
     fn apply_substitutions(&self, subs: &Substitutions) -> Self {
         let mut ctx = self.clone();
 
         for scheme in ctx.bindings.values_mut() {
-            *scheme = scheme.clone().apply(subs)
+            *scheme = scheme.clone().apply(subs);
         }
 
         ctx
@@ -776,7 +769,7 @@ pub mod internal {
             Self(FRESH_TYPE_ID.fetch_add(1, Ordering::SeqCst))
         }
 
-        pub fn new_for_test(id: u32) -> Self {
+        pub const fn new_for_test(id: u32) -> Self {
             Self(id)
         }
     }
@@ -945,7 +938,7 @@ mod tests {
             (ast::Identifier::new("y"), mk_constant_type(BaseType::Float)),
         ])));
 
-        t.inferred_type.unify(&expected_type, &()).unwrap();
+        t.inferred_type.unify(&expected_type, ()).unwrap();
 
         let e = mk_apply(mk_identity(), mk_constant(ast::Constant::Float(1.0)));
         let t = ctx.infer_type(&e).unwrap();

@@ -9,23 +9,23 @@ use crate::{
     typer::{ProductType, TypeError},
 };
 
-pub fn unify<A>(lhs: &Type, rhs: &Type, annotation: &A) -> Typing<Substitutions>
+pub fn unify<A>(lhs: &Type, rhs: &Type, annotation: A) -> Typing<Substitutions>
 where
     A: Parsed,
 {
     UnificationContext::new(annotation).unify(lhs, rhs)
 }
 
-struct UnificationContext<'a, A> {
-    annotation: &'a A,
+struct UnificationContext<A> {
+    annotation: A,
     seen: HashSet<(Type, Type)>,
 }
 
-impl<'a, A> UnificationContext<'a, A>
+impl<A> UnificationContext<A>
 where
     A: Parsed,
 {
-    fn new(annotation: &'a A) -> Self {
+    fn new(annotation: A) -> Self {
         Self {
             annotation,
             seen: HashSet::default(),
@@ -59,7 +59,7 @@ where
         match (lhs, rhs) {
             (Type::Parameter(param), ty) | (ty, Type::Parameter(param)) => {
                 if ty.free_variables().contains(&param) {
-                    Err(TypeError::InfiniteType { param, ty })
+                    Err(TypeError::InfiniteType { param, ty }.into())
                 } else {
                     Ok(Substitutions::from_single(param, ty))
                 }
@@ -90,27 +90,23 @@ where
             (Type::Arrow(lhs_domain, lhs_codomain), Type::Arrow(rhs_domain, rhs_codomain)) => {
                 let domain = self.unify(&lhs_domain, &rhs_domain)?;
 
-                let codomain = self.unify(
-                    &lhs_codomain.clone().apply(&domain),
-                    &rhs_codomain.clone().apply(&domain),
-                )?;
+                let codomain =
+                    self.unify(&lhs_codomain.apply(&domain), &rhs_codomain.apply(&domain))?;
 
                 Ok(domain.compose(codomain))
             }
             (Type::Apply(lhs_constructor, lhs_at), Type::Apply(rhs_constructor, rhs_at)) => {
                 let constructor = self.unify(&lhs_constructor, &rhs_constructor)?;
-                let at = self.unify(
-                    &lhs_at.clone().apply(&constructor),
-                    &rhs_at.clone().apply(&constructor),
-                )?;
+                let at = self.unify(&lhs_at.apply(&constructor), &rhs_at.apply(&constructor))?;
                 Ok(constructor.compose(at))
             }
             (lhs, rhs) if lhs == rhs => Ok(Substitutions::default()),
             (lhs, rhs) => Err(TypeError::UnifyImpossible {
-                lhs: lhs.clone(),
-                rhs: rhs.clone(),
+                lhs,
+                rhs,
                 position: { *self.annotation.info().location() },
-            }),
+            }
+            .into()),
         }
     }
 
@@ -128,16 +124,16 @@ where
 
             let mut substitutions = Substitutions::default();
             for ((lhs_id, lhs_ty), (rhs_id, rhs_ty)) in
-                lhs_fields.drain(..).zip(rhs_fields.drain(..))
+                lhs_fields.into_iter().zip(rhs_fields.into_iter())
             {
                 if lhs_id == rhs_id {
-                    substitutions = substitutions.compose(self.unify(lhs_ty, rhs_ty)?)
+                    substitutions = substitutions.compose(self.unify(lhs_ty, rhs_ty)?);
                 } else {
                     Err(TypeError::UnifyImpossible {
                         lhs: Type::Product(ProductType::Struct(lhs.to_vec())),
                         rhs: Type::Product(ProductType::Struct(lhs.to_vec())),
                         position: *self.annotation.info().location(),
-                    })?
+                    })?;
                 }
             }
 
@@ -147,7 +143,8 @@ where
                 lhs: Type::Product(ProductType::Struct(lhs.to_vec())),
                 rhs: Type::Product(ProductType::Struct(lhs.to_vec())),
                 position: *self.annotation.info().location(),
-            })
+            }
+            .into())
         }
     }
 
@@ -162,12 +159,12 @@ where
             for ((lhs_constructor, lhs_ty), (rhs_constructor, rhs_ty)) in lhs.iter().zip(rhs.iter())
             {
                 if lhs_constructor == rhs_constructor {
-                    sub = sub.compose(self.unify(lhs_ty, rhs_ty)?)
+                    sub = sub.compose(self.unify(lhs_ty, rhs_ty)?);
                 } else {
                     Err(TypeError::IncompatibleCoproducts {
                         lhs: lhs.clone(),
                         rhs: rhs.clone(),
-                    })?
+                    })?;
                 }
             }
 
@@ -176,7 +173,8 @@ where
             Err(TypeError::IncompatibleCoproducts {
                 lhs: lhs.clone(),
                 rhs: rhs.clone(),
-            })
+            }
+            .into())
         }
     }
 
@@ -191,7 +189,8 @@ where
             Err(TypeError::BadTupleArity {
                 lhs: ProductType::Tuple(TupleType(lhs.to_vec())),
                 rhs: ProductType::Tuple(TupleType(rhs.to_vec())),
-            })
+            }
+            .into())
         }
     }
 }
@@ -209,17 +208,17 @@ impl Substitutions {
         map.insert(param, ty);
     }
 
-    pub fn lookup(&self, param: &TypeParameter) -> Option<&Type> {
+    pub fn lookup(&self, param: TypeParameter) -> Option<&Type> {
         let Self(map) = self;
-        map.get(param)
+        map.get(&param)
     }
 
-    pub fn remove(&mut self, param: &TypeParameter) {
+    pub fn remove(&mut self, param: TypeParameter) {
         let Self(map) = self;
-        map.remove(param);
+        map.remove(&param);
     }
 
-    pub fn compose(&self, Substitutions(mut rhs): Self) -> Self {
+    pub fn compose(&self, Self(mut rhs): Self) -> Self {
         let mut composed = rhs
             .drain()
             .map(|(param, ty)| (param, ty.apply(self)))

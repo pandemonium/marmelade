@@ -114,10 +114,10 @@ pub fn equals(p: Value, q: Value) -> Option<Value> {
         (Value::Base(Base::Text(p)), Value::Base(Base::Text(q))) => {
             Some(Value::Base(Base::Bool(p == q)))
         }
-        (Value::Tuple(mut p), Value::Tuple(mut q)) => {
+        (Value::Tuple(p), Value::Tuple(q)) => {
             let result = p.len() == q.len()
-                && p.drain(..)
-                    .zip(q.drain(..))
+                && p.into_iter()
+                    .zip(q)
                     .map(|(p, q)| equals(p, q))
                     .all(|v| matches!(v, Some(Value::Base(Base::Bool(true)))));
 
@@ -163,15 +163,15 @@ pub fn lt(p: Base, q: Base) -> Option<Base> {
     }
 }
 
-fn and(p: bool, q: bool) -> bool {
+const fn and(p: bool, q: bool) -> bool {
     p && q
 }
 
-fn or(p: bool, q: bool) -> bool {
+const fn or(p: bool, q: bool) -> bool {
     p || q
 }
 
-fn xor(p: bool, q: bool) -> bool {
+const fn xor(p: bool, q: bool) -> bool {
     p ^ q
 }
 

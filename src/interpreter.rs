@@ -21,7 +21,7 @@ mod module;
 
 pub use module::DependencyGraph;
 
-pub type Resolved<A> = Result<A, ResolutionError>;
+pub type Resolved<A> = Result<A, Box<ResolutionError>>;
 
 // Todo: which ones are involved in the cycle or are unresolved?
 #[derive(Debug, Error)]
@@ -51,9 +51,33 @@ pub enum ResolutionError {
     },
 }
 
+impl From<TypeError> for Box<ResolutionError> {
+    fn from(value: TypeError) -> Self {
+        ResolutionError::TypeError(value).into()
+    }
+}
+
+impl From<Box<TypeError>> for Box<ResolutionError> {
+    fn from(value: Box<TypeError>) -> Self {
+        ResolutionError::TypeError(*value).into()
+    }
+}
+
+impl From<Box<RuntimeError>> for Box<ResolutionError> {
+    fn from(value: Box<RuntimeError>) -> Self {
+        ResolutionError::InitializationError(*value).into()
+    }
+}
+
+impl From<ParseError> for Box<ResolutionError> {
+    fn from(value: ParseError) -> Self {
+        ResolutionError::ParseError(value).into()
+    }
+}
+
 pub struct ModuleMap<'a, A>(HashMap<Identifier, &'a ModuleDeclarator<A>>);
 
-impl<'a, A> ModuleMap<'a, A> {
+impl<A> ModuleMap<'_, A> {
     pub fn contains(&self, id: &Identifier) -> bool {
         let Self(map) = self;
         map.contains_key(id)
@@ -85,7 +109,7 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
-    pub fn new(prelude: Environment) -> Self {
+    pub const fn new(prelude: Environment) -> Self {
         Self { prelude }
     }
 
@@ -130,10 +154,10 @@ impl Interpreter {
     }
 
     // If this owns the main module instead, it could probably be made more efficient?
-    fn inject_modules<'a, A>(
+    fn inject_modules<A>(
         &self,
         annotation: &A,
-        main: &'a mut ModuleDeclarator<A>,
+        main: &mut ModuleDeclarator<A>,
         typing_context: &mut TypingContext,
     ) -> Resolved<()>
     where
@@ -141,7 +165,7 @@ impl Interpreter {
     {
         let mut injections = vec![];
 
-        let module_map = Self::get_module_map(&main);
+        let module_map = Self::get_module_map(main);
 
         for (name, module) in &module_map {
             // Could I re-write ModuleMap in terms of this thing instead?
@@ -161,7 +185,7 @@ impl Interpreter {
                 module
                     .declarations
                     .clone()
-                    .drain(..)
+                    .into_iter()
                     .map(|decl| match decl {
                         Declaration::Value(annotation, decl) => Declaration::Value(
                             annotation,
@@ -171,8 +195,7 @@ impl Interpreter {
                             }),
                         ),
                         otherwise => otherwise,
-                    })
-                    .collect::<Vec<_>>(),
+                    }),
             );
 
             let declarations =
@@ -190,7 +213,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn get_module_map<'a, A>(module: &'a ModuleDeclarator<A>) -> ModuleMap<'a, A> {
+    fn get_module_map<A>(module: &ModuleDeclarator<A>) -> ModuleMap<A> {
         let mut modules = vec![(module.name.clone(), module)];
 
         for decl in &module.declarations {
@@ -206,8 +229,8 @@ impl Interpreter {
                             associated_module: Some(m),
                             ..
                         },
-                    ) => modules.push((m.name.clone(), m)),
-                    TypeDeclarator::Struct(
+                    )
+                    | TypeDeclarator::Struct(
                         _,
                         Struct {
                             associated_module: Some(m),
@@ -299,7 +322,7 @@ impl Interpreter {
     {
         let coproduct = coproduct.make_implementation_module(
             parsing_info,
-            TypeName::new(&binding.as_str()),
+            &TypeName::new(&binding.as_str()),
             typing_context,
         )?;
 
@@ -310,10 +333,8 @@ impl Interpreter {
 
         typing_context.bind(coproduct.name.into(), coproduct.declared_type);
 
-        // the names must be prefigured by the name of the declaring module
         for constructor in coproduct.constructors {
-            //            /constructor.prefixed_with()
-            injections.push(Declaration::Value(parsing_info.clone(), constructor));
+            injections.push(Declaration::Value(*parsing_info, constructor));
         }
 
         Ok(())
@@ -324,7 +345,7 @@ impl Interpreter {
         _parsing_info: &A,
         binding: &Identifier,
         record: &Struct<A>,
-        _injections: &mut Vec<Declaration<A>>,
+        _injections: &mut [Declaration<A>],
         typing_context: &mut TypingContext,
     ) -> Typing<()>
     where
@@ -503,12 +524,13 @@ impl fmt::Display for Base {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Environment {
+    // todo: Change back to HashMap
     parent: Option<Rc<Environment>>,
     leaf: Vec<(Identifier, Value)>,
 }
 
 impl Environment {
-    pub fn into_parent(self: Environment) -> Self {
+    pub fn into_parent(self: Self) -> Self {
         Self {
             parent: Rc::new(self).into(),
             leaf: Vec::default(),
@@ -524,13 +546,15 @@ impl Environment {
             .iter()
             .rev()
             .find_map(|(binder, bound)| (binder == id).then_some(bound))
-            .map(Ok)
-            .unwrap_or_else(|| {
-                self.parent.as_ref().map_or_else(
-                    || Err(RuntimeError::UndefinedSymbol(id.clone())),
-                    |env| env.lookup(id),
-                )
-            })
+            .map_or_else(
+                || {
+                    self.parent.as_ref().map_or_else(
+                        || Err(RuntimeError::UndefinedSymbol(id.clone()).into()),
+                        |env| env.lookup(id),
+                    )
+                },
+                Ok,
+            )
     }
 
     pub fn is_defined(&self, id: &Identifier) -> bool {
@@ -602,7 +626,7 @@ pub enum RuntimeError {
     BadProjection { lhs: Value, rhs: ProductIndex },
 }
 
-pub type Interpretation<A = Value> = Result<A, RuntimeError>;
+pub type Interpretation<A = Value> = Result<A, Box<RuntimeError>>;
 
 // Surely this should run a TypedExpression?
 // What happens with Expression<BridgingInfo>?
@@ -629,7 +653,7 @@ where
                 },
             ) => make_recursive_closure(name, parameter.name, body.erase_annotation(), env.clone()),
             Self::Lambda(_, Lambda { parameter, body }) => {
-                make_closure(parameter.name, *body, env.clone())
+                Ok(make_closure(parameter.name, *body, env.clone()))
             }
             Self::Apply(_, Apply { function, argument }) => {
                 apply_function(*function, *argument, env)
@@ -645,7 +669,7 @@ where
                     body,
                     ..
                 },
-            ) => reduce_binding(binder, *bound, *body, env),
+            ) => reduce_binding(&binder, *bound, *body, env),
             Self::Sequence(_, Sequence { this, and_then }) => {
                 reduce_sequence(*this, *and_then, env)
             }
@@ -660,15 +684,19 @@ where
     A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
+        use std::fmt::Write as _;
+
         let Self(fragments) = self;
         let mut concatenation = String::new();
 
         for fragment in fragments {
             match fragment {
-                Fragment::Literal(_, constant) => concatenation.push_str(&format!("{constant}")),
+                Fragment::Literal(_, constant) => {
+                    let _ = write!(concatenation, "{constant}");
+                }
                 Fragment::Evaluate(_, expression) => {
                     let rendering = expression.reduce(env)?;
-                    concatenation.push_str(&format!("{rendering}"))
+                    let _ = write!(concatenation, "{rendering}");
                 }
             }
         }
@@ -698,12 +726,12 @@ where
             .iter()
             .find_map(|(lhs, element)| (lhs == rhs).then_some(element))
             .cloned()
-            .ok_or_else(|| RuntimeError::ExpectedProductIndex(index.clone())),
+            .ok_or_else(|| RuntimeError::ExpectedProductIndex(index.clone()).into()),
         (Value::Tuple(elements), index @ ProductIndex::Tuple(rhs)) => elements
             .get(rhs)
             .cloned()
-            .ok_or_else(|| RuntimeError::ExpectedProductIndex(index)),
-        (lhs, rhs) => Err(RuntimeError::BadProjection { lhs, rhs }),
+            .ok_or_else(|| RuntimeError::ExpectedProductIndex(index).into()),
+        (lhs, rhs) => Err(RuntimeError::BadProjection { lhs, rhs }.into()),
     }
 }
 
@@ -722,11 +750,11 @@ where
     match_clauses
         .into_iter()
         .find_map(|clause| clause.match_with(&scrutinee))
-        .ok_or_else(|| RuntimeError::ExpectedMatch { scrutinee })
+        .ok_or_else(|| RuntimeError::ExpectedMatch { scrutinee }.into())
         .and_then(|matched| reduce_consequent(matched, env))
 }
 
-fn reduce_consequent<A>(matched: Match<A>, env: &mut Environment) -> Interpretation
+fn reduce_consequent<A>(matched: Match<A>, env: &Environment) -> Interpretation
 where
     A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
@@ -876,7 +904,7 @@ where
     and_then.reduce(env)
 }
 
-fn invoke_bridge(id: Identifier, env: &mut Environment) -> Interpretation {
+fn invoke_bridge(id: Identifier, env: &Environment) -> Interpretation {
     if let Value::Bridge {
         // Do away with this sucker. Impl Deref.
         target: BridgeDebug(bridge),
@@ -884,7 +912,7 @@ fn invoke_bridge(id: Identifier, env: &mut Environment) -> Interpretation {
     {
         bridge.evaluate(env)
     } else {
-        Err(RuntimeError::ExpectedSynthetic(id))
+        Err(RuntimeError::ExpectedSynthetic(id).into())
     }
 }
 
@@ -905,14 +933,14 @@ where
                     alternate.reduce(env)
                 }
             } else {
-                Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Bool)))
+                Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Bool)).into())
             }
         }
     }
 }
 
 fn reduce_binding<A>(
-    binder: Identifier,
+    binder: &Identifier,
     bound: Expression<A>,
     body: Expression<A>,
     env: &mut Environment,
@@ -924,7 +952,7 @@ where
     let bound = bound.reduce(env)?;
     env.insert_binding(binder.clone(), bound);
     let retval = body.reduce(env);
-    env.remove_binding(&binder);
+    env.remove_binding(binder);
     retval
 }
 
@@ -962,19 +990,19 @@ where
 
             retval
         }
-        otherwise => Err(RuntimeError::ExpectedFunction { got: otherwise }),
+        otherwise => Err(RuntimeError::ExpectedFunction { got: otherwise }.into()),
     }
 }
 
-fn make_closure<A>(param: Identifier, body: Expression<A>, env: Environment) -> Interpretation
+fn make_closure<A>(param: Identifier, body: Expression<A>, env: Environment) -> Value
 where
     A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
-    Ok(Value::Closure(Closure {
+    Value::Closure(Closure {
         parameter: param,
         capture: env,
         body: body.erase_annotation(),
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -1023,7 +1051,7 @@ mod tests {
         );
 
         assert_eq!(
-            RuntimeError::UndefinedSymbol(Identifier::new("y")),
+            Box::new(RuntimeError::UndefinedSymbol(Identifier::new("y"))),
             Expression::Variable(EmptyAnnotation, Identifier::new("y"))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap_err()

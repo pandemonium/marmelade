@@ -19,11 +19,11 @@ impl ast::Constant {
         Ok(TypeInference {
             substitutions: Substitutions::default(),
             inferred_type: Type::Constant(match self {
-                ast::Constant::Int(..) => BaseType::Int,
-                ast::Constant::Float(..) => BaseType::Float,
-                ast::Constant::Text(..) => BaseType::Text,
-                ast::Constant::Bool(..) => BaseType::Bool,
-                ast::Constant::Unit => BaseType::Unit,
+                Self::Int(..) => BaseType::Int,
+                Self::Float(..) => BaseType::Float,
+                Self::Text(..) => BaseType::Text,
+                Self::Bool(..) => BaseType::Bool,
+                Self::Unit => BaseType::Unit,
             }),
         })
     }
@@ -45,7 +45,7 @@ impl TypingContext {
                     let inferred = scheme.instantiate(self)?;
                     Ok(TypeInference::trivially(inferred))
                 } else {
-                    Err(TypeError::UndefinedSymbol(binding.clone()))
+                    Err(TypeError::UndefinedSymbol(binding.clone()).into())
                 }
             }
             UntypedExpression::Literal(_, constant) => constant.synthesize_type(),
@@ -68,13 +68,13 @@ impl TypingContext {
                         Type::fresh().into(),
                     )),
                 );
-                ctx.infer_lambda(parameter, body, parsing_info)
+                ctx.infer_lambda(parameter, body, *parsing_info)
             }
             UntypedExpression::Lambda(parsing_info, ast::Lambda { parameter, body }) => {
-                self.infer_lambda(parameter, body, parsing_info)
+                self.infer_lambda(parameter, body, *parsing_info)
             }
             UntypedExpression::Apply(parsing_info, ast::Apply { function, argument }) => {
-                self.infer_application(function, argument, parsing_info)
+                self.infer_application(function, argument, *parsing_info)
             }
             UntypedExpression::Binding(
                 _,
@@ -92,7 +92,7 @@ impl TypingContext {
                     constructor,
                     argument,
                 },
-            ) => self.infer_coproduct(name, constructor, argument, parsing_info),
+            ) => self.infer_coproduct(name, constructor, argument, *parsing_info),
             UntypedExpression::Product(_, product) => self.infer_product(product),
             UntypedExpression::Project(_, ast::Project { base, index }) => {
                 self.infer_projection(base, index)
@@ -102,7 +102,7 @@ impl TypingContext {
                 self.infer_type(and_then)
             }
             UntypedExpression::ControlFlow(parsing_info, control) => {
-                self.infer_control_flow(control, parsing_info)
+                self.infer_control_flow(control, *parsing_info)
             }
             UntypedExpression::DeconstructInto(
                 parsing_info,
@@ -110,16 +110,16 @@ impl TypingContext {
                     scrutinee,
                     match_clauses,
                 },
-            ) => self.infer_deconstruct_into(parsing_info, scrutinee, match_clauses),
+            ) => self.infer_deconstruct_into(*parsing_info, scrutinee, match_clauses),
         }
     }
 
     fn infer_ascription(
         &self,
         ascribed_type: &ast::TypeSignature<ParsingInfo>,
-        underlying: &Box<ast::Expression<ParsingInfo>>,
+        underlying: &ast::Expression<ParsingInfo>,
     ) -> Typing {
-        let ascribed_type = ascribed_type.synthesize_type(&self)?;
+        let ascribed_type = ascribed_type.synthesize_type(self)?;
         let checker = TypeChecker::new(self.clone());
 
         // I have a Type Scheme - why doesn't the checker deal with that?
@@ -137,14 +137,11 @@ impl TypingContext {
             type_annotation,
         }: &ast::Parameter,
         body: &UntypedExpression,
-        _info: &ParsingInfo,
+        _info: ParsingInfo,
     ) -> Typing {
-        let domain = if let Some(domain) = type_annotation {
-            // can I use this to do checking someplace?
-            domain.clone()
-        } else {
-            Type::fresh()
-        };
+        let domain = type_annotation
+            .as_ref()
+            .map_or_else(Type::fresh, |domain| domain.clone());
 
         let domain = TypeScheme::from_constant(domain);
 
@@ -166,7 +163,7 @@ impl TypingContext {
 
     fn infer_deconstruct_into(
         &self,
-        parsing_info: &ParsingInfo,
+        parsing_info: ParsingInfo,
         scrutinee: &UntypedExpression,
         match_clauses: &[MatchClause<ParsingInfo>],
     ) -> Typing {
@@ -181,7 +178,7 @@ impl TypingContext {
             &mut substitutions,
         )?;
 
-        let consequent = ctx.unify_consequents(parsing_info, consequents)?;
+        let consequent = ctx.unify_consequents(parsing_info, &consequents)?;
         let substitutions = substitutions.compose(consequent.substitutions);
         let inferred_type = consequent.inferred_type.apply(&substitutions);
 
@@ -210,23 +207,24 @@ impl TypingContext {
         }
 
         let residual = matrix.residual(&ctx)?;
-        if !residual.is_nothing() {
-            Err(TypeError::IncompleteDeconstruction {
-                at: *parsing_info.info().location(),
-                scrutinee: scrutinee.clone(),
-                residual,
-            })
-        } else {
+        if residual.is_nothing() {
             Ok(TypeInference {
                 substitutions,
                 inferred_type,
             })
+        } else {
+            Err(TypeError::IncompleteDeconstruction {
+                at: *parsing_info.info().location(),
+                scrutinee: scrutinee.clone(),
+                residual,
+            }
+            .into())
         }
     }
 
     fn infer_match_clauses(
         &self,
-        parsing_info: &ParsingInfo,
+        parsing_info: ParsingInfo,
         match_clauses: &[MatchClause<ParsingInfo>],
         scrutinee: &TypeInference,
         substitutions: &mut Substitutions,
@@ -263,8 +261,8 @@ impl TypingContext {
 
     fn unify_consequents(
         &self,
-        parsing_info: &ParsingInfo,
-        consequents: Vec<TypeInference>,
+        parsing_info: ParsingInfo,
+        consequents: &[TypeInference],
     ) -> Typing {
         let mut substitutions = consequents[0].substitutions.clone();
         let mut inferred_type = consequents[0].inferred_type.clone().expand_type(self)?;
@@ -307,7 +305,8 @@ impl TypingContext {
                     Err(TypeError::BadProjection {
                         base: base.inferred_type,
                         index: ix.clone(),
-                    })
+                    }
+                    .into())
                 }
             }
             (Type::Product(ProductType::Struct(elements)), ast::ProductIndex::Struct(id)) => {
@@ -320,13 +319,15 @@ impl TypingContext {
                     Err(TypeError::BadProjection {
                         base: base.inferred_type,
                         index: index.clone(),
-                    })
+                    }
+                    .into())
                 }
             }
             _otherwise => Err(TypeError::BadProjection {
                 base: base.inferred_type,
                 index: index.clone(),
-            }),
+            }
+            .into()),
         }
     }
 
@@ -388,7 +389,7 @@ impl TypingContext {
         name: &ast::TypeName,
         constructor: &ast::Identifier,
         argument: &UntypedExpression,
-        annotation: &ParsingInfo,
+        annotation: ParsingInfo,
     ) -> Typing {
         let type_constructor = self
             .lookup(&name.clone().into())
@@ -408,10 +409,11 @@ impl TypingContext {
                 Err(TypeError::UndefinedCoproductConstructor {
                     coproduct: name.to_owned(),
                     constructor: constructor.to_owned(),
-                })
+                }
+                .into())
             }
         } else {
-            Err(TypeError::UndefinedType(name.clone()))
+            Err(TypeError::UndefinedType(name.clone()).into())
         }
     }
 
@@ -453,7 +455,7 @@ impl TypingContext {
         &self,
         function: &UntypedExpression,
         argument: &UntypedExpression,
-        parsing_info: &ParsingInfo,
+        parsing_info: ParsingInfo,
     ) -> Typing {
         let function = self.infer_type(function)?;
         let argument = self
@@ -497,7 +499,7 @@ impl TypingContext {
     fn infer_control_flow(
         &self,
         control: &ast::ControlFlow<ParsingInfo>,
-        parsing_info: &ParsingInfo,
+        parsing_info: ParsingInfo,
     ) -> Typing {
         match control {
             ast::ControlFlow::If {
@@ -513,20 +515,19 @@ impl TypingContext {
         predicate: &UntypedExpression,
         consequent: &UntypedExpression,
         alternate: &UntypedExpression,
-        annotation: &ParsingInfo,
+        annotation: ParsingInfo,
     ) -> Typing {
         let predicate_type = self.infer_type(predicate)?;
         let predicate = predicate_type
             .inferred_type
             .unify(&Type::Constant(BaseType::Bool), annotation)?;
 
-        let engine = self.with_applied_substitutions(&predicate_type.substitutions.clone());
+        let engine = self.with_applied_substitutions(&predicate_type.substitutions);
         let consequent = engine.infer_type(consequent)?;
         let alternate = engine.infer_type(alternate)?;
 
         let branch = consequent
             .inferred_type
-            .clone() //wtf
             .unify(&alternate.inferred_type, annotation)?;
 
         let substitutions = predicate
@@ -561,7 +562,7 @@ impl Deconstructed {
     }
 
     fn add_substitutions(&mut self, substitutions: Substitutions) {
-        self.substitutions = self.substitutions.compose(substitutions)
+        self.substitutions = self.substitutions.compose(substitutions);
     }
 }
 
@@ -649,16 +650,18 @@ impl Pattern<ParsingInfo> {
                     },
                 ),
                 Type::Coproduct(coproduct),
-            ) => {
-                if let Some(constructor) = coproduct.constructor_signature(constructor) {
-                    Self::Tuple(*parsing_info, argument.clone()).deconstruct(constructor, ctx)
-                } else {
+            ) => coproduct.constructor_signature(constructor).map_or_else(
+                || {
                     Err(TypeError::PatternMatchImpossible {
                         pattern: self.clone().map(|annotation| *annotation.info()),
-                        scrutinee,
-                    })
-                }
-            }
+                        scrutinee: scrutinee.clone(),
+                    }
+                    .into())
+                },
+                |constructor| {
+                    Self::Tuple(*parsing_info, argument.clone()).deconstruct(constructor, ctx)
+                },
+            ),
 
             (
                 pattern @ Self::Tuple(_, TuplePattern { elements }),
@@ -669,14 +672,15 @@ impl Pattern<ParsingInfo> {
                 if tuple.len() == elements.len() {
                     let mut deconstructed = Deconstructed::default();
                     for (pattern, scrutinee) in elements.iter().zip(tuple.iter()) {
-                        deconstructed.merge_with(pattern.deconstruct(scrutinee, ctx)?)
+                        deconstructed.merge_with(pattern.deconstruct(scrutinee, ctx)?);
                     }
                     Ok(deconstructed)
                 } else {
                     Err(TypeError::PatternMatchImpossible {
                         pattern: pattern.clone(),
                         scrutinee,
-                    })
+                    }
+                    .into())
                 }
             }
 
@@ -698,7 +702,7 @@ impl Pattern<ParsingInfo> {
 
             (Self::Literally(parsing_info, pattern), scrutinee) => {
                 let pattern = pattern.synthesize_type()?;
-                let substutitions = scrutinee.unify(&pattern.inferred_type, parsing_info)?;
+                let substutitions = scrutinee.unify(&pattern.inferred_type, *parsing_info)?;
                 let mut deconstructed = Deconstructed::default();
                 deconstructed.add_substitutions(substutitions.compose(pattern.substitutions));
 
@@ -717,7 +721,8 @@ impl Pattern<ParsingInfo> {
             (pattern, scrutinee) => Err(TypeError::PatternMatchImpossible {
                 pattern: pattern.clone(),
                 scrutinee: scrutinee.clone(),
-            }),
+            }
+            .into()),
         }
     }
 }

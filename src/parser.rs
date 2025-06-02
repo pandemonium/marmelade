@@ -89,17 +89,17 @@ use Keyword::*;
 use Token as T;
 use TokenType as TT;
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ParsingInfo {
     pub position: SourceLocation,
 }
 
 impl ParsingInfo {
-    pub fn new(position: SourceLocation) -> Self {
+    pub const fn new(position: SourceLocation) -> Self {
         Self { position }
     }
 
-    pub fn location(&self) -> &SourceLocation {
+    pub const fn location(&self) -> &SourceLocation {
         &self.position
     }
 }
@@ -168,7 +168,7 @@ pub fn parse_declarations(input: &[Token]) -> ParseResult<Vec<Declaration<Parsin
                 Err(ParseError::DeclarationOffside(
                     current_block,
                     remains1.to_vec(),
-                ))?
+                ))?;
             }
         } else if let [T(TT::End, ..), remains @ ..] = remains {
             break Ok((declarations, remains));
@@ -186,13 +186,13 @@ pub fn parse_declarations(input: &[Token]) -> ParseResult<Vec<Declaration<Parsin
 pub fn parse_declaration(input: &[Token]) -> ParseResult<Declaration<ParsingInfo>> {
     match input {
         [T(TT::Identifier(id), pos), T(TT::Equals, ..), remains @ ..] => {
-            parse_value_binding(id, None, pos, remains)
+            parse_value_binding(id, None, *pos, remains)
         }
         [T(TT::Identifier(id), pos), T(TT::TypeAscribe, ..), remains @ ..] => {
-            parse_type_annotated_value_binding(id, pos, remains)
+            parse_type_annotated_value_binding(id, *pos, remains)
         }
         [T(TT::Identifier(id), pos), T(TT::TypeAssign, ..), remains @ ..] => {
-            parse_type_binding(id, pos, remains)
+            parse_type_binding(id, *pos, remains)
         }
         [t, ..] => Err(ParseError::UnexpectedToken(t.clone())),
         otherwise => panic!("{otherwise:?}"),
@@ -201,7 +201,7 @@ pub fn parse_declaration(input: &[Token]) -> ParseResult<Declaration<ParsingInfo
 
 fn parse_type_annotated_value_binding<'a>(
     id: &str,
-    pos: &SourceLocation,
+    pos: SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration<ParsingInfo>> {
     let (quantifier, remains) = if starts_with(&TT::Keyword(Forall), remains) {
@@ -227,16 +227,16 @@ fn parse_type_annotated_value_binding<'a>(
 
 fn parse_type_binding<'a>(
     binder: &str,
-    position: &SourceLocation,
+    position: SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration<ParsingInfo>> {
     parse_type_declarator(
         Identifier::new(binder),
-        strip_if_starts_with(TT::Layout(Layout::Indent), remains),
+        strip_if_starts_with(&TT::Layout(Layout::Indent), remains),
     )
     .map_value(|declarator| {
         Declaration::Type(
-            ParsingInfo::new(*position),
+            ParsingInfo::new(position),
             TypeDeclaration {
                 binder: Identifier::new(binder),
                 declarator,
@@ -253,7 +253,7 @@ fn parse_type_declarator(
         [T(TT::LeftBrace, position), remains @ ..] => {
             let (struct_declarator, remains) = parse_struct_declarator(remains)?;
 
-            let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+            let remains = strip_if_starts_with(&TT::Layout(Layout::Newline), remains);
             if starts_with(&TT::Keyword(Keyword::Where), remains) {
                 let remains = expect(&TT::Layout(Layout::Indent), &remains[1..])?;
                 parse_associated_module(binder, *position, struct_declarator, remains)
@@ -272,12 +272,12 @@ fn parse_type_declarator(
     }
 }
 
-fn parse_associated_module<'a>(
+fn parse_associated_module(
     binder: Identifier,
     position: SourceLocation,
     struct_declarator: Struct<ParsingInfo>,
-    remains: &'a [Token],
-) -> ParseResult<'a, TypeDeclarator<ParsingInfo>> {
+    remains: &[Token],
+) -> ParseResult<TypeDeclarator<ParsingInfo>> {
     parse_declarations(remains).map_value(|declarations| {
         let module = ModuleDeclarator {
             name: binder,
@@ -332,7 +332,7 @@ fn parse_struct_declarator(remains: &[Token]) -> ParseResult<Struct<ParsingInfo>
 
     // Strips a potential Indent first here. This is the C++ brace case
     let (field, mut remains) =
-        parse_struct_field_declaration(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+        parse_struct_field_declaration(strip_if_starts_with(&TT::Layout(Layout::Indent), remains))?;
     fields.push(field);
 
     // Strips another potential Indent here. This is the F# brace case, e.g.:
@@ -340,7 +340,7 @@ fn parse_struct_declarator(remains: &[Token]) -> ParseResult<Struct<ParsingInfo>
     //   Bar : Y
     // }
     let (field, remains1) =
-        parse_struct_field_declaration(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+        parse_struct_field_declaration(strip_if_starts_with(&TT::Layout(Layout::Indent), remains))?;
     fields.push(field);
     remains = remains1;
 
@@ -366,7 +366,7 @@ fn parse_struct_declarator(remains: &[Token]) -> ParseResult<Struct<ParsingInfo>
         },
         expect(
             &TT::RightBrace,
-            strip_if_starts_with(TT::Layout(Layout::Dedent), remains),
+            strip_if_starts_with(&TT::Layout(Layout::Dedent), remains),
         )?,
     ))
 }
@@ -399,7 +399,7 @@ fn parse_coproduct(remains: &[Token]) -> ParseResult<Coproduct<ParsingInfo>> {
     //   how they are separated. (Newline or Pipe.)
     let mut constructors = vec![];
     let (constructor, remains1) =
-        parse_constructor(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+        parse_constructor(strip_if_starts_with(&TT::Layout(Layout::Indent), remains))?;
 
     remains = remains1;
     constructors.push(constructor);
@@ -536,16 +536,16 @@ fn parse_type_expression_infix(
 fn parse_value_binding<'a>(
     binder: &str,
     type_signature: Option<TypeSignature<ParsingInfo>>,
-    position: &SourceLocation,
+    position: SourceLocation,
     remains: &'a [Token],
 ) -> ParseResult<'a, Declaration<ParsingInfo>> {
     parse_value_declarator(
         binder,
-        strip_if_starts_with(TT::Layout(Layout::Indent), remains),
+        strip_if_starts_with(&TT::Layout(Layout::Indent), remains),
     )
     .map_value(|declarator| {
         Declaration::Value(
-            ParsingInfo::new(*position),
+            ParsingInfo::new(position),
             ValueDeclaration {
                 binder: Identifier::new(binder),
                 type_signature,
@@ -588,17 +588,6 @@ fn parse_parameter_list(remains: &[Token]) -> ParseResult<Vec<Parameter>> {
         .ok_or(ParseError::ExpectedTokenType(TT::Period))?;
     let (params, remains) = remains.split_at(end);
 
-    fn parse_parameter(t: &Token) -> Result<Parameter, ParseError> {
-        if let TT::Identifier(id) = t.token_type() {
-            Ok(Parameter {
-                name: Identifier::new(id),
-                type_annotation: None,
-            })
-        } else {
-            Err(ParseError::UnexpectedToken(t.clone()))
-        }
-    }
-
     Ok((
         params
             .iter()
@@ -606,6 +595,17 @@ fn parse_parameter_list(remains: &[Token]) -> ParseResult<Vec<Parameter>> {
             .collect::<Result<_, _>>()?,
         remains,
     ))
+}
+
+fn parse_parameter(t: &Token) -> Result<Parameter, ParseError> {
+    if let TT::Identifier(id) = t.token_type() {
+        Ok(Parameter {
+            name: Identifier::new(id),
+            type_annotation: None,
+        })
+    } else {
+        Err(ParseError::UnexpectedToken(t.clone()))
+    }
 }
 
 pub fn parse_expression_phrase(tokens: &[Token]) -> Result<Expression<ParsingInfo>, ParseError> {
@@ -685,7 +685,7 @@ fn parse_interpolated_text<'a>(
     mut remains: &'a [Token],
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let parsing_info = ParsingInfo::new(position);
-    let mut interpolator = Interpolate::begin(parsing_info, prelude.clone().into());
+    let mut interpolator = Interpolate::begin(parsing_info, prelude.clone());
 
     //    println!("parse_interpolated_text(0): {:?}", remains);
 
@@ -696,7 +696,7 @@ fn parse_interpolated_text<'a>(
         interpolator.splice_expression(quoted);
 
         let mut splice_literal = |pos, literal: &Literal| {
-            interpolator.splice_literal(ParsingInfo::new(pos), literal.clone().into())
+            interpolator.splice_literal(ParsingInfo::new(pos), literal.clone());
         };
 
         match remains {
@@ -727,7 +727,7 @@ fn parse_struct_literal(
     let mut fields = vec![];
 
     let (field, remains) =
-        parse_struct_field_initializer(strip_if_starts_with(TT::Layout(Layout::Indent), remains))?;
+        parse_struct_field_initializer(strip_if_starts_with(&TT::Layout(Layout::Indent), remains))?;
     fields.push(field);
 
     let mut remains = remains;
@@ -775,19 +775,21 @@ fn parse_lambda(
     let (parameters, remains) = parse_parameter_list(tokens)?;
     let remains = expect(&TT::Period, remains)?;
 
-    parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0).map_value(
-        |body| {
-            parameters.into_iter().rfold(body, |body, parameter| {
-                Expression::Lambda(
-                    ParsingInfo::new(position),
-                    Lambda {
-                        parameter,
-                        body: body.into(),
-                    },
-                )
-            })
-        },
+    parse_expression(
+        strip_if_starts_with(&TT::Layout(Layout::Indent), remains),
+        0,
     )
+    .map_value(|body| {
+        parameters.into_iter().rfold(body, |body, parameter| {
+            Expression::Lambda(
+                ParsingInfo::new(position),
+                Lambda {
+                    parameter,
+                    body: body.into(),
+                },
+            )
+        })
+    })
 }
 
 // This function is __TERRIBLE__.
@@ -797,23 +799,23 @@ fn parse_if_expression(
 ) -> ParseResult<Expression<ParsingInfo>> {
     let (predicate, remains) = parse_expression(remains, 0)?;
 
-    let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
-    let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+    let remains = strip_if_starts_with(&TT::Layout(Layout::Indent), remains);
+    let remains = strip_if_starts_with(&TT::Layout(Layout::Newline), remains);
 
     if matches!(remains, [T(TT::Keyword(Then), ..), ..]) {
         let remains = &remains[1..];
-        let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
-        let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+        let remains = strip_if_starts_with(&TT::Layout(Layout::Indent), remains);
+        let remains = strip_if_starts_with(&TT::Layout(Layout::Newline), remains);
 
         let (consequent, remains) = parse_expression(remains, 0)?;
 
-        let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
-        let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
-        let remains = strip_if_starts_with(TT::Layout(Layout::Dedent), remains);
+        let remains = strip_if_starts_with(&TT::Layout(Layout::Indent), remains);
+        let remains = strip_if_starts_with(&TT::Layout(Layout::Newline), remains);
+        let remains = strip_if_starts_with(&TT::Layout(Layout::Dedent), remains);
         if matches!(remains, [T(TT::Keyword(Else), ..), ..]) {
             let remains = &remains[1..];
-            let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
-            let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+            let remains = strip_if_starts_with(&TT::Layout(Layout::Indent), remains);
+            let remains = strip_if_starts_with(&TT::Layout(Layout::Newline), remains);
 
             parse_expression(&remains[0..], 0).map_value(|alternate| {
                 Expression::ControlFlow(
@@ -841,24 +843,24 @@ fn parse_deconstruct_into(
 
     let mut remains = expect(
         &TT::Keyword(Into),
-        strip_if_starts_with(TT::Layout(Layout::Indent), remains),
+        strip_if_starts_with(&TT::Layout(Layout::Indent), remains),
     )?;
 
     let mut match_clauses = vec![];
 
     let (match_clause, remains1) = parse_match_clause(strip_if_starts_with(
-        TT::Layout(Layout::Indent),
-        strip_if_starts_with(TT::Layout(Layout::Newline), remains),
+        &TT::Layout(Layout::Indent),
+        strip_if_starts_with(&TT::Layout(Layout::Newline), remains),
     ))?;
-    remains = strip_if_starts_with(TT::Layout(Layout::Dedent), remains1);
-    remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
+    remains = strip_if_starts_with(&TT::Layout(Layout::Dedent), remains1);
+    remains = strip_if_starts_with(&TT::Layout(Layout::Indent), remains);
     match_clauses.push(match_clause);
 
     while matches!(remains, [T(TT::Pipe, ..), ..]) {
         let (match_clause, remains1) = parse_match_clause(&remains[1..])?;
         match_clauses.push(match_clause);
-        remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains1);
-        remains = strip_if_starts_with(TT::Layout(Layout::Dedent), remains);
+        remains = strip_if_starts_with(&TT::Layout(Layout::Newline), remains1);
+        remains = strip_if_starts_with(&TT::Layout(Layout::Dedent), remains);
     }
 
     Ok((
@@ -877,12 +879,14 @@ fn parse_match_clause(remains: &[Token]) -> ParseResult<MatchClause<ParsingInfo>
     let (pattern, remains) = parse_pattern(remains)?;
     let remains = expect(&TT::Arrow, remains)?;
 
-    parse_expression(strip_if_starts_with(TT::Layout(Layout::Indent), remains), 0).map_value(
-        |consequent| MatchClause {
-            pattern,
-            consequent: consequent.into(),
-        },
+    parse_expression(
+        strip_if_starts_with(&TT::Layout(Layout::Indent), remains),
+        0,
     )
+    .map_value(|consequent| MatchClause {
+        pattern,
+        consequent: consequent.into(),
+    })
 }
 
 fn parse_pattern(remains: &[Token]) -> ParseResult<Pattern<ParsingInfo>> {
@@ -1039,8 +1043,8 @@ fn starts_with(tt: &TokenType, prefix: &[Token]) -> bool {
     matches!(&prefix, &[t, ..] if t.token_type() == tt)
 }
 
-fn strip_if_starts_with(tt: TokenType, prefix: &[Token]) -> &[Token] {
-    if matches!(&prefix, &[t, ..] if t.token_type() == &tt) {
+fn strip_if_starts_with<'a>(tt: &TokenType, prefix: &'a [Token]) -> &'a [Token] {
+    if matches!(&prefix, &[t, ..] if t.token_type() == tt) {
         &prefix[1..]
     } else {
         prefix
@@ -1067,8 +1071,8 @@ fn parse_binding<'a>(
     let newlined = starts_with(&TokenType::Layout(Layout::Newline), remains);
     match strip_first_if(indented && dedented || newlined, remains) {
         [T(TT::Keyword(In), ..), remains @ ..] => {
-            let remains = strip_if_starts_with(TT::Layout(Layout::Indent), remains);
-            let remains = strip_if_starts_with(TT::Layout(Layout::Newline), remains);
+            let remains = strip_if_starts_with(&TT::Layout(Layout::Indent), remains);
+            let remains = strip_if_starts_with(&TT::Layout(Layout::Newline), remains);
 
             parse_expression(remains, 0).map_value(|body| {
                 Expression::Binding(
@@ -1096,7 +1100,7 @@ pub fn parse_expression(
     parse_expression_infix(prefix, remains, precedence)
 }
 
-fn is_expression_terminator(t: &Token) -> bool {
+const fn is_expression_terminator(t: &Token) -> bool {
     matches!(
         t.token_type(),
         TT::Keyword(Keyword::In | Keyword::Else | Keyword::Then | Keyword::Into)
@@ -1140,7 +1144,7 @@ fn parse_expression_infix(
         // <op> <expr>
         [T(op, pos), remains @ ..] if Operator::is_defined(op) => {
             let op = Operator::try_from(op).expect("Failed to decode operator");
-            parse_operator(lhs, input, context_precedence, &op, remains, *pos)
+            parse_operator(lhs, input, context_precedence, op, remains, *pos)
         }
 
         // ( <Newline> | <Indent> ) <op> <expr>
@@ -1149,7 +1153,7 @@ fn parse_expression_infix(
             if Operator::is_defined(op) =>
         {
             let op = Operator::try_from(op).expect("Failed to decode operator");
-            parse_operator(lhs, input, context_precedence, &op, remains, *pos)
+            parse_operator(lhs, input, context_precedence, op, remains, *pos)
         }
 
         // <expr>
@@ -1175,7 +1179,7 @@ fn parse_expression_infix(
     }
 }
 
-fn is_expression_prefix(tt: &TokenType) -> bool {
+const fn is_expression_prefix(tt: &TokenType) -> bool {
     !matches!(
         tt,
         TT::Layout(Layout::Dedent)
@@ -1186,7 +1190,7 @@ fn is_expression_prefix(tt: &TokenType) -> bool {
 }
 
 // This is an annoying function
-fn is_sequence_prefix(prefix: &[Token]) -> bool {
+const fn is_sequence_prefix(prefix: &[Token]) -> bool {
     !matches!(
         prefix,
         [
@@ -1204,13 +1208,13 @@ fn parse_operator<'a>(
     lhs: Expression<ParsingInfo>,
     input: &'a [Token],
     context_precedence: usize,
-    operator: &Operator,
+    operator: Operator,
     remains: &'a [Token],
     position: SourceLocation,
 ) -> ParseResult<'a, Expression<ParsingInfo>> {
     let operator_precedence = operator.precedence();
     if operator_precedence > context_precedence {
-        if operator == &Operator::Select {
+        if operator == Operator::Select {
             parse_select_operator(lhs, remains)
         } else {
             let (rhs, remains) =
@@ -1303,13 +1307,13 @@ fn parse_projection(
     })
 }
 
-fn parse_operator_default<'a>(
+fn parse_operator_default(
     lhs: Expression<ParsingInfo>,
-    operator: &Operator,
-    remains: &'a [Token],
+    operator: Operator,
+    remains: &[Token],
     position: SourceLocation,
     operator_precedence: usize,
-) -> ParseResult<'a, Expression<ParsingInfo>> {
+) -> ParseResult<Expression<ParsingInfo>> {
     parse_expression(
         remains,
         if operator.is_right_associative() {
@@ -1318,7 +1322,7 @@ fn parse_operator_default<'a>(
             operator_precedence
         },
     )
-    .map_value(|rhs| apply_infix(position, lhs, *operator, rhs))
+    .map_value(|rhs| apply_infix(position, lhs, operator, rhs))
 }
 
 fn parse_juxtaposed(

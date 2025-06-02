@@ -220,7 +220,7 @@ where
         let p1 = e.lookup(&Identifier::new("p1")).cloned()?;
 
         self.apply.clone()(p0.clone(), p1.clone())
-            .ok_or_else(|| RuntimeError::InapplicableLamda2 { fst: p0, snd: p1 })
+            .ok_or_else(|| RuntimeError::InapplicableLamda2 { fst: p0, snd: p1 }.into())
     }
 
     fn synthesize_type(&self) -> TypeScheme {
@@ -254,7 +254,7 @@ impl TryFrom<Value> for () {
     type Error = RuntimeError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        if let Value::Base(Base::Unit) = value {
+        if Value::Base(Base::Unit) == value {
             Ok(())
         } else {
             Err(RuntimeError::ExpectedType(Type::Constant(BaseType::Unit)))
@@ -264,7 +264,7 @@ impl TryFrom<Value> for () {
 
 impl From<()> for Value {
     fn from(_value: ()) -> Self {
-        Value::Base(Base::Unit)
+        Self::Base(Base::Unit)
     }
 }
 
@@ -282,7 +282,7 @@ impl TryFrom<Value> for String {
 
 impl From<String> for Value {
     fn from(value: String) -> Self {
-        Value::Base(Base::Text(value))
+        Self::Base(Base::Text(value))
     }
 }
 
@@ -318,11 +318,11 @@ impl TryFrom<Value> for f64 {
 
 impl<A, B> From<(A, B)> for Value
 where
-    A: Into<Value>,
-    B: Into<Value>,
+    A: Into<Self>,
+    B: Into<Self>,
 {
     fn from((p, q): (A, B)) -> Self {
-        Value::Tuple(vec![p.into(), q.into()])
+        Self::Tuple(vec![p.into(), q.into()])
     }
 }
 

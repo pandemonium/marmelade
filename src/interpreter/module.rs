@@ -28,7 +28,7 @@ where
         let dependency_graph = module.dependency_graph();
 
         if !dependency_graph.is_acyclic() {
-            Err(ResolutionError::DependencyCycle)?
+            Err(ResolutionError::DependencyCycle)?;
         }
 
         dependency_graph.check_satisfiable()?;
@@ -54,7 +54,7 @@ where
 
     pub fn into_environment(mut self) -> Resolved<Environment> {
         for id in self.dependency_graph.compute_resolution_order() {
-            self.resolve_declaration(id)?
+            self.resolve_declaration(id)?;
         }
         Ok(self.resolved)
     }
@@ -153,7 +153,7 @@ impl<'a> DependencyGraph<'a> {
         while let Some(independent) = queue.pop_front() {
             boofer.push(independent);
 
-            for (node, edges) in graph.iter_mut() {
+            for (node, edges) in &mut graph {
                 if edges.remove(independent) {
                     if let Some(count) = in_degrees.get_mut(node) {
                         *count -= 1;
@@ -192,7 +192,7 @@ impl<'a> DependencyGraph<'a> {
                     Err(ResolutionError::UnsatisfiedDependency {
                         root: (*root).clone(),
                         dependency: (*dep).clone(),
-                    })?
+                    })?;
                 }
             }
         }
@@ -243,7 +243,7 @@ impl<'a> DependencyGraph<'a> {
         self.dependencies
             .iter()
             .map(|(key, _)| key)
-            .cloned()
+            .copied()
             .collect()
     }
 
@@ -271,7 +271,7 @@ impl<'a> DependencyGraph<'a> {
     }
 }
 
-impl<'a> fmt::Display for DependencyGraph<'a> {
+impl fmt::Display for DependencyGraph<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (dep, deps) in &self.dependencies {
             write!(f, "{dep}")?;

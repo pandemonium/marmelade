@@ -173,10 +173,10 @@ mod tests {
         );
 
         assert_eq!(
-            RuntimeError::InapplicableLamda2 {
+            Box::new(RuntimeError::InapplicableLamda2 {
                 fst: Value::Base(Base::Float(1.5)),
                 snd: Value::Base(Base::Int(2))
-            },
+            }),
             e.reduce(&mut context.interpreter_environment).unwrap_err()
         );
     }

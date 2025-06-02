@@ -24,10 +24,10 @@ pub fn check(
                 .lookup(&id.clone().into())
                 .ok_or_else(|| TypeError::UndefinedSymbol(id.clone()))?
                 .instantiate(ctx)?;
-            expected.unify(&actual_type, &annotation)
+            expected.unify(&actual_type, annotation)
         }
         (expected, Expression::Literal(pi, constant)) => {
-            expected.unify(&constant.synthesize_type()?.inferred_type, pi)
+            expected.unify(&constant.synthesize_type()?.inferred_type, *pi)
         }
         (
             expected @ Type::Arrow(ref parameter_type, ref body_type),
@@ -73,20 +73,20 @@ pub fn check(
                     body,
                 },
             ),
-        ) => check_lambda(pi, expected, name, parameter_type, body, ctx),
+        ) => check_lambda(*pi, expected, name, parameter_type, body, ctx),
         (expected, Expression::Apply(pi, Apply { function, argument })) => {
-            check_apply(pi, expected, function, argument, ctx)
+            check_apply(*pi, expected, function, argument, ctx)
         }
         (Type::Product(expected_type), Expression::Product(annotation, product)) => {
-            check_product(annotation, expected_type, product, ctx)
+            check_product(*annotation, expected_type, product, ctx)
         }
 
         (expected, Expression::Binding(annotation, binding)) => {
-            check_binding(annotation, expected, binding, ctx)
+            check_binding(*annotation, expected, binding, ctx)
         }
         (expected, Expression::Sequence(_, sequence)) => check_sequence(expected, sequence, ctx),
         (expected, Expression::ControlFlow(pi, control_flow)) => {
-            check_control_flow(pi, expected, control_flow, ctx)
+            check_control_flow(*pi, expected, control_flow, ctx)
         }
         //        (expected, Expression::DeconstructInto(_, deconstruct)) => {
         //            todo!()
@@ -101,7 +101,7 @@ pub fn check(
             unify(
                 &expected.clone().apply(&expression.substitutions),
                 &expression.inferred_type,
-                pi,
+                *pi,
             )
         }
     }
@@ -111,7 +111,7 @@ fn check_sequence(
     expected: &Type,
     sequence: &Sequence<ParsingInfo>,
     ctx: &TypingContext,
-) -> Result<Substitutions, TypeError> {
+) -> Typing<Substitutions> {
     let unification = check(&sequence.this, &Type::Constant(BaseType::Unit), ctx)?;
     check(
         &sequence.and_then,
@@ -121,7 +121,7 @@ fn check_sequence(
 }
 
 fn check_product(
-    pi: &ParsingInfo,
+    pi: ParsingInfo,
     expected_type: &ProductType,
     product: &Product<ParsingInfo>,
     ctx: &TypingContext,
@@ -133,7 +133,7 @@ fn check_product(
 
             let mut s = Substitutions::default();
             for (ty, expr) in types.iter().zip(expressions.into_iter()) {
-                s = s.compose(check(&expr, &ty, &ctx.apply_substitutions(&s))?);
+                s = s.compose(check(&expr, ty, &ctx.apply_substitutions(&s))?);
             }
             Ok(s)
         }
@@ -148,9 +148,9 @@ fn check_product(
                     s = s.compose(check(&expr, &expected, &ctx.apply_substitutions(&s))?);
                 } else {
                     Err(TypeError::UndefinedField {
-                        position: *pi.info().location(),
+                        position: *pi.location(),
                         label: rhs_label,
-                    })?
+                    })?;
                 }
             }
 
@@ -158,14 +158,15 @@ fn check_product(
         }
 
         (expected_type, product) => Err(TypeError::ExpectedType {
-            expected_type: Type::Product(expected_type.clone()),
-            literal: Expression::Product(*pi, product.clone()),
-        }),
+            expected_type: Type::Product(expected_type),
+            literal: Expression::Product(pi, product),
+        }
+        .into()),
     }
 }
 
 fn check_binding(
-    _pi: &ParsingInfo,
+    _pi: ParsingInfo,
     expected_type: &Type,
     binding: &Binding<ParsingInfo>,
     ctx: &TypingContext,
@@ -180,13 +181,13 @@ fn check_binding(
     let mut ctx = ctx.clone();
     ctx.bind(binder.clone().into(), bound.inferred_type.generalize(&ctx));
 
-    let unification = check(body, &expected_type, &ctx)?;
+    let unification = check(body, expected_type, &ctx)?;
 
     Ok(unification.compose(bound.substitutions))
 }
 
 fn check_lambda(
-    pi: &ParsingInfo,
+    pi: ParsingInfo,
     expected_type: &Type,
     parameter_name: &Identifier,
     parameter_type: &Type,
@@ -209,7 +210,7 @@ fn check_lambda(
 }
 
 fn check_apply(
-    _pi: &ParsingInfo,
+    _pi: ParsingInfo,
     expected: &Type,
     function: &UntypedExpression,
     argument: &UntypedExpression,
@@ -225,7 +226,7 @@ fn check_apply(
 }
 
 fn check_control_flow(
-    _pi: &ParsingInfo,
+    _pi: ParsingInfo,
     expected: &Type,
     control_flow: &ControlFlow<ParsingInfo>,
     ctx: &TypingContext,
@@ -237,9 +238,9 @@ fn check_control_flow(
             alternate,
         } => {
             let s1 = check(predicate, &Type::Constant(BaseType::Bool), ctx)?;
-            let s2 = check(consequent, &expected, ctx)?;
+            let s2 = check(consequent, expected, ctx)?;
             // Should I apply substitutions?
-            let s3 = check(alternate, &expected, ctx)?;
+            let s3 = check(alternate, expected, ctx)?;
             Ok(s1.compose(s2.compose(s3)))
         }
     }

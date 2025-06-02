@@ -40,17 +40,17 @@ impl<A> Expression<A>
 where
     A: Clone + fmt::Debug + fmt::Display + Parsed,
 {
-    fn into_projection_tree(annotation: &A, name: Identifier) -> Expression<A> {
+    fn into_projection_tree(annotation: &A, name: &Identifier) -> Self {
         Self::make_projection_tree(
             annotation,
-            Expression::Variable(annotation.clone(), name.head().clone()),
+            Self::Variable(annotation.clone(), name.head().clone()),
             &name.components()[1..],
         )
     }
 
-    fn make_projection_tree(annotation: &A, head: Expression<A>, tail: &[&str]) -> Expression<A> {
+    fn make_projection_tree(annotation: &A, head: Self, tail: &[&str]) -> Self {
         tail.iter().fold(head, |prefix, field| {
-            Expression::Project(
+            Self::Project(
                 annotation.clone(),
                 Project {
                     base: prefix.into(),
@@ -65,7 +65,7 @@ where
         match self {
             Self::Variable(annotation, name) => {
                 if bound.contains(name.head()) {
-                    Self::into_projection_tree(&annotation, name.clone())
+                    Self::into_projection_tree(&annotation, &name)
                 } else {
                     Self::Variable(annotation, name)
                 }
@@ -201,14 +201,7 @@ where
                     match_clauses: match_clauses
                         .into_iter()
                         .map(|clause| {
-                            bound.extend(
-                                clause
-                                    .pattern
-                                    .bindings()
-                                    .into_iter()
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
-                            );
+                            bound.extend(clause.pattern.bindings().into_iter().cloned());
                             MatchClause {
                                 pattern: clause.pattern,
                                 consequent: clause
@@ -237,11 +230,11 @@ where
         }
     }
 
-    pub fn rewrite_local_access<'a>(
+    pub fn rewrite_local_access(
         self,
         bound: &mut HashSet<Identifier>,
         module: &ModuleNames,
-    ) -> Expression<A> {
+    ) -> Self {
         match self {
             Self::Variable(annotation, name) => {
                 if !bound.contains(&name) && module.defines(&name) {
@@ -262,7 +255,7 @@ where
             }
             Self::Interpolation(annotation, interpolation) => Self::Interpolation(
                 annotation,
-                interpolation.rewrite_local_access(bound, module).into(),
+                interpolation.rewrite_local_access(bound, module),
             ),
             Self::SelfReferential(
                 annotation,
@@ -385,14 +378,7 @@ where
                     match_clauses: match_clauses
                         .into_iter()
                         .map(|clause| {
-                            bound.extend(
-                                clause
-                                    .pattern
-                                    .bindings()
-                                    .into_iter()
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
-                            );
+                            bound.extend(clause.pattern.bindings().into_iter().cloned());
                             MatchClause {
                                 pattern: clause.pattern,
                                 consequent: clause
@@ -421,11 +407,11 @@ where
         }
     }
 
-    pub fn resolve_names<'a>(self) -> Self {
+    pub fn resolve_names(self) -> Self {
         self.rewrite_identifier_paths(&mut HashSet::default())
     }
 
-    pub fn resolve_module_local_names<'a>(self, module: &ModuleNames) -> Self {
+    pub fn resolve_module_local_names(self, module: &ModuleNames) -> Self {
         // What should this product? Identifier::Select because the next rewrite-step
         // sorts it?
         self.rewrite_local_access(&mut HashSet::default(), module)

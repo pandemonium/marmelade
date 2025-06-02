@@ -62,13 +62,14 @@ where
     }
 
     pub fn prefixed_with(self, name: Identifier) -> Self {
+        let declarations = self
+            .declarations
+            .into_iter()
+            .map(|decl| decl.prefixed_with(name.clone()))
+            .collect();
         Self {
-            name: self.name.prefixed_with(name.clone()),
-            declarations: self
-                .declarations
-                .into_iter()
-                .map(|decl| decl.prefixed_with(name.clone()))
-                .collect(),
+            name: self.name.prefixed_with(name),
+            declarations,
         }
     }
 
@@ -152,7 +153,7 @@ impl Identifier {
         }
     }
 
-    pub fn prefixed_with(&self, prefix: Identifier) -> Self {
+    pub fn prefixed_with(&self, prefix: Self) -> Self {
         fn splice_prefix(id: Identifier, prefix: Identifier) -> Identifier {
             match id {
                 Identifier::Atom(suffix) => Identifier::Select(prefix.into(), suffix),
@@ -279,7 +280,7 @@ impl<A> TypeSignature<A>
 where
     A: Clone + fmt::Debug + fmt::Display + Parsed,
 {
-    pub fn new(body: TypeExpression<A>) -> Self {
+    pub const fn new(body: TypeExpression<A>) -> Self {
         Self {
             quantifiers: None,
             body,
@@ -298,11 +299,11 @@ where
         let type_parameters = self
             .quantifiers
             .as_ref()
-            .map(|forall| forall.fresh_type_parameters())
+            .map(UniversalQuantifiers::fresh_type_parameters)
             .unwrap_or_default();
 
         Ok(TypeScheme {
-            quantifiers: type_parameters.values().cloned().collect(),
+            quantifiers: type_parameters.values().copied().collect(),
             body: self.body.synthesize_type(&type_parameters, ctx)?,
         })
     }
@@ -343,7 +344,7 @@ impl<A> TypeDeclaration<A> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportModule {
     pub exported_symbols: Vec<Identifier>,
 }
@@ -359,11 +360,11 @@ pub enum Declaration<A> {
 }
 
 impl Declaration<ParsingInfo> {
-    pub fn position(&self) -> &SourceLocation {
+    pub const fn position(&self) -> &SourceLocation {
         self.parsing_info().location()
     }
 
-    pub fn parsing_info(&self) -> &ParsingInfo {
+    pub const fn parsing_info(&self) -> &ParsingInfo {
         match self {
             Self::Value(annotation, _)
             | Self::Type(annotation, _)
@@ -423,7 +424,7 @@ where
         }
     }
 
-    pub fn binder(&self) -> Option<&Identifier> {
+    pub const fn binder(&self) -> Option<&Identifier> {
         match self {
             Self::Value(_, decl) => Some(&decl.binder),
             Self::Type(_, decl) => Some(&decl.binder),
@@ -471,7 +472,7 @@ where
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct UniversalQuantifiers(pub Vec<TypeName>);
 
 impl UniversalQuantifiers {
@@ -546,7 +547,7 @@ where
     pub fn make_implementation_module(
         &self,
         annotation: &A,
-        self_name: TypeName,
+        self_name: &TypeName,
         ctx: &TypingContext,
     ) -> Typing<CoproductModule<A>> {
         let declared_type = self.synthesize_type(ctx)?;
@@ -571,12 +572,12 @@ where
         // This maps names to type parameters
         let universals = self.forall.fresh_type_parameters();
         let coproduct_type = self.synthesize_coproduct_type(&universals, ctx)?;
-        self.make_type_scheme(universals, coproduct_type)
+        self.make_type_scheme(&universals, coproduct_type)
     }
 
     fn make_type_scheme(
         &self,
-        universals: HashMap<TypeName, TypeParameter>,
+        universals: &HashMap<TypeName, TypeParameter>,
         body: Type,
     ) -> Typing<TypeScheme> {
         let mut boofer = vec![];
@@ -610,7 +611,7 @@ where
 
                     tuple_signature.map(|signature| {
                         (
-                            name.as_str().to_owned(),
+                            name.as_str(),
                             Type::Product(ProductType::Tuple(TupleType(signature))),
                         )
                     })
@@ -654,14 +655,14 @@ where
     pub fn synthesize_type(&self, ctx: &TypingContext) -> Typing<TypeScheme> {
         let universals = self.forall.fresh_type_parameters();
         let record_type = self.synthesize_struct_type(&universals, ctx)?;
-        self.make_type_scheme(universals, record_type)
+        self.make_type_scheme(&universals, record_type)
     }
 
     fn synthesize_struct_type(
         &self,
         universals: &HashMap<TypeName, TypeParameter>,
         ctx: &TypingContext,
-    ) -> Result<Type, TypeError> {
+    ) -> Typing<Type> {
         Ok(Type::Product(ProductType::Struct(
             self.fields
                 .iter()
@@ -676,7 +677,7 @@ where
 
     fn make_type_scheme(
         &self,
-        universals: HashMap<TypeName, TypeParameter>,
+        universals: &HashMap<TypeName, TypeParameter>,
         body: Type,
     ) -> Typing<TypeScheme> {
         let mut boofer = vec![];
@@ -805,7 +806,7 @@ where
 
         // It should really annotate it with types to make sure the
         // typer gets it right. But that should not be necessary yet.
-        let expression = self.make_injection_lambda_tree(annotation, ty, parameters.clone());
+        let expression = self.make_injection_lambda_tree(annotation, ty, parameters);
 
         Ok(ValueDeclaration {
             binder: self.name.clone(),
@@ -869,7 +870,7 @@ where
         }
 
         ctx.lookup(&id.clone().into())
-            .map(|scheme| scheme.clone().map_body(ultimate_codomain))
+            .map(|scheme| scheme.map_body(ultimate_codomain))
     }
 }
 
@@ -937,10 +938,10 @@ where
                     });
 
                 // A little kludgy
-                if !scheme.is_type_constructor() {
-                    scheme.instantiate(ctx)
-                } else {
+                if scheme.is_type_constructor() {
                     Ok(Type::Named(TypeName::new(name.as_str())))
+                } else {
+                    scheme.instantiate(ctx)
                 }
             }
             Self::Parameter(_, param) => {
@@ -948,11 +949,14 @@ where
 
                 type_params
                     .get(&type_name)
-                    .cloned()
+                    .copied()
                     .map(Type::Parameter)
-                    .ok_or_else(|| TypeError::UndefinedQuantifierInTypeExpression {
-                        quantifier: type_name,
-                        in_expression: self.clone().map(|a| *a.info()),
+                    .ok_or_else(|| {
+                        TypeError::UndefinedQuantifierInTypeExpression {
+                            quantifier: type_name,
+                            in_expression: self.clone().map(|a| *a.info()),
+                        }
+                        .into()
                     })
             }
             Self::Apply(_, node) => Ok(Type::Apply(
@@ -973,8 +977,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Constructor(_, id) => write!(f, "{id}"),
-            Self::Parameter(_, id) => write!(f, "{id}"),
+            Self::Constructor(_, id) | Self::Parameter(_, id) => write!(f, "{id}"),
             Self::Apply(_, apply) => write!(f, "{apply}"),
             Self::Arrow(_, arrow) => write!(f, "{arrow}"),
         }
@@ -1079,21 +1082,21 @@ where
 }
 
 // these can be pattern matches too
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parameter {
     pub name: Identifier,
     pub type_annotation: Option<Type>,
 }
 
 impl Parameter {
-    pub fn new(name: Identifier) -> Self {
+    pub const fn new(name: Identifier) -> Self {
         Self {
             name,
             type_annotation: None,
         }
     }
 
-    pub fn new_with_type_annotation(name: Identifier, ty: Type) -> Self {
+    pub const fn new_with_type_annotation(name: Identifier, ty: Type) -> Self {
         Self {
             name,
             type_annotation: Some(ty),
@@ -1173,28 +1176,15 @@ where
         fragments.push(f);
     }
 
-    pub fn map_expression<F>(&mut self, mut f: F)
-    where
-        F: FnMut(Expression<A>) -> Expression<A>,
-    {
-        let Self(fragments) = self;
-        for fragment in fragments {
-            if let Fragment::Evaluate(_, expression) = fragment {
-                let expr = expression.as_ref().clone();
-                *expression = f(expr).into()
-            }
-        }
-    }
-
-    pub fn rewrite_local_access<'a>(
+    pub fn rewrite_local_access(
         self,
         bound: &mut HashSet<Identifier>,
         module: &ModuleNames,
     ) -> Self {
-        let Self(mut fragments) = self;
+        let Self(fragments) = self;
         Self(
             fragments
-                .drain(..)
+                .into_iter()
                 .map(|f| match f {
                     Fragment::Evaluate(annotation, expression) => Fragment::Evaluate(
                         annotation,
@@ -1287,7 +1277,7 @@ pub struct ModuleNames {
 }
 
 impl ModuleNames {
-    pub fn name(&self) -> &Identifier {
+    pub const fn name(&self) -> &Identifier {
         &self.binder
     }
 
@@ -1476,10 +1466,10 @@ impl fmt::Display for DomainExpression {
             Self::Tuple(elements) => {
                 let mut i = elements.iter();
                 if let Some(element) = i.next() {
-                    write!(f, "{}", element)?;
+                    write!(f, "{element}")?;
                 }
                 for element in i {
-                    write!(f, "{}", element)?;
+                    write!(f, "{element}")?;
                 }
                 Ok(())
             }
@@ -1598,7 +1588,7 @@ impl DomainExpression {
             (Self::Struct(mut lhs), Self::Struct(rhs)) => Self::Struct({
                 let mut rhs = rhs.into_iter().collect::<HashMap<_, _>>();
 
-                for (field, lhs) in lhs.iter_mut() {
+                for (field, lhs) in &mut lhs {
                     lhs.join(rhs.remove(field).expect("bad pattern"));
                 }
 
@@ -1608,7 +1598,7 @@ impl DomainExpression {
             (Self::Coproduct(mut lhs), Self::Coproduct(rhs)) => Self::Coproduct({
                 let mut rhs = rhs.into_iter().collect::<HashMap<_, _>>();
 
-                for (constructor, lhs) in lhs.iter_mut() {
+                for (constructor, lhs) in &mut lhs {
                     if let Some(rhs) = rhs.remove(constructor) {
                         inner_join(lhs, rhs);
                     }
@@ -1659,7 +1649,7 @@ impl DomainExpression {
                     .map(|(lhs, rhs)| lhs.eliminate(rhs, ctx))
                     .collect::<Typing<Vec<_>>>()?;
 
-                if elements.iter().all(|e| e.is_nothing()) {
+                if elements.iter().all(Self::is_nothing) {
                     Ok(Self::Nothing)
                 } else {
                     Ok(Self::Tuple(elements))
@@ -1691,10 +1681,10 @@ impl DomainExpression {
     // [x | constructors(C) \ constructors(D), elements(C) \ elements(D), c in C \ d in D, x != Nothing]
     fn eliminate_constructors(
         &self,
-        lhs: &[(Identifier, Vec<DomainExpression>)],
-        rhs: &[(Identifier, Vec<DomainExpression>)],
+        lhs: &[(Identifier, Vec<Self>)],
+        rhs: &[(Identifier, Vec<Self>)],
         ctx: &TypingContext,
-    ) -> Typing<DomainExpression> {
+    ) -> Typing<Self> {
         let rhs = rhs.iter().cloned().collect::<HashMap<_, _>>();
         let constructors = lhs
             .iter()
@@ -1722,7 +1712,7 @@ impl DomainExpression {
                     Some(Ok((constructor.clone(), lhs.clone())))
                 }
             })
-            .collect::<Typing<Vec<(Identifier, Vec<DomainExpression>)>>>()?;
+            .collect::<Typing<Vec<(Identifier, Vec<Self>)>>>()?;
 
         if constructors.is_empty() {
             Ok(Self::Nothing)
@@ -1732,13 +1722,13 @@ impl DomainExpression {
     }
 
     pub fn is_nothing(&self) -> bool {
-        self == &DomainExpression::Nothing
+        self == &Self::Nothing
     }
 
     pub fn is_saturated(&self) -> bool {
         match self {
             Self::Whole(..) => true,
-            Self::Tuple(elements) => elements.iter().all(|e| e.is_saturated()),
+            Self::Tuple(elements) => elements.iter().all(Self::is_saturated),
             Self::Struct(fields) => fields.iter().all(|(_, f)| f.is_saturated()),
             _otherwise => false,
         }
@@ -1850,8 +1840,7 @@ impl<A> Pattern<A> {
                         .argument
                         .elements
                         .iter()
-                        .flat_map(|p| p.free_variables())
-                        .collect::<HashSet<_>>(),
+                        .flat_map(|p| p.free_variables()),
                 );
                 free
             }
@@ -1872,13 +1861,13 @@ impl<A> Pattern<A> {
         }
     }
 
-    pub fn annotation(&self) -> &A {
+    pub const fn annotation(&self) -> &A {
         match self {
-            Pattern::Coproduct(annotation, ..) => annotation,
-            Pattern::Tuple(annotation, ..) => annotation,
-            Pattern::Struct(annotation, ..) => annotation,
-            Pattern::Literally(annotation, ..) => annotation,
-            Pattern::Otherwise(annotation, ..) => annotation,
+            Self::Coproduct(annotation, ..)
+            | Self::Tuple(annotation, ..)
+            | Self::Struct(annotation, ..)
+            | Self::Literally(annotation, ..)
+            | Self::Otherwise(annotation, ..) => annotation,
         }
     }
 }
@@ -2126,10 +2115,10 @@ where
 
 impl Expression<ParsingInfo> {
     pub fn position(&self) -> &lexer::SourceLocation {
-        &self.parsing_info().location()
+        self.parsing_info().location()
     }
 
-    pub fn parsing_info(&self) -> &ParsingInfo {
+    pub const fn parsing_info(&self) -> &ParsingInfo {
         self.annotation()
     }
 }
@@ -2138,7 +2127,7 @@ impl<A> Expression<A>
 where
     A: fmt::Debug + fmt::Display + Clone + Parsed,
 {
-    pub fn annotation(&self) -> &A {
+    pub const fn annotation(&self) -> &A {
         match self {
             Self::TypeAscription(annotation, ..)
             | Self::Variable(annotation, ..)

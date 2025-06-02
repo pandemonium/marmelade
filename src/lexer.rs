@@ -59,13 +59,9 @@ impl LexicalAnalyzer {
         for t in &self.output {
             if let TokenType::Layout(layout) = t.token_type() {
                 match layout {
-                    Layout::Indent => {
+                    Layout::Indent | Layout::Dedent => {
                         indentation = t.location().column as usize;
-                        spaces = " ".repeat(indentation)
-                    }
-                    Layout::Dedent => {
-                        indentation = t.location().column as usize;
-                        spaces = " ".repeat(indentation)
+                        spaces = " ".repeat(indentation);
                     }
                     _otherwise => (),
                 }
@@ -137,13 +133,11 @@ impl LexicalAnalyzer {
     fn scan_block_comment<'a>(&mut self, mut remains: &'a [char]) -> &'a [char] {
         while let Some(pos) = remains.iter().position(|&c| c == '*') {
             if remains[pos..].len() > 1 {
+                self.compute_location(remains, pos);
                 if remains[pos + 1] == ')' {
-                    self.compute_location(remains, pos);
                     return &remains[(pos + 2)..];
-                } else {
-                    self.compute_location(remains, pos);
-                    remains = &remains[pos + 2..]
                 }
+                remains = &remains[pos + 2..];
             }
         }
 
@@ -226,9 +220,9 @@ impl LexicalAnalyzer {
                         TokenType::Interpolate(Interpolation::Epilogue(Literal::Text(image))),
                         &remains1[1..],
                     );
-                } else {
-                    remains = remains1;
                 }
+
+                remains = remains1;
             }
         }
     }
@@ -254,7 +248,7 @@ impl LexicalAnalyzer {
         remains
     }
 
-    fn compute_new_location(&mut self, whitespace: &[char]) -> SourceLocation {
+    fn compute_new_location(&self, whitespace: &[char]) -> SourceLocation {
         let mut next_location = self.location;
 
         for c in whitespace {
@@ -314,11 +308,11 @@ impl LexicalAnalyzer {
     }
 }
 
-fn is_special_symbol(c: char) -> bool {
+const fn is_special_symbol(c: char) -> bool {
     matches!(c, '∀' | 'λ')
 }
 
-fn is_number_prefix(c: char) -> bool {
+const fn is_number_prefix(c: char) -> bool {
     c.is_ascii_digit()
 }
 
@@ -348,32 +342,32 @@ pub struct SourceLocation {
 }
 
 impl SourceLocation {
-    pub fn new(row: u32, column: u32) -> Self {
+    pub const fn new(row: u32, column: u32) -> Self {
         Self { row, column }
     }
 
-    fn move_right(&mut self, delta: u32) {
+    const fn move_right(&mut self, delta: u32) {
         self.column += delta;
     }
 
-    fn new_line(&mut self) {
+    const fn new_line(&mut self) {
         self.row += 1;
         self.column = 1;
     }
 
-    pub fn is_left_of(&self, indentation_level: u32) -> bool {
+    pub const fn is_left_of(&self, indentation_level: u32) -> bool {
         self.column < indentation_level
     }
 
-    pub fn is_right_of(&self, indentation_level: u32) -> bool {
+    pub const fn is_right_of(&self, indentation_level: u32) -> bool {
         self.column > indentation_level
     }
 
-    pub fn is_below(&self, rhs: &Self) -> bool {
+    pub const fn is_below(&self, rhs: &Self) -> bool {
         self.row > rhs.row
     }
 
-    pub fn is_same_block(&self, rhs: &Self) -> bool {
+    pub const fn is_same_block(&self, rhs: &Self) -> bool {
         (self.column == rhs.column && self.is_below(rhs)) || self.row == rhs.row
     }
 }
@@ -387,7 +381,7 @@ impl Default for SourceLocation {
 impl fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { row, column } = self;
-        write!(f, "({},{})", row, column)
+        write!(f, "({row},{column})")
     }
 }
 
@@ -434,13 +428,15 @@ pub enum TokenType {
 
 impl TokenType {
     fn decode_reserved_words(id: String) -> Self {
-        match Keyword::try_from_identifier(&id) {
-            Some(keyword) => Self::Keyword(keyword),
-            None => id
-                .parse::<bool>()
-                .map(|x| Self::Literal(Literal::Bool(x)))
-                .unwrap_or_else(|_| Self::Identifier(id)),
-        }
+        Keyword::try_from_identifier(&id).map_or_else(
+            || {
+                id.parse::<bool>().map_or_else(
+                    |_| Self::Identifier(id),
+                    |x| Self::Literal(Literal::Bool(x)),
+                )
+            },
+            Self::Keyword,
+        )
     }
 }
 
@@ -492,28 +488,28 @@ impl Operator {
 
     pub const fn try_from(token: &TokenType) -> Option<Self> {
         match token {
-            TokenType::Equals => Some(Operator::Equals),
-            TokenType::Plus => Some(Operator::Plus),
-            TokenType::Minus => Some(Operator::Minus),
-            TokenType::Star => Some(Operator::Times),
-            TokenType::Slash => Some(Operator::Division),
-            TokenType::Percent => Some(Operator::Modulo),
-            TokenType::Gte => Some(Operator::Gte),
-            TokenType::Lte => Some(Operator::Lte),
-            TokenType::Gt => Some(Operator::Gt),
-            TokenType::Lt => Some(Operator::Lt),
-            TokenType::Comma => Some(Operator::Tuple),
-            TokenType::Period => Some(Operator::Select),
-            TokenType::Keyword(Keyword::And) => Some(Operator::And),
-            TokenType::Keyword(Keyword::Or) => Some(Operator::Or),
-            TokenType::Keyword(Keyword::Xor) => Some(Operator::Xor),
-            TokenType::Keyword(Keyword::Not) => Some(Operator::Not),
+            TokenType::Equals => Some(Self::Equals),
+            TokenType::Plus => Some(Self::Plus),
+            TokenType::Minus => Some(Self::Minus),
+            TokenType::Star => Some(Self::Times),
+            TokenType::Slash => Some(Self::Division),
+            TokenType::Percent => Some(Self::Modulo),
+            TokenType::Gte => Some(Self::Gte),
+            TokenType::Lte => Some(Self::Lte),
+            TokenType::Gt => Some(Self::Gt),
+            TokenType::Lt => Some(Self::Lt),
+            TokenType::Comma => Some(Self::Tuple),
+            TokenType::Period => Some(Self::Select),
+            TokenType::Keyword(Keyword::And) => Some(Self::And),
+            TokenType::Keyword(Keyword::Or) => Some(Self::Or),
+            TokenType::Keyword(Keyword::Xor) => Some(Self::Xor),
+            TokenType::Keyword(Keyword::Not) => Some(Self::Not),
             _otherwise => None,
         }
     }
 
     pub const fn is_right_associative(&self) -> bool {
-        matches!(self, Operator::Tuple)
+        matches!(self, Self::Tuple)
     }
 
     pub const fn precedence(&self) -> usize {
@@ -578,7 +574,7 @@ impl fmt::Display for Operator {
             Self::Equals => write!(f, "="),
 
             Self::Gte => write!(f, ">="),
-            Self::Lte => write!(f, ">="),
+            Self::Lte => write!(f, "<="),
             Self::Gt => write!(f, ">"),
             Self::Lt => write!(f, "<"),
 
@@ -636,29 +632,27 @@ pub enum Keyword {
 }
 
 impl Keyword {
-    fn try_from_identifier(id: &str) -> Option<Keyword> {
+    fn try_from_identifier(id: &str) -> Option<Self> {
         match id {
-            "let" => Some(Keyword::Let),
-            "in" => Some(Keyword::In),
-            "if" => Some(Keyword::If),
-            "then" => Some(Keyword::Then),
-            "else" => Some(Keyword::Else),
-            "struct" => Some(Keyword::Struct),
-            "coproduct" => Some(Keyword::Coproduct),
-            "alias" => Some(Keyword::Alias),
-            "module" => Some(Keyword::Module),
-            "use" => Some(Keyword::Use),
-            "lambda" => Some(Keyword::Lambda),
-            "λ" => Some(Keyword::Lambda),
-            "and" => Some(Keyword::And),
-            "or" => Some(Keyword::Or),
-            "xor" => Some(Keyword::Xor),
-            "not" => Some(Keyword::Not),
-            "forall" => Some(Keyword::Forall),
-            "∀" => Some(Keyword::Forall),
-            "deconstruct" => Some(Keyword::Deconstruct),
-            "into" => Some(Keyword::Into),
-            "where" => Some(Keyword::Where),
+            "let" => Some(Self::Let),
+            "in" => Some(Self::In),
+            "if" => Some(Self::If),
+            "then" => Some(Self::Then),
+            "else" => Some(Self::Else),
+            "struct" => Some(Self::Struct),
+            "coproduct" => Some(Self::Coproduct),
+            "alias" => Some(Self::Alias),
+            "module" => Some(Self::Module),
+            "use" => Some(Self::Use),
+            "lambda" | "λ" => Some(Self::Lambda),
+            "and" => Some(Self::And),
+            "or" => Some(Self::Or),
+            "xor" => Some(Self::Xor),
+            "not" => Some(Self::Not),
+            "forall" | "∀" => Some(Self::Forall),
+            "deconstruct" => Some(Self::Deconstruct),
+            "into" => Some(Self::Into),
+            "where" => Some(Self::Where),
             _otherwise => None,
         }
     }
@@ -711,16 +705,16 @@ impl fmt::Display for Literal {
 pub struct Token(pub TokenType, pub SourceLocation);
 
 impl Token {
-    pub fn token_type(&self) -> &TokenType {
+    pub const fn token_type(&self) -> &TokenType {
         &self.0
     }
 
-    pub fn location(&self) -> &SourceLocation {
+    pub const fn location(&self) -> &SourceLocation {
         &self.1
     }
 
-    pub fn is_layout(&self) -> bool {
-        matches!(self, Token(TokenType::Layout(..), ..))
+    pub const fn is_layout(&self) -> bool {
+        matches!(self, Self(TokenType::Layout(..), ..))
     }
 }
 

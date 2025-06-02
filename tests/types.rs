@@ -106,7 +106,7 @@ fn type_expansions() {
 
     if let TypeDeclarator::Coproduct(_, coproduct) = &list_declaration {
         for constructor in coproduct
-            .make_implementation_module(&ParsingInfo::default(), TypeName::new("List"), &ctx)
+            .make_implementation_module(&ParsingInfo::default(), &TypeName::new("List"), &ctx)
             .unwrap()
             .constructors
         {
