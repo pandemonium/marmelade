@@ -3,7 +3,7 @@ use std::{collections::HashMap, mem};
 use crate::{
     ast::{
         self, Constructor, ConstructorPattern, DomainExpression, Identifier, MatchClause, Pattern,
-        PatternMatrix, StructPattern, TuplePattern,
+        PatternMatrix, StructPattern, TuplePattern, Variable,
     },
     parser::ParsingInfo,
     typer::{
@@ -41,11 +41,15 @@ impl TypingContext {
             ) => self.infer_ascription(type_signature, underlying),
             UntypedExpression::Variable(_, binding)
             | UntypedExpression::InvokeBridge(_, binding) => {
-                if let Some(scheme) = self.lookup(&binding.clone().into()) {
-                    let inferred = scheme.instantiate(self)?;
-                    Ok(TypeInference::trivially(inferred))
+                if let Variable::Identifier(binding) = binding {
+                    if let Some(scheme) = self.lookup(&binding.clone().into()) {
+                        let inferred = scheme.instantiate(self)?;
+                        Ok(TypeInference::trivially(inferred))
+                    } else {
+                        Err(TypeError::UndefinedSymbol(binding.clone()).into())
+                    }
                 } else {
-                    Err(TypeError::UndefinedSymbol(binding.clone()).into())
+                    panic!("Variables must not be a De Bruijn index at this point. {binding}")
                 }
             }
             UntypedExpression::Literal(_, constant) => constant.synthesize_type(),

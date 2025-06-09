@@ -2,7 +2,7 @@ use std::collections::{hash_map, HashSet};
 use std::{any::Any, cell::RefCell, collections::HashMap, fmt, rc::Rc};
 use thiserror::Error;
 
-use crate::ast::{Fragment, Interpolate, ModuleNames};
+use crate::ast::{Fragment, Interpolate, ModuleNames, Variable};
 use crate::typer::EmptyAnnotation;
 use crate::{
     ast::{
@@ -446,8 +446,8 @@ impl fmt::Display for RecursiveClosure {
 #[derive(Clone, PartialEq)]
 pub struct Closure {
     pub parameter: Identifier,
-    pub capture: Environment,
-    pub body: Expression<EmptyAnnotation>,
+    pub capture: Box<Environment>,
+    pub body: Box<Expression<EmptyAnnotation>>,
 }
 
 impl fmt::Debug for Closure {
@@ -524,21 +524,50 @@ impl fmt::Display for Base {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Environment {
-    // todo: Change back to HashMap
-    parent: Option<Rc<Environment>>,
+    // How is it going to work with De Bruijn-indicies when this is a nested thing?
+    // Then again: if I can drop the Identifiers here, its size will reduce dramatically
+    //    parent: Option<Rc<Environment>>,
     leaf: Vec<(Identifier, Value)>,
 }
 
 impl Environment {
-    pub fn into_parent(self: Self) -> Self {
-        Self {
-            parent: Rc::new(self).into(),
-            leaf: Vec::default(),
-        }
+    // turn into a NOP, then remove
+    pub fn into_parent(self) -> Self {
+        //        Self {
+        //            parent: Rc::new(self).into(),
+        //            leaf: Vec::default(),
+        //        }
+        self
     }
 
     pub fn insert_binding(&mut self, binder: Identifier, bound: Value) {
+        println!("insert_binding: {binder} {}", self.leaf.len());
         self.leaf.push((binder, bound));
+    }
+
+    pub fn de_bruijn_index(&self, binder: &Identifier) -> Interpretation<usize> {
+        // todo: delete parent and use a single list
+        self.leaf
+            .iter()
+            .position(|(id, _)| id == binder)
+            .ok_or_else(|| {
+                RuntimeError::UndefinedSymbol(Variable::Identifier(binder.clone())).into()
+            })
+    }
+
+    pub fn lookup_variable(&self, id: &Variable) -> Interpretation<&Value> {
+        match id {
+            Variable::Index(ix) => self.leaf.get(*ix).map_or_else(
+                || {
+                    Err(
+                        // Consider keeping Identifier in the index expression for debugging purposes
+                        RuntimeError::UndefinedSymbol(id.clone()).into(),
+                    )
+                },
+                |(_, value)| Ok(value),
+            ),
+            Variable::Identifier(identifier) => self.lookup(identifier),
+        }
     }
 
     pub fn lookup(&self, id: &Identifier) -> Interpretation<&Value> {
@@ -547,14 +576,23 @@ impl Environment {
             .rev()
             .find_map(|(binder, bound)| (binder == id).then_some(bound))
             .map_or_else(
-                || {
-                    self.parent.as_ref().map_or_else(
-                        || Err(RuntimeError::UndefinedSymbol(id.clone()).into()),
-                        |env| env.lookup(id),
-                    )
-                },
+                || Err(RuntimeError::UndefinedSymbol(Variable::Identifier(id.clone())).into()),
                 Ok,
             )
+        //            .map_or_else(
+        //                || {
+        //                    self.parent.as_ref().map_or_else(
+        //                        || {
+        //                            Err(
+        //                                RuntimeError::UndefinedSymbol(Variable::Identifier(id.clone()))
+        //                                    .into(),
+        //                            )
+        //                        },
+        //                        |env| env.lookup(id),
+        //                    )
+        //                },
+        //                Ok,
+        //            )
     }
 
     pub fn is_defined(&self, id: &Identifier) -> bool {
@@ -562,18 +600,11 @@ impl Environment {
     }
 
     pub fn symbols(&self) -> Vec<&Identifier> {
-        let mut boofer = self
-            .leaf
+        self.leaf
             .iter()
             .rev()
             .map(|(id, ..)| id)
-            .collect::<Vec<_>>();
-
-        if let Some(enclosing) = self.parent.as_ref() {
-            boofer.extend(enclosing.symbols());
-        }
-
-        boofer
+            .collect::<Vec<_>>()
     }
 
     fn remove_binding(&mut self, binder: &Identifier) {
@@ -590,10 +621,10 @@ impl fmt::Display for Environment {
             write!(f, "{binder} = {binding},")?;
         }
 
-        if let Some(enclosing) = self.parent.as_ref() {
-            writeln!(f)?;
-            write!(f, "{enclosing}")?;
-        }
+        //        if let Some(enclosing) = self.parent.as_ref() {
+        //            writeln!(f)?;
+        //            write!(f, "{enclosing}")?;
+        //        }
 
         Ok(())
     }
@@ -602,7 +633,7 @@ impl fmt::Display for Environment {
 #[derive(Clone, Debug, PartialEq, Error)]
 pub enum RuntimeError {
     #[error("Undefined symbol {0}")]
-    UndefinedSymbol(Identifier),
+    UndefinedSymbol(Variable),
 
     #[error("Expected type {0}")]
     ExpectedType(Type),
@@ -611,7 +642,7 @@ pub enum RuntimeError {
     ExpectedFunction { got: Value },
 
     #[error("Expected a synthetic closure {0}")]
-    ExpectedSynthetic(Identifier),
+    ExpectedSynthetic(Variable),
 
     #[error("Function not applicable to {fst} and {snd}")]
     InapplicableLamda2 { fst: Value, snd: Value },
@@ -640,7 +671,7 @@ where
     pub fn reduce(self, env: &mut Environment) -> Interpretation {
         match self {
             Self::TypeAscription(_, inner) => Ok(inner.underlying.reduce(env)?),
-            Self::Variable(_, id) => env.lookup(&id).cloned(),
+            Self::Variable(_, id) => reduce_variable(id, env),
             Self::InvokeBridge(_, id) => invoke_bridge(id, env),
             Self::Literal(_, constant) => Ok(reduce_immediate(constant)),
             Self::Interpolation(_, interpolate) => reduce_concatenate(interpolate, env),
@@ -677,6 +708,10 @@ where
             Self::DeconstructInto(_, deconstruct) => reduce_deconstruction(deconstruct, env),
         }
     }
+}
+
+fn reduce_variable(id: Variable, env: &Environment) -> Interpretation {
+    env.lookup_variable(&id).cloned()
 }
 
 impl<A> Interpolate<A>
@@ -754,16 +789,24 @@ where
         .and_then(|matched| reduce_consequent(matched, env))
 }
 
-fn reduce_consequent<A>(matched: Match<A>, env: &Environment) -> Interpretation
+fn reduce_consequent<A>(matched: Match<A>, env: &mut Environment) -> Interpretation
 where
     A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
-    let mut env = env.clone();
-    for (binding, value) in matched.bindings {
-        env.insert_binding(binding, value);
+    //    let mut env = env.clone();
+    for (binding, value) in &matched.bindings {
+        env.insert_binding(binding.clone(), value.clone());
     }
 
-    matched.consequent.reduce(&mut env)
+    let v = matched.consequent.reduce(env);
+
+    println!("reduce_consequent: {v:?}");
+
+    for (binding, _) in matched.bindings.iter().rev() {
+        env.remove_binding(&binding);
+    }
+
+    v
 }
 
 pub struct Match<A> {
@@ -799,6 +842,7 @@ where
         ) if constructor == &pattern.constructor => {
             extract_matched_bindings(value, Pattern::Tuple(annotation, pattern.argument))
         }
+
         (Value::Tuple(elements), Pattern::Tuple(_, pattern))
             if elements.len() == pattern.elements.len() =>
         {
@@ -809,6 +853,8 @@ where
 
             Some(bindings)
         }
+
+        // This does not seem to insert both the aliases and the field names
         (Value::Struct(field_values), Pattern::Struct(_, StructPattern { fields }))
             if fields.len() == field_values.len() =>
         {
@@ -825,8 +871,11 @@ where
 
             Some(bindings)
         }
+
         (_, Pattern::Literally(_, this)) => (scrutinee == &reduce_immediate(this)).then(Vec::new),
+
         (_, Pattern::Otherwise(_, binding)) => Some(vec![(binding, scrutinee.clone())]),
+
         _otherwise => None,
     }
 }
@@ -864,6 +913,7 @@ where
     })
 }
 
+// Is this leaking memory?
 fn make_recursive_closure(
     name: Identifier,
     parameter: Identifier,
@@ -872,8 +922,8 @@ fn make_recursive_closure(
 ) -> Interpretation {
     let closure = Rc::new(RefCell::new(Closure {
         parameter,
-        capture,
-        body,
+        capture: capture.into(),
+        body: body.into(),
     }));
 
     closure.borrow_mut().capture.insert_binding(
@@ -904,11 +954,11 @@ where
     and_then.reduce(env)
 }
 
-fn invoke_bridge(id: Identifier, env: &Environment) -> Interpretation {
+fn invoke_bridge(id: Variable, env: &Environment) -> Interpretation {
     if let Value::Bridge {
         // Do away with this sucker. Impl Deref.
         target: BridgeDebug(bridge),
-    } = env.lookup(&id)?
+    } = env.lookup_variable(&id)?
     {
         bridge.evaluate(env)
     } else {
@@ -1000,22 +1050,23 @@ where
 {
     Value::Closure(Closure {
         parameter: param,
-        capture: env,
-        body: body.erase_annotation(),
+        capture: env.into(),
+        body: body.erase_annotation().into(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{Apply, Binding, Constant, ControlFlow, Expression, Identifier, Lambda, Parameter},
+        ast::{
+            Apply, Binding, Constant, ControlFlow, Expression, Identifier, Lambda, Parameter,
+            Variable,
+        },
         context::Linkage,
-        interpreter::{Base, Environment, RuntimeError, Value},
+        interpreter::{Base, RuntimeError, Value},
         stdlib,
         typer::EmptyAnnotation,
     };
-
-    use super::Closure;
 
     #[test]
     fn reduce_literal() {
@@ -1043,7 +1094,7 @@ mod tests {
 
         assert_eq!(
             Base::Int(1),
-            Expression::Variable(EmptyAnnotation, Identifier::new("x"))
+            Expression::Variable(EmptyAnnotation, Variable::Identifier(Identifier::new("x")))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap()
                 .try_into_base_type()
@@ -1051,8 +1102,10 @@ mod tests {
         );
 
         assert_eq!(
-            Box::new(RuntimeError::UndefinedSymbol(Identifier::new("y"))),
-            Expression::Variable(EmptyAnnotation, Identifier::new("y"))
+            Box::new(RuntimeError::UndefinedSymbol(Variable::Identifier(
+                Identifier::new("y")
+            ))),
+            Expression::Variable(EmptyAnnotation, Variable::Identifier(Identifier::new("y")))
                 .reduce(&mut context.interpreter_environment)
                 .unwrap_err()
         )
@@ -1065,12 +1118,18 @@ mod tests {
                 function: Box::new(Expression::Lambda(
                     (),
                     Lambda {
-                        parameter: Parameter::new(Identifier::new("x")),
+                        parameter: Parameter::new(Identifier::new("x")).into(),
                         body: Box::new(Expression::Apply(
                             (),
                             Apply {
-                                function: Box::new(Expression::Variable((), Identifier::new("x"))),
-                                argument: Box::new(Expression::Variable((), Identifier::new("x"))),
+                                function: Box::new(Expression::Variable(
+                                    (),
+                                    Variable::Identifier(Identifier::new("x")),
+                                )),
+                                argument: Box::new(Expression::Variable(
+                                    (),
+                                    Variable::Identifier(Identifier::new("x")),
+                                )),
                             },
                         )),
                     },
@@ -1078,12 +1137,18 @@ mod tests {
                 argument: Box::new(Expression::Lambda(
                     (),
                     Lambda {
-                        parameter: Parameter::new(Identifier::new("x")),
+                        parameter: Parameter::new(Identifier::new("x")).into(),
                         body: Box::new(Expression::Apply(
                             (),
                             Apply {
-                                function: Box::new(Expression::Variable((), Identifier::new("x"))),
-                                argument: Box::new(Expression::Variable((), Identifier::new("x"))),
+                                function: Box::new(Expression::Variable(
+                                    (),
+                                    Variable::Identifier(Identifier::new("x")),
+                                )),
+                                argument: Box::new(Expression::Variable(
+                                    (),
+                                    Variable::Identifier(Identifier::new("x")),
+                                )),
                             },
                         )),
                     },
@@ -1092,100 +1157,28 @@ mod tests {
         )
     }
 
-    fn _make_fix_value(env: Environment) -> Value {
-        Value::Closure(Closure {
-            parameter: Identifier::new("f"),
-            capture: env.clone(),
-            body: Expression::Apply(
-                EmptyAnnotation,
-                Apply {
-                    function: Box::new(Expression::Lambda(
-                        EmptyAnnotation,
-                        Lambda {
-                            parameter: Parameter::new(Identifier::new("x")),
-                            body: Box::new(Expression::Apply(
-                                EmptyAnnotation,
-                                Apply {
-                                    function: Box::new(Expression::Variable(
-                                        EmptyAnnotation,
-                                        Identifier::new("f"),
-                                    )),
-                                    argument: Box::new(Expression::Lambda(
-                                        EmptyAnnotation,
-                                        Lambda {
-                                            parameter: Parameter::new(Identifier::new("y")),
-                                            body: Box::new(Expression::Apply(
-                                                EmptyAnnotation,
-                                                Apply {
-                                                    function: Box::new(Expression::Variable(
-                                                        EmptyAnnotation,
-                                                        Identifier::new("x"),
-                                                    )),
-                                                    argument: Box::new(Expression::Variable(
-                                                        EmptyAnnotation,
-                                                        Identifier::new("x"),
-                                                    )),
-                                                },
-                                            )),
-                                        },
-                                    )),
-                                },
-                            )),
-                        },
-                    )),
-                    argument: Box::new(Expression::Lambda(
-                        EmptyAnnotation,
-                        Lambda {
-                            parameter: Parameter::new(Identifier::new("x")),
-                            body: Box::new(Expression::Apply(
-                                EmptyAnnotation,
-                                Apply {
-                                    function: Box::new(Expression::Variable(
-                                        EmptyAnnotation,
-                                        Identifier::new("f"),
-                                    )),
-                                    argument: Box::new(Expression::Lambda(
-                                        EmptyAnnotation,
-                                        Lambda {
-                                            parameter: Parameter::new(Identifier::new("y")),
-                                            body: Box::new(Expression::Apply(
-                                                EmptyAnnotation,
-                                                Apply {
-                                                    function: Box::new(Expression::Variable(
-                                                        EmptyAnnotation,
-                                                        Identifier::new("x"),
-                                                    )),
-                                                    argument: Box::new(Expression::Variable(
-                                                        EmptyAnnotation,
-                                                        Identifier::new("x"),
-                                                    )),
-                                                },
-                                            )),
-                                        },
-                                    )),
-                                },
-                            )),
-                        },
-                    )),
-                },
-            ),
-        })
-    }
-
     #[test]
     fn eval_fix() {
         let _factorial = Expression::Lambda(
             (),
             Lambda {
-                parameter: Parameter::new(Identifier::new("x")),
+                parameter: Parameter::new(Identifier::new("x")).into(),
                 body: Expression::ControlFlow(
                     (),
                     ControlFlow::If {
                         predicate: Expression::Apply(
                             (),
                             Apply {
-                                function: Expression::Variable((), Identifier::new("==")).into(),
-                                argument: Expression::Variable((), Identifier::new("x")).into(),
+                                function: Expression::Variable(
+                                    (),
+                                    Variable::Identifier(Identifier::new("==")),
+                                )
+                                .into(),
+                                argument: Expression::Variable(
+                                    (),
+                                    Variable::Identifier(Identifier::new("x")),
+                                )
+                                .into(),
                             },
                         )
                         .into(),
@@ -1202,12 +1195,12 @@ mod tests {
                                             Apply {
                                                 function: Expression::Variable(
                                                     (),
-                                                    Identifier::new("-"),
+                                                    Variable::Identifier(Identifier::new("-")),
                                                 )
                                                 .into(),
                                                 argument: Expression::Variable(
                                                     (),
-                                                    Identifier::new("x"),
+                                                    Variable::Identifier(Identifier::new("x")),
                                                 )
                                                 .into(),
                                             },
@@ -1225,12 +1218,12 @@ mod tests {
                                             Apply {
                                                 function: Expression::Variable(
                                                     (),
-                                                    Identifier::new("*"),
+                                                    Variable::Identifier(Identifier::new("*")),
                                                 )
                                                 .into(),
                                                 argument: Expression::Variable(
                                                     (),
-                                                    Identifier::new("x"),
+                                                    Variable::Identifier(Identifier::new("x")),
                                                 )
                                                 .into(),
                                             },
@@ -1241,12 +1234,14 @@ mod tests {
                                             Apply {
                                                 function: Expression::Variable(
                                                     (),
-                                                    Identifier::new("factorial"),
+                                                    Variable::Identifier(Identifier::new(
+                                                        "factorial",
+                                                    )),
                                                 )
                                                 .into(),
                                                 argument: Expression::Variable(
                                                     (),
-                                                    Identifier::new("xx"),
+                                                    Variable::Identifier(Identifier::new("xx")),
                                                 )
                                                 .into(),
                                             },
@@ -1262,172 +1257,6 @@ mod tests {
                 )
                 .into(),
             },
-        );
-    }
-
-    //    #[test]
-    fn _fixed_factorial() {
-        let factorial = Expression::Apply(
-            EmptyAnnotation,
-            Apply {
-                function: Expression::Variable(EmptyAnnotation, Identifier::new("fix")).into(),
-                argument: Expression::Lambda(
-                    EmptyAnnotation,
-                    Lambda {
-                        parameter: Parameter::new(Identifier::new("fact")),
-                        body: Expression::Lambda(
-                            EmptyAnnotation,
-                            Lambda {
-                                parameter: Parameter::new(Identifier::new("x")),
-                                body: Expression::ControlFlow(
-                                    EmptyAnnotation,
-                                    ControlFlow::If {
-                                        predicate: Expression::Apply(
-                                            EmptyAnnotation,
-                                            Apply {
-                                                function: Expression::Apply(
-                                                    EmptyAnnotation,
-                                                    Apply {
-                                                        function: Expression::Variable(
-                                                            EmptyAnnotation,
-                                                            Identifier::new("=="),
-                                                        )
-                                                        .into(),
-                                                        argument: Expression::Variable(
-                                                            EmptyAnnotation,
-                                                            Identifier::new("x"),
-                                                        )
-                                                        .into(),
-                                                    },
-                                                )
-                                                .into(),
-                                                argument: Expression::Literal(
-                                                    EmptyAnnotation,
-                                                    Constant::Int(0),
-                                                )
-                                                .into(),
-                                            },
-                                        )
-                                        .into(),
-                                        consequent: Expression::Literal(
-                                            EmptyAnnotation,
-                                            Constant::Int(1),
-                                        )
-                                        .into(),
-                                        alternate: Expression::Binding(
-                                            EmptyAnnotation,
-                                            Binding {
-                                                binder: Identifier::new("xx"),
-                                                bound: Expression::Apply(
-                                                    EmptyAnnotation,
-                                                    Apply {
-                                                        function: Expression::Apply(
-                                                            EmptyAnnotation,
-                                                            Apply {
-                                                                function: Expression::Variable(
-                                                                    EmptyAnnotation,
-                                                                    Identifier::new("-"),
-                                                                )
-                                                                .into(),
-                                                                argument: Expression::Variable(
-                                                                    EmptyAnnotation,
-                                                                    Identifier::new("x"),
-                                                                )
-                                                                .into(),
-                                                            },
-                                                        )
-                                                        .into(),
-                                                        argument: Expression::Literal(
-                                                            EmptyAnnotation,
-                                                            Constant::Int(1),
-                                                        )
-                                                        .into(),
-                                                    },
-                                                )
-                                                .into(),
-                                                body: Expression::Apply(
-                                                    EmptyAnnotation,
-                                                    Apply {
-                                                        function: Expression::Apply(
-                                                            EmptyAnnotation,
-                                                            Apply {
-                                                                function: Expression::Variable(
-                                                                    EmptyAnnotation,
-                                                                    Identifier::new("*"),
-                                                                )
-                                                                .into(),
-                                                                argument: Expression::Variable(
-                                                                    EmptyAnnotation,
-                                                                    Identifier::new("x"),
-                                                                )
-                                                                .into(),
-                                                            },
-                                                        )
-                                                        .into(),
-                                                        argument: Expression::Apply(
-                                                            EmptyAnnotation,
-                                                            Apply {
-                                                                function: Expression::Variable(
-                                                                    EmptyAnnotation,
-                                                                    Identifier::new("fact"),
-                                                                )
-                                                                .into(),
-                                                                argument: Expression::Variable(
-                                                                    EmptyAnnotation,
-                                                                    Identifier::new("xx"),
-                                                                )
-                                                                .into(),
-                                                            },
-                                                        )
-                                                        .into(),
-                                                    },
-                                                )
-                                                .into(),
-                                            },
-                                        )
-                                        .into(),
-                                    },
-                                )
-                                .into(),
-                            },
-                        )
-                        .into(),
-                    },
-                )
-                .into(),
-            },
-        );
-
-        let mut context = Linkage::default();
-        stdlib::import(&mut context).unwrap();
-
-        context.interpreter_environment.insert_binding(
-            Identifier::new("fix"),
-            _make_fix_value(Environment::default()),
-        );
-
-        let reduced_fact = factorial
-            .reduce(&mut context.interpreter_environment)
-            .unwrap();
-        context
-            .interpreter_environment
-            .insert_binding(Identifier::new("factorial"), reduced_fact);
-
-        let e = Expression::Apply(
-            EmptyAnnotation,
-            Apply {
-                function: Expression::Variable(EmptyAnnotation, Identifier::new("factorial"))
-                    .into(),
-                argument: Expression::Literal(EmptyAnnotation, Constant::Int(1)).into(),
-            },
-        );
-
-        assert_eq!(
-            Base::Int(127),
-            e.reduce(&mut context.interpreter_environment)
-                .unwrap()
-                .try_into_base_type()
-                .unwrap()
         );
     }
 }

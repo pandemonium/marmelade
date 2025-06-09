@@ -6,8 +6,10 @@ use std::{
 use super::{Environment, ResolutionError, Resolved};
 use crate::{
     ast::{
-        Declaration, Identifier, ImportModule, ModuleDeclarator, ValueDeclaration, ValueDeclarator,
+        Declaration, DeconstructInto, Expression, Identifier, ImportModule, ModuleDeclarator,
+        ValueDeclaration, ValueDeclarator, Variable,
     },
+    interpreter::{Base, Value},
     typer::{Parsed, TypeChecker},
 };
 
@@ -76,10 +78,123 @@ where
     ) -> Resolved<()> {
         // That this has to clone the Expressions is not ideal
         let env = &mut self.resolved;
-        let value = declarator.expression.clone().reduce(env)?;
+
+        // Re-write the expression here?
+        let value = declarator
+            .expression
+            .clone()
+            .de_bruijnify(&mut env.clone())
+            .reduce(env)?;
+
         env.insert_binding(id.clone(), value);
 
         Ok(())
+    }
+}
+
+impl<A> Expression<A>
+where
+    A: fmt::Debug + fmt::Display + Clone + Parsed,
+{
+    pub fn de_bruijnify(self, env: &mut Environment) -> Self {
+        match self {
+            Self::TypeAscription(annotation, ascription) => Self::TypeAscription(
+                annotation,
+                ascription.map_expression(|e| e.de_bruijnify(env)),
+            ),
+            Self::Variable(annotation, Variable::Identifier(binder)) => Self::Variable(
+                annotation,
+                Variable::Index({
+                    let index = env
+                        .de_bruijn_index(&binder)
+                        .expect(&format!("{binder} to exist"));
+
+                    println!("de_bruijnify: {binder} is at #{index}");
+
+                    index
+                }),
+            ),
+            Self::InvokeBridge(annotation, Variable::Identifier(binder)) => Self::InvokeBridge(
+                annotation,
+                Variable::Index(
+                    env.de_bruijn_index(&binder)
+                        .expect(&format!("{binder} to exist")),
+                ),
+            ),
+            Self::Interpolation(annotation, interpolate) => Self::Interpolation(
+                annotation,
+                interpolate.map_expression(|e| e.de_bruijnify(env)),
+            ),
+            Self::SelfReferential(annotation, self_referential) => {
+                //
+                Self::SelfReferential(annotation, {
+                    let parameter_name = self_referential.parameter.name.clone();
+                    env.insert_binding(parameter_name.clone(), Value::Base(Base::Unit));
+                    let v = self_referential.map_expression(|e| e.de_bruijnify(env));
+                    env.remove_binding(&parameter_name);
+                    v
+                })
+            }
+            Self::Lambda(annotation, lambda) => Self::Lambda(annotation, {
+                let parameter_name = lambda.parameter.name.clone();
+                env.insert_binding(parameter_name.clone(), Value::Base(Base::Unit));
+                let v = lambda.map_expression(|e| e.de_bruijnify(env));
+                env.remove_binding(&parameter_name);
+                v
+            }),
+            Self::Apply(annotation, apply) => {
+                Self::Apply(annotation, apply.map_expression(|e| e.de_bruijnify(env)))
+            }
+            Self::Inject(annotation, inject) => {
+                Self::Inject(annotation, inject.map_expression(|e| e.de_bruijnify(env)))
+            }
+            Self::Product(annotation, product) => {
+                Self::Product(annotation, product.map_expression(|e| e.de_bruijnify(env)))
+            }
+            Self::Project(annotation, project) => {
+                Self::Project(annotation, project.map_expression(|e| e.de_bruijnify(env)))
+            }
+            Self::Binding(annotation, binding) => Self::Binding(annotation, {
+                let binder = binding.binder.clone();
+                env.insert_binding(binder.clone(), Value::Base(Base::Unit));
+                let v = binding.map_expression(|e| e.de_bruijnify(env));
+                env.remove_binding(&binder);
+                v
+            }),
+            Self::Sequence(annotation, sequence) => {
+                Self::Sequence(annotation, sequence.map_expression(|e| e.de_bruijnify(env)))
+            }
+            Self::ControlFlow(annotation, control_flow) => Self::ControlFlow(
+                annotation,
+                control_flow.map_expression(|e| e.de_bruijnify(env)),
+            ),
+            Self::DeconstructInto(annotation, deconstruct_into) => {
+                Self::DeconstructInto(annotation, {
+                    DeconstructInto {
+                        scrutinee: deconstruct_into.scrutinee.de_bruijnify(env).into(),
+                        match_clauses: deconstruct_into
+                            .match_clauses
+                            .into_iter()
+                            .map(|clause| {
+                                let pattern = clause.pattern.clone();
+                                let bindings = pattern.bindings();
+                                for binder in &bindings {
+                                    println!("de_bruijnify: insert {binder}");
+                                    env.insert_binding((*binder).clone(), Value::Base(Base::Unit));
+                                }
+                                let v = clause.map_expression(|e| e.de_bruijnify(env));
+                                for binder in bindings.iter().rev() {
+                                    println!("de_bruijnify: remove {binder}");
+                                    env.remove_binding(binder);
+                                }
+                                v
+                            })
+                            .collect(),
+                    }
+                })
+            }
+            otherwise => otherwise,
+        }
     }
 }
 

@@ -1,10 +1,8 @@
 use marmelade::{
-    ast::{Apply, Expression, Identifier, Lambda, Parameter},
     context::Linkage,
-    interpreter::{Base, Closure, Environment, Interpreter, Value},
+    interpreter::{Base, Interpreter},
     lexer::LexicalAnalyzer,
     parser, stdlib,
-    typer::EmptyAnnotation,
 };
 
 fn into_input(source: &str) -> Vec<char> {
@@ -43,86 +41,6 @@ fn main1() {
         .unwrap();
 
     assert_eq!(Base::Int(327), return_value.try_into_base_type().unwrap());
-}
-
-fn _make_fix_value(env: Environment) -> Value {
-    Value::Closure(Closure {
-        parameter: Identifier::new("f"),
-        capture: env.clone(),
-        body: Expression::Apply(
-            EmptyAnnotation,
-            Apply {
-                function: Box::new(Expression::Lambda(
-                    EmptyAnnotation,
-                    Lambda {
-                        parameter: Parameter::new(Identifier::new("x")),
-                        body: Box::new(Expression::Apply(
-                            EmptyAnnotation,
-                            Apply {
-                                function: Box::new(Expression::Variable(
-                                    EmptyAnnotation,
-                                    Identifier::new("f"),
-                                )),
-                                argument: Box::new(Expression::Lambda(
-                                    EmptyAnnotation,
-                                    Lambda {
-                                        parameter: Parameter::new(Identifier::new("y")),
-                                        body: Box::new(Expression::Apply(
-                                            EmptyAnnotation,
-                                            Apply {
-                                                function: Box::new(Expression::Variable(
-                                                    EmptyAnnotation,
-                                                    Identifier::new("x"),
-                                                )),
-                                                argument: Box::new(Expression::Variable(
-                                                    EmptyAnnotation,
-                                                    Identifier::new("x"),
-                                                )),
-                                            },
-                                        )),
-                                    },
-                                )),
-                            },
-                        )),
-                    },
-                )),
-                argument: Box::new(Expression::Lambda(
-                    EmptyAnnotation,
-                    Lambda {
-                        parameter: Parameter::new(Identifier::new("x")),
-                        body: Box::new(Expression::Apply(
-                            EmptyAnnotation,
-                            Apply {
-                                function: Box::new(Expression::Variable(
-                                    EmptyAnnotation,
-                                    Identifier::new("f"),
-                                )),
-                                argument: Box::new(Expression::Lambda(
-                                    EmptyAnnotation,
-                                    Lambda {
-                                        parameter: Parameter::new(Identifier::new("y")),
-                                        body: Box::new(Expression::Apply(
-                                            EmptyAnnotation,
-                                            Apply {
-                                                function: Box::new(Expression::Variable(
-                                                    EmptyAnnotation,
-                                                    Identifier::new("x"),
-                                                )),
-                                                argument: Box::new(Expression::Variable(
-                                                    EmptyAnnotation,
-                                                    Identifier::new("x"),
-                                                )),
-                                            },
-                                        )),
-                                    },
-                                )),
-                            },
-                        )),
-                    },
-                )),
-            },
-        ),
-    })
 }
 
 #[test]

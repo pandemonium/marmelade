@@ -829,7 +829,9 @@ where
         let tuple = Product::Tuple(
             parameters
                 .iter()
-                .map(|p| Expression::Variable(annotation.clone(), p.name.clone()))
+                .map(|p| {
+                    Expression::Variable(annotation.clone(), Variable::Identifier(p.name.clone()))
+                })
                 .collect(),
         );
 
@@ -845,7 +847,7 @@ where
                 Expression::Lambda(
                     annotation.clone(),
                     Lambda {
-                        parameter,
+                        parameter: parameter.into(),
                         body: body.into(),
                     },
                 )
@@ -1123,8 +1125,8 @@ impl fmt::Display for Parameter {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression<A> {
     TypeAscription(A, TypeAscription<A>),
-    Variable(A, Identifier),
-    InvokeBridge(A, Identifier),
+    Variable(A, Variable),
+    InvokeBridge(A, Variable),
     Literal(A, Constant),
     Interpolation(A, Interpolate<A>),
     SelfReferential(A, SelfReferential<A>),
@@ -1137,6 +1139,21 @@ pub enum Expression<A> {
     Sequence(A, Sequence<A>),
     ControlFlow(A, ControlFlow<A>),
     DeconstructInto(A, DeconstructInto<A>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Variable {
+    Index(usize),
+    Identifier(Identifier),
+}
+
+impl fmt::Display for Variable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Index(ix) => write!(f, "Var({ix})"),
+            Self::Identifier(identifier) => write!(f, "{identifier}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1181,19 +1198,7 @@ where
         bound: &mut HashSet<Identifier>,
         module: &ModuleNames,
     ) -> Self {
-        let Self(fragments) = self;
-        Self(
-            fragments
-                .into_iter()
-                .map(|f| match f {
-                    Fragment::Evaluate(annotation, expression) => Fragment::Evaluate(
-                        annotation,
-                        expression.rewrite_local_access(bound, module).into(),
-                    ),
-                    literal => literal,
-                })
-                .collect(),
-        )
+        self.map_expression(|e| e.rewrite_local_access(bound, module))
     }
 
     pub fn find_unbound<'a>(
@@ -1208,6 +1213,24 @@ where
                 _otherwise => (),
             }
         }
+    }
+
+    pub fn map_expression<F>(self, mut f: F) -> Self
+    where
+        F: FnMut(Expression<A>) -> Expression<A>,
+    {
+        let Self(fragments) = self;
+        Self(
+            fragments
+                .into_iter()
+                .map(|fragment| match fragment {
+                    Fragment::Evaluate(annotation, expression) => {
+                        Fragment::Evaluate(annotation, f(*expression).into())
+                    }
+                    literal => literal,
+                })
+                .collect(),
+        )
     }
 }
 
@@ -1288,7 +1311,6 @@ impl ModuleNames {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAscription<A> {
-    // Should this be a TypeSignature instead?
     pub type_signature: TypeSignature<A>,
     pub underlying: Box<Expression<A>>,
 }
@@ -1301,6 +1323,16 @@ where
         TypeAscription {
             type_signature: self.type_signature.map(f),
             underlying: self.underlying.map(f).into(),
+        }
+    }
+
+    pub fn map_expression<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Expression<A>) -> Expression<A>,
+    {
+        TypeAscription {
+            type_signature: self.type_signature,
+            underlying: f(*self.underlying).into(),
         }
     }
 }
@@ -1322,6 +1354,20 @@ where
                 .match_clauses
                 .into_iter()
                 .map(|clause| clause.map(f))
+                .collect(),
+        }
+    }
+
+    pub fn map_expression<F>(self, mut f: F) -> Self
+    where
+        F: FnMut(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            scrutinee: f(*self.scrutinee).into(),
+            match_clauses: self
+                .match_clauses
+                .into_iter()
+                .map(|m| m.map_expression(|e| f(e)))
                 .collect(),
         }
     }
@@ -1355,6 +1401,16 @@ where
 
         // Why am I doing this?
         free.extend(self.pattern.free_variables());
+    }
+
+    pub fn map_expression<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            pattern: self.pattern,
+            consequent: f(*self.consequent).into(),
+        }
     }
 }
 
@@ -1795,7 +1851,10 @@ pub enum Pattern<A> {
     Otherwise(A, Identifier),
 }
 
-impl<A> Pattern<A> {
+impl<A> Pattern<A>
+where
+    A: fmt::Debug,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> Pattern<B> {
         match self {
             Self::Coproduct(a, pattern) => Pattern::Coproduct(f(a), pattern.map(f)),
@@ -1806,7 +1865,8 @@ impl<A> Pattern<A> {
         }
     }
 
-    fn bindings(&self) -> Vec<&Identifier> {
+    // This function is not correct - it includes too many bindings
+    pub fn bindings(&self) -> Vec<&Identifier> {
         match self {
             Self::Coproduct(_, pattern) => pattern
                 .argument
@@ -1815,15 +1875,7 @@ impl<A> Pattern<A> {
                 .flat_map(|p| p.bindings())
                 .collect(),
             Self::Tuple(_, p) => p.elements.iter().flat_map(|p| p.bindings()).collect(),
-            Self::Struct(_, p) => p
-                .fields
-                .iter()
-                .flat_map(|(field, p)| {
-                    let mut pattern_bindings = p.bindings();
-                    pattern_bindings.push(field);
-                    pattern_bindings
-                })
-                .collect(),
+            Self::Struct(_, p) => p.fields.iter().flat_map(|(_, p)| p.bindings()).collect(),
             Self::Literally(..) => vec![],
             Self::Otherwise(_, pattern) => vec![pattern],
         }
@@ -1878,7 +1930,10 @@ pub struct ConstructorPattern<A> {
     pub argument: TuplePattern<A>,
 }
 
-impl<A> ConstructorPattern<A> {
+impl<A> ConstructorPattern<A>
+where
+    A: fmt::Debug,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> ConstructorPattern<B> {
         ConstructorPattern {
             constructor: self.constructor,
@@ -1892,7 +1947,10 @@ pub struct TuplePattern<A> {
     pub elements: Vec<Pattern<A>>,
 }
 
-impl<A> TuplePattern<A> {
+impl<A> TuplePattern<A>
+where
+    A: fmt::Debug,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> TuplePattern<B> {
         TuplePattern {
             elements: self.elements.into_iter().map(|p| p.map(f)).collect(),
@@ -1905,7 +1963,10 @@ pub struct StructPattern<A> {
     pub fields: Vec<(Identifier, Pattern<A>)>,
 }
 
-impl<A> StructPattern<A> {
+impl<A> StructPattern<A>
+where
+    A: fmt::Debug,
+{
     pub fn map<B>(self, f: fn(A) -> B) -> StructPattern<B> {
         StructPattern {
             fields: self
@@ -1984,7 +2045,7 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfReferential<A> {
     pub name: Identifier,
-    pub parameter: Parameter,
+    pub parameter: Box<Parameter>,
     pub body: Box<Expression<A>>,
 }
 
@@ -1999,11 +2060,22 @@ where
             body: self.body.map(f).into(),
         }
     }
+
+    pub fn map_expression<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            name: self.name,
+            parameter: self.parameter,
+            body: f(*self.body).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lambda<A> {
-    pub parameter: Parameter,
+    pub parameter: Box<Parameter>,
     pub body: Box<Expression<A>>,
 }
 
@@ -2015,6 +2087,16 @@ where
         Lambda {
             parameter: self.parameter,
             body: self.body.map(f).into(),
+        }
+    }
+
+    pub fn map_expression<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            parameter: self.parameter,
+            body: f(*self.body).into(),
         }
     }
 }
@@ -2033,6 +2115,16 @@ where
         Apply {
             function: self.function.map(f).into(),
             argument: self.argument.map(f).into(),
+        }
+    }
+
+    pub fn map_expression<F>(self, mut f: F) -> Self
+    where
+        F: FnMut(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            function: f(*self.function).into(),
+            argument: f(*self.argument).into(),
         }
     }
 }
@@ -2055,6 +2147,17 @@ where
             argument: self.argument.map(f).into(),
         }
     }
+
+    pub fn map_expression<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            name: self.name,
+            constructor: self.constructor,
+            argument: f(*self.argument).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2070,6 +2173,16 @@ where
     fn map<B>(self, f: fn(A) -> B) -> Project<B> {
         Project {
             base: self.base.map(f).into(),
+            index: self.index,
+        }
+    }
+
+    pub fn map_expression<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            base: f(*self.base).into(),
             index: self.index,
         }
     }
@@ -2093,6 +2206,17 @@ where
             body: self.body.map(f).into(),
         }
     }
+
+    pub fn map_expression<F>(self, mut f: F) -> Self
+    where
+        F: FnMut(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            binder: self.binder,
+            bound: f(*self.bound).into(),
+            body: f(*self.body).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2109,6 +2233,16 @@ where
         Sequence {
             this: self.this.map(f).into(),
             and_then: self.and_then.map(f).into(),
+        }
+    }
+
+    pub fn map_expression<F>(self, mut f: F) -> Self
+    where
+        F: FnMut(Expression<A>) -> Expression<A>,
+    {
+        Self {
+            this: f(*self.this).into(),
+            and_then: f(*self.and_then).into(),
         }
     }
 }
@@ -2160,12 +2294,12 @@ where
         free: &mut HashSet<&'a Identifier>,
     ) {
         match self {
-            Self::Variable(_, id) => {
+            Self::Variable(_, Variable::Identifier(id)) => {
                 if !bound.contains(id) {
                     free.insert(id);
                 }
             }
-            Self::InvokeBridge(_, id) => {
+            Self::InvokeBridge(_, Variable::Identifier(id)) => {
                 free.insert(id);
             }
             Self::Interpolation(_, interpolation) => {
@@ -2352,6 +2486,22 @@ where
             },
         }
     }
+    pub fn map_expression<F>(self, mut f: F) -> Self
+    where
+        F: FnMut(Expression<A>) -> Expression<A>,
+    {
+        match self {
+            Self::If {
+                predicate,
+                consequent,
+                alternate,
+            } => Self::If {
+                predicate: f(*predicate).into(),
+                consequent: f(*consequent).into(),
+                alternate: f(*alternate).into(),
+            },
+        }
+    }
 }
 
 impl<A> fmt::Display for ControlFlow<A>
@@ -2442,6 +2592,18 @@ where
             }
         }
     }
+
+    pub fn map_expression<F>(self, mut f: F) -> Self
+    where
+        F: FnMut(Expression<A>) -> Expression<A>,
+    {
+        match self {
+            Self::Tuple(expressions) => Self::Tuple(expressions.into_iter().map(f).collect()),
+            Self::Struct(bindings) => {
+                Self::Struct(bindings.into_iter().map(|(k, v)| (k, f(v))).collect())
+            }
+        }
+    }
 }
 
 impl<A> fmt::Display for Product<A>
@@ -2470,7 +2632,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{ast::ValueDeclaration, parser::ParsingInfo};
+    use crate::{
+        ast::{ValueDeclaration, Variable},
+        parser::ParsingInfo,
+    };
 
     use super::{Constant, Declaration, Expression, Identifier, ModuleDeclarator, ValueDeclarator};
 
@@ -2488,7 +2653,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("bar"),
+                                Variable::Identifier(Identifier::new("bar")),
                             ),
                         },
                     },
@@ -2501,7 +2666,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("foo"),
+                                Variable::Identifier(Identifier::new("foo")),
                             ),
                         },
                     },
@@ -2514,7 +2679,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("quux"),
+                                Variable::Identifier(Identifier::new("quux")),
                             ),
                         },
                     },
@@ -2539,7 +2704,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("bar"),
+                                Variable::Identifier(Identifier::new("bar")),
                             ),
                         },
                     },
@@ -2552,7 +2717,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("bar"),
+                                Variable::Identifier(Identifier::new("bar")),
                             ),
                         },
                     },
@@ -2565,7 +2730,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("frobnicator"),
+                                Variable::Identifier(Identifier::new("frobnicator")),
                             ),
                         },
                     },
@@ -2604,7 +2769,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("bar"),
+                                Variable::Identifier(Identifier::new("bar")),
                             ),
                         },
                     },
@@ -2617,7 +2782,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("bar"),
+                                Variable::Identifier(Identifier::new("bar")),
                             ),
                         },
                     },
@@ -2630,7 +2795,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("frobnicator"),
+                                Variable::Identifier(Identifier::new("frobnicator")),
                             ),
                         },
                     },
@@ -2656,7 +2821,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("bar"),
+                                Variable::Identifier(Identifier::new("bar")),
                             ),
                         },
                     },
@@ -2669,7 +2834,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("bar"),
+                                Variable::Identifier(Identifier::new("bar")),
                             ),
                         },
                     },
@@ -2682,7 +2847,7 @@ mod tests {
                         declarator: ValueDeclarator {
                             expression: Expression::Variable(
                                 ParsingInfo::default(),
-                                Identifier::new("frobnicator"),
+                                Variable::Identifier(Identifier::new("frobnicator")),
                             ),
                         },
                     },

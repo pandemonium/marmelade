@@ -4,7 +4,7 @@ use marmelade::{
     ast::{
         Apply, Binding, Constant, Constructor, ControlFlow, Coproduct, Declaration, Expression,
         Identifier, Sequence, TypeApply, TypeDeclarator, TypeExpression, TypeName,
-        UniversalQuantifiers,
+        UniversalQuantifiers, Variable,
     },
     context::Linkage,
     interpreter::Value,
@@ -125,7 +125,7 @@ pub fn apply(f: E<ParsingInfo>, x: E<ParsingInfo>) -> E<ParsingInfo> {
 }
 
 pub fn var(id: &str) -> E<ParsingInfo> {
-    E::Variable(ParsingInfo::default(), ident(id))
+    E::Variable(ParsingInfo::default(), Variable::Identifier(ident(id)))
 }
 
 pub fn ident(id: &str) -> Identifier {

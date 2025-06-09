@@ -787,7 +787,7 @@ mod tests {
     use std::fmt;
 
     use crate::{
-        ast::{self, Apply, Inject, Lambda, Project},
+        ast::{self, Apply, Inject, Lambda, Project, Variable},
         parser::ParsingInfo,
         typer::{
             BaseType, Binding, CoproductType, Parsed, ProductType, TupleType, Type, TypeParameter,
@@ -813,9 +813,12 @@ mod tests {
         ast::Expression::Lambda(
             ParsingInfo::default(),
             Lambda {
-                parameter: ast::Parameter::new(ast::Identifier::new("x")),
-                body: ast::Expression::Variable(ParsingInfo::default(), ast::Identifier::new("x"))
-                    .into(),
+                parameter: ast::Parameter::new(ast::Identifier::new("x")).into(),
+                body: ast::Expression::Variable(
+                    ParsingInfo::default(),
+                    Variable::Identifier(ast::Identifier::new("x")),
+                )
+                .into(),
             },
         )
     }
@@ -952,9 +955,13 @@ mod tests {
                 parameter: ast::Parameter {
                     name: ast::Identifier::new("x"),
                     type_annotation: Some(Type::Constant(BaseType::Float)),
-                },
-                body: ast::Expression::Variable(ParsingInfo::default(), ast::Identifier::new("x"))
-                    .into(),
+                }
+                .into(),
+                body: ast::Expression::Variable(
+                    ParsingInfo::default(),
+                    Variable::Identifier(ast::Identifier::new("x")),
+                )
+                .into(),
             },
         );
 
@@ -1041,7 +1048,10 @@ mod tests {
         );
 
         let e = mk_apply(
-            ast::Expression::Variable(ParsingInfo::default(), ast::Identifier::new("id")),
+            ast::Expression::Variable(
+                ParsingInfo::default(),
+                Variable::Identifier(ast::Identifier::new("id")),
+            ),
             ast::Expression::Product(
                 ParsingInfo::default(),
                 ast::Product::Struct(Vec::from([
@@ -1082,13 +1092,14 @@ mod tests {
                 parameter: ast::Parameter {
                     name: ast::Identifier::new("f"),           // Parameter `f`
                     type_annotation: Some(mk_identity_type()), // Annotate with the type alias
-                },
+                }
+                .into(),
                 body: Box::new(ast::Expression::Apply(
                     ParsingInfo::default(),
                     Apply {
                         function: ast::Expression::Variable(
                             ParsingInfo::default(),
-                            ast::Identifier::new("f"),
+                            Variable::Identifier(ast::Identifier::new("f")),
                         )
                         .into(), // Apply `f`
                         argument: ast::Expression::Literal(
@@ -1115,7 +1126,7 @@ mod tests {
                 function: apply_to_five_expr.clone().into(), // Use `applyToFive`
                 argument: ast::Expression::Variable(
                     ParsingInfo::default(),
-                    ast::Identifier::new("id"),
+                    Variable::Identifier(ast::Identifier::new("id")),
                 )
                 .into(), // Apply it to `id`
             },

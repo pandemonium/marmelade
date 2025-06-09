@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    ast::{Expression, Identifier, Lambda, Parameter},
+    ast::{Expression, Identifier, Lambda, Parameter, Variable},
     context::Linkage,
     interpreter::{Base, Environment, Interpretation, RuntimeError, Value},
     lexer::SourceLocation,
@@ -35,12 +35,13 @@ pub trait Bridge {
 
     fn generate_lambda_tree(&self, target: Identifier) -> Expression<BridgeInfo> {
         (0..self.arity()).rfold(
-            Expression::InvokeBridge(BridgeInfo, target),
+            Expression::InvokeBridge(BridgeInfo, Variable::Identifier(target)),
             |expression, parameter_index| {
                 Expression::Lambda(
                     BridgeInfo,
                     Lambda {
-                        parameter: Parameter::new(Identifier::new(&format!("p{parameter_index}"))),
+                        parameter: Parameter::new(Identifier::new(&format!("p{parameter_index}")))
+                            .into(),
                         body: expression.into(),
                     },
                 )

@@ -1,3 +1,11 @@
-Option ::= forall a. Some a | None
-quux = lambda x y. x * y
-main = "Hi:`Some (10 * 1)`mom`quux 2 2`."
+Option ::=
+    forall a. Some a | None
+
+quux =
+    lambda x y. x * y
+
+debug_print = lambda x.
+    print_endline "Value: `x`"; x
+
+main =
+    "Hi:`let x = 10 in Some (debug_print x * 1)`mom`quux 2 2`."

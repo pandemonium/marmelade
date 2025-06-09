@@ -87,7 +87,7 @@ fn _import_std_file(_env: &mut Environment) -> Interpretation<()> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{Apply, Constant, Expression as E, Identifier},
+        ast::{Apply, Constant, Expression as E, Identifier, Variable},
         context::Linkage,
         interpreter::{Base, RuntimeError, Value},
         stdlib,
@@ -105,7 +105,11 @@ mod tests {
                 function: E::Apply(
                     EmptyAnnotation,
                     Apply {
-                        function: E::Variable(EmptyAnnotation, Identifier::new("+")).into(),
+                        function: E::Variable(
+                            EmptyAnnotation,
+                            Variable::Identifier(Identifier::new("+")),
+                        )
+                        .into(),
                         argument: E::Literal(EmptyAnnotation, Constant::Int(1)).into(),
                     },
                 )
@@ -134,7 +138,11 @@ mod tests {
                 function: E::Apply(
                     EmptyAnnotation,
                     Apply {
-                        function: E::Variable(EmptyAnnotation, Identifier::new("+")).into(),
+                        function: E::Variable(
+                            EmptyAnnotation,
+                            Variable::Identifier(Identifier::new("+")),
+                        )
+                        .into(),
                         argument: E::Literal(EmptyAnnotation, Constant::Float(1.5)).into(),
                     },
                 )
@@ -163,7 +171,11 @@ mod tests {
                 function: E::Apply(
                     EmptyAnnotation,
                     Apply {
-                        function: E::Variable(EmptyAnnotation, Identifier::new("+")).into(),
+                        function: E::Variable(
+                            EmptyAnnotation,
+                            Variable::Identifier(Identifier::new("+")),
+                        )
+                        .into(),
                         argument: E::Literal(EmptyAnnotation, Constant::Float(1.5)).into(),
                     },
                 )
@@ -192,7 +204,11 @@ mod tests {
                 function: E::Apply(
                     EmptyAnnotation,
                     Apply {
-                        function: E::Variable(EmptyAnnotation, Identifier::new("-")).into(),
+                        function: E::Variable(
+                            EmptyAnnotation,
+                            Variable::Identifier(Identifier::new("-")),
+                        )
+                        .into(),
                         argument: E::Literal(EmptyAnnotation, Constant::Int(1)).into(),
                     },
                 )
@@ -221,7 +237,11 @@ mod tests {
                 function: E::Apply(
                     EmptyAnnotation,
                     Apply {
-                        function: E::Variable(EmptyAnnotation, Identifier::new("*")).into(),
+                        function: E::Variable(
+                            EmptyAnnotation,
+                            Variable::Identifier(Identifier::new("*")),
+                        )
+                        .into(),
                         argument: E::Literal(EmptyAnnotation, Constant::Int(1)).into(),
                     },
                 )
@@ -250,7 +270,11 @@ mod tests {
                 function: E::Apply(
                     EmptyAnnotation,
                     Apply {
-                        function: E::Variable(EmptyAnnotation, Identifier::new("/")).into(),
+                        function: E::Variable(
+                            EmptyAnnotation,
+                            Variable::Identifier(Identifier::new("/")),
+                        )
+                        .into(),
                         argument: E::Literal(EmptyAnnotation, Constant::Int(1)).into(),
                     },
                 )

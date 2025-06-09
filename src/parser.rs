@@ -8,7 +8,7 @@ use crate::{
         Lambda, MatchClause, ModuleDeclarator, Parameter, Pattern, Product, ProductIndex, Project,
         SelfReferential, Sequence, Struct, StructField, StructPattern, TuplePattern, TypeApply,
         TypeDeclaration, TypeDeclarator, TypeExpression, TypeName, TypeSignature,
-        UniversalQuantifiers, ValueDeclaration, ValueDeclarator,
+        UniversalQuantifiers, ValueDeclaration, ValueDeclarator, Variable,
     },
     lexer::{Interpolation, Keyword, Layout, Literal, Operator, SourceLocation, Token, TokenType},
     typer,
@@ -656,12 +656,18 @@ fn parse_expression_prefix(tokens: &[Token]) -> ParseResult<Expression<ParsingIn
         }
 
         [T(TT::Identifier(id), position), T(TT::Period, ..), ..] => {
-            let lhs = Expression::Variable(ParsingInfo::new(*position), Identifier::new(id));
+            let lhs = Expression::Variable(
+                ParsingInfo::new(*position),
+                Variable::Identifier(Identifier::new(id)),
+            );
             parse_expression_infix(lhs, &tokens[1..], 0)
         }
 
         [T(TT::Identifier(id), position), remains @ ..] => Ok((
-            Expression::Variable(ParsingInfo::new(*position), Identifier::new(id)),
+            Expression::Variable(
+                ParsingInfo::new(*position),
+                Variable::Identifier(Identifier::new(id)),
+            ),
             remains,
         )),
 
@@ -784,7 +790,7 @@ fn parse_lambda(
             Expression::Lambda(
                 ParsingInfo::new(position),
                 Lambda {
-                    parameter,
+                    parameter: parameter.into(),
                     body: body.into(),
                 },
             )
@@ -1246,7 +1252,7 @@ fn parse_select_operator(
     //    println!("parse_select_operator: {lhs:?} {:?}", remains);
 
     match lhs {
-        Expression::Variable(parsing_info, identifier) => {
+        Expression::Variable(parsing_info, Variable::Identifier(identifier)) => {
             parse_identifier_path(parsing_info, identifier, remains)
         }
         lhs => parse_projection(lhs, remains),
@@ -1260,7 +1266,10 @@ fn parse_identifier_path(
 ) -> ParseResult<Expression<ParsingInfo>> {
     match remains {
         [T(TT::Identifier(name), _pos), remains @ ..] => Ok((
-            Expression::Variable(annotation, Identifier::Select(lhs.into(), name.to_owned())),
+            Expression::Variable(
+                annotation,
+                Variable::Identifier(Identifier::Select(lhs.into(), name.to_owned())),
+            ),
             remains,
         )),
         _otherwise => Err(ParseError::Expected {
@@ -1380,7 +1389,11 @@ fn apply_infix(
     let apply_lhs = Expression::Apply(
         ParsingInfo::new(position),
         Apply {
-            function: Expression::Variable(ParsingInfo::new(position), op.as_identifier()).into(),
+            function: Expression::Variable(
+                ParsingInfo::new(position),
+                Variable::Identifier(op.as_identifier()),
+            )
+            .into(),
             argument: lhs.into(),
         },
     );
@@ -1433,9 +1446,13 @@ mod tests {
                             function: E::Apply(
                                 (),
                                 Apply {
-                                    function: E::Variable((), Id::new(&Operator::Plus.name()))
+                                    function: E::Variable(
+                                        (),
+                                        Variable::Identifier(Id::new(&Operator::Plus.name()))
+                                    )
+                                    .into(),
+                                    argument: E::Variable((), Variable::Identifier(Id::new("x")))
                                         .into(),
-                                    argument: E::Variable((), Id::new("x")).into(),
                                 }
                             )
                             .into(),
@@ -1466,8 +1483,10 @@ mod tests {
                             function: E::Apply(
                                 (),
                                 Apply {
-                                    function: E::Variable((), Id::new("f")).into(),
-                                    argument: E::Variable((), Id::new("x")).into(),
+                                    function: E::Variable((), Variable::Identifier(Id::new("f")))
+                                        .into(),
+                                    argument: E::Variable((), Variable::Identifier(Id::new("x")))
+                                        .into(),
                                 }
                             )
                             .into(),
@@ -1501,8 +1520,16 @@ mod tests {
                                     function: E::Apply(
                                         (),
                                         Apply {
-                                            function: E::Variable((), Id::new("f")).into(),
-                                            argument: E::Variable((), Id::new("x")).into(),
+                                            function: E::Variable(
+                                                (),
+                                                Variable::Identifier(Id::new("f"))
+                                            )
+                                            .into(),
+                                            argument: E::Variable(
+                                                (),
+                                                Variable::Identifier(Id::new("x"))
+                                            )
+                                            .into(),
                                         }
                                     )
                                     .into(),
@@ -1543,7 +1570,11 @@ mod tests {
                             this: E::Apply(
                                 (),
                                 Apply {
-                                    function: E::Variable((), Id::new("print_endline")).into(),
+                                    function: E::Variable(
+                                        (),
+                                        Variable::Identifier(Id::new("print_endline"))
+                                    )
+                                    .into(),
                                     argument: E::Literal(
                                         (),
                                         Constant::Text("Hello, world".to_owned())
@@ -1558,7 +1589,11 @@ mod tests {
                                     function: E::Apply(
                                         (),
                                         Apply {
-                                            function: E::Variable((), Id::new("f")).into(),
+                                            function: E::Variable(
+                                                (),
+                                                Variable::Identifier(Id::new("f"))
+                                            )
+                                            .into(),
                                             argument: E::Literal((), Constant::Int(1)).into()
                                         }
                                     )
@@ -1576,14 +1611,19 @@ mod tests {
                             function: E::Apply(
                                 (),
                                 Apply {
-                                    function: E::Variable((), Id::new("+")).into(),
+                                    function: E::Variable((), Variable::Identifier(Id::new("+")))
+                                        .into(),
                                     argument: E::Apply(
                                         (),
                                         Apply {
                                             function: E::Apply(
                                                 (),
                                                 Apply {
-                                                    function: E::Variable((), Id::new("*")).into(),
+                                                    function: E::Variable(
+                                                        (),
+                                                        Variable::Identifier(Id::new("*"))
+                                                    )
+                                                    .into(),
                                                     argument: E::Literal((), Constant::Int(3))
                                                         .into()
                                                 }
@@ -1592,7 +1632,11 @@ mod tests {
                                             argument: E::Apply(
                                                 (),
                                                 Apply {
-                                                    function: E::Variable((), Id::new("f")).into(),
+                                                    function: E::Variable(
+                                                        (),
+                                                        Variable::Identifier(Id::new("f"))
+                                                    )
+                                                    .into(),
                                                     argument: E::Literal((), Constant::Int(4))
                                                         .into()
                                                 }
@@ -1639,12 +1683,21 @@ mod tests {
                                     function: E::Apply(
                                         (),
                                         Apply {
-                                            function: E::Variable((), Id::new("+")).into(),
-                                            argument: E::Variable((), Id::new("x")).into()
+                                            function: E::Variable(
+                                                (),
+                                                Variable::Identifier(Id::new("+"))
+                                            )
+                                            .into(),
+                                            argument: E::Variable(
+                                                (),
+                                                Variable::Identifier(Id::new("x"))
+                                            )
+                                            .into()
                                         }
                                     )
                                     .into(),
-                                    argument: E::Variable((), Id::new("y")).into()
+                                    argument: E::Variable((), Variable::Identifier(Id::new("y")))
+                                        .into()
                                 }
                             )
                             .into()
@@ -1678,20 +1731,27 @@ mod tests {
                             (),
                             SelfReferential {
                                 name: Identifier::new("create_window"),
-                                parameter: Parameter::new(Identifier::new("x")),
+                                parameter: Parameter::new(Identifier::new("x")).into(),
                                 body: E::Apply(
                                     (),
                                     Apply {
                                         function: E::Apply(
                                             (),
                                             Apply {
-                                                function: E::Variable((), Id::new("+")).into(),
+                                                function: E::Variable(
+                                                    (),
+                                                    Variable::Identifier(Id::new("+"))
+                                                )
+                                                .into(),
                                                 argument: E::Literal((), Constant::Int(1)).into()
                                             }
                                         )
                                         .into(),
-                                        argument: Expression::Variable((), Identifier::new("x"))
-                                            .into()
+                                        argument: Expression::Variable(
+                                            (),
+                                            Variable::Identifier(Id::new("x"))
+                                        )
+                                        .into()
                                     }
                                 )
                                 .into()
@@ -1764,20 +1824,28 @@ mod tests {
                                 (),
                                 SelfReferential {
                                     name: Identifier::new("create_window"),
-                                    parameter: Parameter::new(Identifier::new("x")),
+                                    parameter: Parameter::new(Identifier::new("x")).into(),
                                     body: E::Apply(
                                         (),
                                         Apply {
                                             function: E::Apply(
                                                 (),
                                                 Apply {
-                                                    function: E::Variable((), Id::new("+")).into(),
+                                                    function: E::Variable(
+                                                        (),
+                                                        Variable::Identifier(Id::new("+"))
+                                                    )
+                                                    .into(),
                                                     argument: E::Literal((), Constant::Int(1))
                                                         .into()
                                                 }
                                             )
                                             .into(),
-                                            argument: E::Variable((), Id::new("x")).into()
+                                            argument: E::Variable(
+                                                (),
+                                                Variable::Identifier(Id::new("x"))
+                                            )
+                                            .into()
                                         }
                                     )
                                     .into()
@@ -1795,12 +1863,20 @@ mod tests {
                                 (),
                                 SelfReferential {
                                     name: Identifier::new("print_endline"),
-                                    parameter: Parameter::new(Identifier::new("s")),
+                                    parameter: Parameter::new(Identifier::new("s")).into(),
                                     body: E::Apply(
                                         (),
                                         Apply {
-                                            function: E::Variable((), Id::new("__print")).into(),
-                                            argument: E::Variable((), Identifier::new("s")).into()
+                                            function: E::Variable(
+                                                (),
+                                                Variable::Identifier(Id::new("__print"))
+                                            )
+                                            .into(),
+                                            argument: E::Variable(
+                                                (),
+                                                Variable::Identifier(Id::new("s"))
+                                            )
+                                            .into()
                                         }
                                     )
                                     .into()

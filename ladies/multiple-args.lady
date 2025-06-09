@@ -1,0 +1,9 @@
+List ::= forall a. Cons a (List a) | Nil
+
+map = lambda f a b c.
+  print_endline (f a)
+  print_endline (f b)
+  print_endline (f c)
+  Cons a (Cons b (Cons c Nil))
+
+main = let xs = Cons 1 (map show 2 3 4) in print_endline (show xs)

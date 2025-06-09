@@ -1,11 +1,11 @@
 use super::{
     unification::{unify, Substitutions},
-    BaseType, Parsed, ProductType, Type, Typing, TypingContext, UntypedExpression,
+    BaseType, ProductType, Type, Typing, TypingContext, UntypedExpression,
 };
 use crate::{
     ast::{
         Apply, Binding, Constant, ControlFlow, Expression, Identifier, Lambda, Parameter, Product,
-        SelfReferential, Sequence,
+        SelfReferential, Sequence, Variable,
     },
     parser::ParsingInfo,
     typer::{TupleType, TypeError, TypeScheme},
@@ -19,7 +19,11 @@ pub fn check(
     let annotation = *expression.annotation();
 
     match (expected_type, expression) {
-        (expected, Expression::Variable(_, id) | Expression::InvokeBridge(_, id)) => {
+        (
+            expected,
+            Expression::Variable(_, Variable::Identifier(id))
+            | Expression::InvokeBridge(_, Variable::Identifier(id)),
+        ) => {
             let actual_type = ctx
                 .lookup(&id.clone().into())
                 .ok_or_else(|| TypeError::UndefinedSymbol(id.clone()))?
@@ -35,11 +39,7 @@ pub fn check(
                 _,
                 SelfReferential {
                     name,
-                    parameter:
-                        Parameter {
-                            name: parameter_name,
-                            .. //type_annotation: Some(parameter_type),
-                        },
+                    parameter,
                     body,
                 },
             ),
@@ -55,25 +55,23 @@ pub fn check(
             );
 
             ctx.bind(
-                parameter_name.clone().into(),
+                parameter.name.clone().into(),
                 TypeScheme::from_constant(*parameter_type.clone()),
             );
             check(body, body_type, &ctx)
         }
-        (
-            expected,
-            Expression::Lambda(
-                pi,
-                Lambda {
-                    parameter:
-                        Parameter {
-                            name,
-                            type_annotation: Some(parameter_type),
-                        },
-                    body,
-                },
-            ),
-        ) => check_lambda(*pi, expected, name, parameter_type, body, ctx),
+        (expected, Expression::Lambda(pi, Lambda { parameter, body }))
+            if parameter.type_annotation.is_some() =>
+        {
+            check_lambda(
+                *pi,
+                expected,
+                &parameter.name,
+                parameter.type_annotation.as_ref().expect("type annotation"),
+                body,
+                ctx,
+            )
+        }
         (expected, Expression::Apply(pi, Apply { function, argument })) => {
             check_apply(*pi, expected, function, argument, ctx)
         }
@@ -278,8 +276,9 @@ mod tests {
                 parameter: Parameter::new_with_type_annotation(
                     Identifier::new("x"),
                     Type::Constant(BaseType::Int),
-                ),
-                body: Expression::Variable(pi, Identifier::new("x")).into(),
+                )
+                .into(),
+                body: Expression::Variable(pi, Variable::Identifier(Identifier::new("x"))).into(),
             },
         );
 
@@ -305,7 +304,8 @@ mod tests {
                 parameter: Parameter::new_with_type_annotation(
                     Identifier::new("x"),
                     Type::Constant(BaseType::Int),
-                ),
+                )
+                .into(),
                 body: Expression::Literal(pi, Constant::Text("Hi, mom".to_owned())).into(),
             },
         );

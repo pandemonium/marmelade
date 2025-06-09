@@ -3,7 +3,7 @@ use std::{collections::HashSet, fmt};
 use crate::{
     ast::{
         Apply, Binding, ControlFlow, DeconstructInto, Expression, Identifier, Inject, Lambda,
-        MatchClause, Product, Project, SelfReferential, Sequence,
+        MatchClause, Product, Project, SelfReferential, Sequence, Variable,
     },
     typer::Parsed,
 };
@@ -43,7 +43,10 @@ where
     fn into_projection_tree(annotation: &A, name: &Identifier) -> Self {
         Self::make_projection_tree(
             annotation,
-            Self::Variable(annotation.clone(), name.head().clone()),
+            Self::Variable(
+                annotation.clone(),
+                Variable::Identifier(name.head().clone()),
+            ),
             &name.components()[1..],
         )
     }
@@ -63,11 +66,11 @@ where
     // This and the other rewrite-function, surely a common traverser can be extracted out of it
     pub fn rewrite_identifier_paths(self, bound: &mut HashSet<Identifier>) -> Self {
         match self {
-            Self::Variable(annotation, name) => {
+            Self::Variable(annotation, Variable::Identifier(name)) => {
                 if bound.contains(name.head()) {
                     Self::into_projection_tree(&annotation, &name)
                 } else {
-                    Self::Variable(annotation, name)
+                    Self::Variable(annotation, Variable::Identifier(name))
                 }
             }
             Self::Lambda(annotation, Lambda { parameter, body }) => {
@@ -236,11 +239,14 @@ where
         module: &ModuleNames,
     ) -> Self {
         match self {
-            Self::Variable(annotation, name) => {
+            Self::Variable(annotation, Variable::Identifier(name)) => {
                 if !bound.contains(&name) && module.defines(&name) {
-                    Self::Variable(annotation, name.prefixed_with(module.name().clone()))
+                    Self::Variable(
+                        annotation,
+                        Variable::Identifier(name.prefixed_with(module.name().clone())),
+                    )
                 } else {
-                    Self::Variable(annotation, name)
+                    Self::Variable(annotation, Variable::Identifier(name))
                 }
             }
             Self::Lambda(annotation, Lambda { parameter, body }) => {

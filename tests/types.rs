@@ -157,7 +157,7 @@ fn inferencing() {
     let expr4 = Expression::Lambda(
         ParsingInfo::default(),
         Lambda {
-            parameter: Parameter::new(ident("x")),
+            parameter: Parameter::new(ident("x")).into(),
             body: Expression::Binding(
                 ParsingInfo::default(),
                 ast::Binding {
