@@ -1,4 +1,5 @@
 use std::collections::{hash_map, HashSet};
+use std::rc::Weak;
 use std::{any::Any, cell::RefCell, collections::HashMap, fmt, rc::Rc};
 use thiserror::Error;
 
@@ -369,7 +370,7 @@ pub enum Value {
     },
     Tuple(Vec<Value>),
     Struct(Vec<(Identifier, Value)>),
-    Closure(Closure),
+    Closure(Rc<RefCell<Closure>>),
     RecursiveClosure(RecursiveClosure),
     Bridge {
         target: BridgeDebug,
@@ -429,17 +430,24 @@ impl fmt::Display for Value {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct RecursiveClosure {
     pub name: Identifier, // Name does not seem used.
-    pub inner: Rc<RefCell<Closure>>,
+    pub inner: Weak<RefCell<Closure>>,
+}
+
+impl PartialEq for RecursiveClosure {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.inner.upgrade() == other.inner.upgrade()
+    }
 }
 
 impl fmt::Display for RecursiveClosure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { name, inner } = self;
+        let inner = inner.upgrade().expect("Expected a closure");
         let inner = inner.borrow();
-        write!(f, "{name} -> {inner}")
+        write!(f, "{name} -> {}", inner)
     }
 }
 
@@ -541,7 +549,6 @@ impl Environment {
     }
 
     pub fn insert_binding(&mut self, binder: Identifier, bound: Value) {
-        println!("insert_binding: {binder} {}", self.leaf.len());
         self.leaf.push((binder, bound));
     }
 
@@ -682,9 +689,11 @@ where
                     parameter,
                     body,
                 },
-            ) => make_recursive_closure(name, parameter.name, body.erase_annotation(), env.clone()),
+            ) => {
+                reduce_self_referential(name, parameter.name, body.erase_annotation(), env.clone())
+            }
             Self::Lambda(_, Lambda { parameter, body }) => {
-                Ok(make_closure(parameter.name, *body, env.clone()))
+                Ok(reduce_lambda(parameter.name, *body, env.clone()))
             }
             Self::Apply(_, Apply { function, argument }) => {
                 apply_function(*function, *argument, env)
@@ -913,8 +922,7 @@ where
     })
 }
 
-// Is this leaking memory?
-fn make_recursive_closure(
+fn reduce_self_referential(
     name: Identifier,
     parameter: Identifier,
     body: Expression<EmptyAnnotation>,
@@ -926,16 +934,16 @@ fn make_recursive_closure(
         body: body.into(),
     }));
 
-    closure.borrow_mut().capture.insert_binding(
-        name.clone(),
-        Value::RecursiveClosure(RecursiveClosure {
-            name,
-            inner: Rc::clone(&closure),
-        }),
-    );
+    let weak = Rc::downgrade(&closure);
 
-    let closure = closure.borrow();
-    Ok(Value::Closure(closure.clone()))
+    {
+        closure.borrow_mut().capture.insert_binding(
+            name.clone(),
+            Value::RecursiveClosure(RecursiveClosure { name, inner: weak }),
+        );
+    }
+
+    Ok(Value::Closure(Rc::clone(&closure)))
 }
 
 fn reduce_immediate(constant: Constant) -> Value {
@@ -1015,12 +1023,18 @@ where
     A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
     match function.reduce(env)? {
-        Value::Closure(Closure {
-            parameter,
-            mut capture,
-            body,
-        }) => {
+        Value::Closure(closure) => {
+            let (parameter, body, mut capture) = {
+                let closure = closure.borrow();
+                (
+                    closure.parameter.clone(),
+                    closure.body.clone(),
+                    closure.capture.clone(),
+                )
+            };
+
             let binding = argument.reduce(env)?;
+
             capture.insert_binding(parameter.clone(), binding);
 
             let retval = body.reduce(&mut capture);
@@ -1030,7 +1044,13 @@ where
         Value::RecursiveClosure(RecursiveClosure { inner, .. }) => {
             let binding = argument.reduce(env)?;
 
-            let mut inner = { inner.borrow_mut().clone() };
+            let mut inner = {
+                inner
+                    .upgrade()
+                    .expect("upgrade failed")
+                    .borrow_mut()
+                    .clone()
+            };
 
             let parameter = inner.parameter.clone();
             inner.capture.insert_binding(parameter.clone(), binding);
@@ -1044,15 +1064,15 @@ where
     }
 }
 
-fn make_closure<A>(param: Identifier, body: Expression<A>, env: Environment) -> Value
+fn reduce_lambda<A>(param: Identifier, body: Expression<A>, env: Environment) -> Value
 where
     A: fmt::Display + fmt::Debug + Clone + Parsed,
 {
-    Value::Closure(Closure {
+    Value::Closure(Rc::new(RefCell::new(Closure {
         parameter: param,
         capture: env.into(),
         body: body.erase_annotation().into(),
-    })
+    })))
 }
 
 #[cfg(test)]

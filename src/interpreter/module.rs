@@ -109,7 +109,7 @@ where
                         .de_bruijn_index(&binder)
                         .expect(&format!("{binder} to exist"));
 
-                    println!("de_bruijnify: {binder} is at #{index}");
+                    //                    println!("de_bruijnify: {binder} is at #{index}");
 
                     index
                 }),
@@ -129,6 +129,7 @@ where
                 //
                 Self::SelfReferential(annotation, {
                     let parameter_name = self_referential.parameter.name.clone();
+                    env.insert_binding(self_referential.name.clone(), Value::Base(Base::Unit));
                     env.insert_binding(parameter_name.clone(), Value::Base(Base::Unit));
                     let v = self_referential.map_expression(|e| e.de_bruijnify(env));
                     env.remove_binding(&parameter_name);
@@ -179,12 +180,12 @@ where
                                 let pattern = clause.pattern.clone();
                                 let bindings = pattern.bindings();
                                 for binder in &bindings {
-                                    println!("de_bruijnify: insert {binder}");
+                                    //                                    println!("de_bruijnify: insert {binder}");
                                     env.insert_binding((*binder).clone(), Value::Base(Base::Unit));
                                 }
                                 let v = clause.map_expression(|e| e.de_bruijnify(env));
                                 for binder in bindings.iter().rev() {
-                                    println!("de_bruijnify: remove {binder}");
+                                    //                                    println!("de_bruijnify: remove {binder}");
                                     env.remove_binding(binder);
                                 }
                                 v
